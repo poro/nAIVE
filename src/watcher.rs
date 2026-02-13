@@ -5,10 +5,12 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 /// Events sent from the watcher thread to the main loop.
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum WatchEvent {
     ShaderChanged(PathBuf),
     SceneChanged(PathBuf),
     MaterialChanged(PathBuf),
+    PipelineChanged(PathBuf),
 }
 
 /// Creates a file watcher on the project directory and returns a receiver
@@ -40,6 +42,10 @@ pub fn start_watching_all(
                                         tracing::info!("Material file changed: {:?}", path);
                                         let _ =
                                             tx.send(WatchEvent::MaterialChanged(path.clone()));
+                                    } else if path_str.contains("pipelines") {
+                                        tracing::info!("Pipeline file changed: {:?}", path);
+                                        let _ =
+                                            tx.send(WatchEvent::PipelineChanged(path.clone()));
                                     }
                                 }
                                 _ => {}
@@ -54,11 +60,12 @@ pub fn start_watching_all(
             }
         })?;
 
-    // Watch shaders, scenes, and materials directories
+    // Watch shaders, scenes, materials, and pipelines directories
     let dirs = [
         project_root.join("shaders"),
         project_root.join("scenes"),
         project_root.join("assets/materials"),
+        project_root.join("pipelines"),
     ];
 
     for dir in &dirs {

@@ -13,6 +13,7 @@ use crate::cli::CliArgs;
 use crate::components::{Camera, CameraRole, Transform};
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
+use crate::pipeline::CompiledPipeline;
 use crate::renderer::{DrawUniformPool, GpuState};
 use crate::watcher::WatchEvent;
 use crate::world::SceneWorld;
@@ -34,6 +35,10 @@ pub struct Engine {
     pub draw_pool: Option<DrawUniformPool>,
     pub forward_pipeline: Option<wgpu::RenderPipeline>,
     scene_path: Option<PathBuf>,
+
+    // Phase 3: compiled render pipeline
+    pub compiled_pipeline: Option<CompiledPipeline>,
+    pipeline_path: Option<PathBuf>,
 }
 
 impl Engine {
@@ -52,6 +57,8 @@ impl Engine {
             draw_pool: None,
             forward_pipeline: None,
             scene_path: None,
+            compiled_pipeline: None,
+            pipeline_path: None,
         }
     }
 
@@ -90,7 +97,7 @@ impl Engine {
         let camera_state = CameraState::new(&gpu.device);
         let draw_pool = DrawUniformPool::new(&gpu.device);
 
-        // Compile the forward shader
+        // Compile the forward shader (Phase 2 fallback pipeline)
         let forward_slang = self.project_root.join("shaders/passes/mesh_forward.slang");
         let forward_wgsl =
             match crate::shader::compile_mesh_forward_shader(Some(&forward_slang)) {
@@ -137,6 +144,63 @@ impl Engine {
         self.scene_path = Some(scene_path);
 
         tracing::info!("Scene loaded and forward pipeline created");
+
+        // Phase 3: try to compile the render pipeline if --pipeline was given
+        self.try_load_pipeline();
+    }
+
+    /// Attempt to load and compile the render pipeline from YAML.
+    fn try_load_pipeline(&mut self) {
+        let pipeline_arg = match &self.args.pipeline {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        let gpu = match &self.gpu {
+            Some(gpu) => gpu,
+            None => return,
+        };
+        let camera_state = match &self.camera_state {
+            Some(cs) => cs,
+            None => return,
+        };
+        let draw_pool = match &self.draw_pool {
+            Some(dp) => dp,
+            None => return,
+        };
+
+        let pipeline_path = self.project_root.join(&pipeline_arg);
+        if !pipeline_path.exists() {
+            tracing::error!("Pipeline file not found: {:?}", pipeline_path);
+            return;
+        }
+
+        match crate::pipeline::load_pipeline(&pipeline_path) {
+            Ok(pipeline_file) => {
+                match crate::pipeline::compile_pipeline(
+                    &gpu.device,
+                    &pipeline_file,
+                    &self.project_root,
+                    camera_state,
+                    draw_pool,
+                    gpu.config.format,
+                    gpu.config.width,
+                    gpu.config.height,
+                ) {
+                    Ok(compiled) => {
+                        self.compiled_pipeline = Some(compiled);
+                        self.pipeline_path = Some(pipeline_path);
+                        tracing::info!("Render pipeline compiled successfully");
+                    }
+                    Err(e) => {
+                        tracing::error!("Pipeline compilation failed: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to load pipeline: {}", e);
+            }
+        }
     }
 
     /// Start the file watcher on the project directory.
@@ -162,7 +226,17 @@ impl Engine {
 
         tracing::info!("Hot-reloading shader: {:?}", changed_path);
 
-        // Determine if this is a forward shader or the triangle shader
+        // If we have a compiled pipeline and the shader belongs to it, recompile the pipeline
+        if self.compiled_pipeline.is_some() {
+            tracing::info!("Recompiling render pipeline after shader change");
+            // Drop the old pipeline first
+            self.compiled_pipeline = None;
+            // Recompile
+            self.try_load_pipeline();
+            return;
+        }
+
+        // Phase 2 shader reload path
         let is_forward = self.forward_pipeline.is_some();
 
         if is_forward {
@@ -256,6 +330,13 @@ impl Engine {
         tracing::info!("Scene hot-reload complete");
     }
 
+    /// Handle a pipeline YAML file change.
+    fn handle_pipeline_reload(&mut self, _changed_path: &Path) {
+        tracing::info!("Hot-reloading render pipeline");
+        self.compiled_pipeline = None;
+        self.try_load_pipeline();
+    }
+
     /// Poll for file change events (non-blocking).
     fn poll_changes(&mut self) {
         let events: Vec<WatchEvent> = if let Some(rx) = &self.watch_rx {
@@ -270,6 +351,7 @@ impl Engine {
 
         let mut shader_paths = std::collections::HashSet::new();
         let mut scene_paths = std::collections::HashSet::new();
+        let mut pipeline_changed = false;
 
         for event in events {
             match event {
@@ -280,8 +362,11 @@ impl Engine {
                     scene_paths.insert(path);
                 }
                 WatchEvent::MaterialChanged(_path) => {
-                    // Material hot-reload: for Phase 2, just log it
                     tracing::info!("Material changed (reload not yet implemented)");
+                }
+                WatchEvent::PipelineChanged(path) => {
+                    tracing::info!("Pipeline file changed: {:?}", path);
+                    pipeline_changed = true;
                 }
             }
         }
@@ -292,6 +377,12 @@ impl Engine {
 
         for path in scene_paths {
             self.handle_scene_reload(&path);
+        }
+
+        if pipeline_changed {
+            if let Some(path) = self.pipeline_path.clone() {
+                self.handle_pipeline_reload(&path);
+            }
         }
     }
 
@@ -357,7 +448,7 @@ impl ApplicationHandler for Engine {
         // Phase 2: load scene if --scene was provided
         self.load_scene();
 
-        // Start watchers (unified for shaders, scenes, materials)
+        // Start watchers (unified for shaders, scenes, materials, pipelines)
         self.start_watcher();
     }
 
@@ -388,42 +479,81 @@ impl ApplicationHandler for Engine {
                             );
                         gpu.depth_texture = depth_texture;
                         gpu.depth_view = depth_view;
+
+                        // Phase 3: resize pipeline resources
+                        if let Some(compiled) = &mut self.compiled_pipeline {
+                            crate::pipeline::resize_resources(
+                                &gpu.device,
+                                &mut compiled.resources,
+                                new_size.width,
+                                new_size.height,
+                            );
+                            crate::pipeline::rebuild_bind_groups(&gpu.device, compiled);
+                        }
                     }
                 }
             }
             WindowEvent::RedrawRequested => {
-                // Poll for file changes (shader + scene)
+                // Poll for file changes (shader + scene + pipeline)
                 self.poll_changes();
 
                 if self.scene_world.is_some() {
-                    // Phase 2: scene rendering path
+                    // Update transforms and camera
                     crate::transform::update_transforms(
                         &mut self.scene_world.as_mut().unwrap().world,
                     );
                     self.update_camera();
 
-                    if let (
-                        Some(gpu),
-                        Some(scene_world),
-                        Some(camera_state),
-                        Some(draw_pool),
-                        Some(forward_pipeline),
-                    ) = (
-                        &self.gpu,
-                        &self.scene_world,
-                        &self.camera_state,
-                        &self.draw_pool,
-                        &self.forward_pipeline,
-                    ) {
-                        crate::renderer::render_scene(
-                            gpu,
-                            scene_world,
-                            camera_state,
-                            draw_pool,
-                            &self.mesh_cache,
-                            &self.material_cache,
-                            forward_pipeline,
-                        );
+                    // Phase 3: use compiled pipeline if available
+                    if self.compiled_pipeline.is_some() {
+                        if let (
+                            Some(gpu),
+                            Some(scene_world),
+                            Some(camera_state),
+                            Some(draw_pool),
+                            Some(compiled),
+                        ) = (
+                            &self.gpu,
+                            &self.scene_world,
+                            &self.camera_state,
+                            &self.draw_pool,
+                            &self.compiled_pipeline,
+                        ) {
+                            crate::pipeline::execute_pipeline(
+                                gpu,
+                                compiled,
+                                scene_world,
+                                camera_state,
+                                draw_pool,
+                                &self.mesh_cache,
+                                &self.material_cache,
+                            );
+                        }
+                    } else {
+                        // Phase 2 fallback: forward rendering
+                        if let (
+                            Some(gpu),
+                            Some(scene_world),
+                            Some(camera_state),
+                            Some(draw_pool),
+                            Some(forward_pipeline),
+                        ) = (
+                            &self.gpu,
+                            &self.scene_world,
+                            &self.camera_state,
+                            &self.draw_pool,
+                            &self.forward_pipeline,
+                        ) {
+                            crate::renderer::render_scene(
+                                gpu,
+                                scene_world,
+                                camera_state,
+                                draw_pool,
+                                &self.mesh_cache,
+                                &self.material_cache,
+                                forward_pipeline,
+                            );
+                        }
                     }
 
                     if let Some(gpu) = &self.gpu {

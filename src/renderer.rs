@@ -63,7 +63,7 @@ pub struct DrawUniforms {
     pub _padding: [f32; 20],
 }
 
-const DRAW_UNIFORM_SIZE: u64 = 256;
+pub const DRAW_UNIFORM_SIZE: u64 = 256;
 const MAX_ENTITIES: usize = 256;
 
 /// Manages per-entity draw uniforms with dynamic offsets.

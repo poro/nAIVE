@@ -72,6 +72,11 @@ pub fn compile_triangle_shader(slang_path: Option<&Path>) -> Result<String, Shad
     Ok(get_triangle_wgsl())
 }
 
+/// Public SLANG-to-WGSL compilation for use by the pipeline module.
+pub fn compile_slang_to_wgsl_public(path: &Path) -> Result<String, ShaderError> {
+    compile_slang_to_wgsl(path)
+}
+
 /// Actual SLANG-to-WGSL compilation using shader-slang crate.
 #[cfg(feature = "slang")]
 fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
@@ -231,6 +236,126 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     .to_string()
 }
 
+/// Compile a SLANG file with flexible entry points and return both WGSL and reflection data.
+#[allow(dead_code)]
+#[cfg(feature = "slang")]
+pub fn compile_shader(
+    path: &Path,
+    entry_points: &[(&str, shader_slang::Stage)],
+) -> Result<(String, crate::reflect::ShaderReflection), ShaderError> {
+    use shader_slang as slang;
+    use std::ffi::CString;
+
+    let global_session = slang::GlobalSession::new().ok_or_else(|| {
+        ShaderError::SlangCompilationFailed("Failed to create SLANG global session".to_string())
+    })?;
+
+    // Add both the shader's parent directory and the project-relative modules directory
+    let shader_dir = path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_string_lossy()
+        .to_string();
+
+    // Also add the shaders/modules directory for shared imports
+    let modules_dir = path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .parent()
+        .map(|p| p.join("modules"))
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let shader_dir_c = CString::new(shader_dir.as_str()).map_err(|e| {
+        ShaderError::SlangCompilationFailed(format!("Invalid search path: {:?}", e))
+    })?;
+    let modules_dir_c = CString::new(modules_dir.as_str()).map_err(|e| {
+        ShaderError::SlangCompilationFailed(format!("Invalid search path: {:?}", e))
+    })?;
+    let search_paths_ptrs = [shader_dir_c.as_ptr(), modules_dir_c.as_ptr()];
+
+    let target_desc = slang::TargetDesc::default().format(slang::CompileTarget::Wgsl);
+    let targets = [target_desc];
+
+    let session_desc = slang::SessionDesc::default()
+        .targets(&targets)
+        .search_paths(&search_paths_ptrs);
+
+    let session = global_session
+        .create_session(&session_desc)
+        .ok_or_else(|| {
+            ShaderError::SlangCompilationFailed("Failed to create SLANG session".to_string())
+        })?;
+
+    let file_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| ShaderError::SlangCompilationFailed("Invalid file name".to_string()))?;
+
+    let module = session.load_module(file_name).map_err(|e| {
+        ShaderError::SlangCompilationFailed(format!(
+            "Failed to load module '{}': {:?}",
+            file_name, e
+        ))
+    })?;
+
+    // Find all requested entry points
+    use slang::Downcast;
+    let mut components: Vec<slang::ComponentType> = vec![module.downcast().clone()];
+
+    for (ep_name, _stage) in entry_points {
+        let entry = module
+            .find_entry_point_by_name(ep_name)
+            .ok_or_else(|| {
+                ShaderError::SlangCompilationFailed(format!(
+                    "Entry point '{}' not found in {}",
+                    ep_name, file_name
+                ))
+            })?;
+        components.push(entry.downcast().clone());
+    }
+
+    let program = session
+        .create_composite_component_type(&components)
+        .map_err(|e| {
+            ShaderError::SlangCompilationFailed(format!("Failed to compose program: {:?}", e))
+        })?;
+
+    let linked = program.link().map_err(|e| {
+        ShaderError::SlangCompilationFailed(format!("Failed to link program: {:?}", e))
+    })?;
+
+    // Extract reflection data
+    let reflection = crate::reflect::reflect_shader(&linked)?;
+
+    // Get the compiled WGSL
+    let code = linked.target_code(0).map_err(|e| {
+        ShaderError::SlangCompilationFailed(format!("Failed to get compiled code: {:?}", e))
+    })?;
+
+    let wgsl = code
+        .as_str()
+        .map(|s| s.to_string())
+        .map_err(|e| {
+            ShaderError::SlangCompilationFailed(format!("Invalid UTF-8 in WGSL output: {:?}", e))
+        })?;
+
+    Ok((wgsl, reflection))
+}
+
+/// Fallback when SLANG feature is disabled.
+#[allow(dead_code)]
+#[cfg(not(feature = "slang"))]
+pub fn compile_shader(
+    _path: &Path,
+    _entry_points: &[(&str, ())],
+) -> Result<(String, crate::reflect::ShaderReflection), ShaderError> {
+    Err(ShaderError::SlangCompilationFailed(
+        "SLANG support not compiled in (feature 'slang' disabled)".to_string(),
+    ))
+}
+
 /// Attempt to compile the mesh forward shader, falling back to WGSL.
 pub fn compile_mesh_forward_shader(slang_path: Option<&std::path::Path>) -> Result<String, ShaderError> {
     if let Some(path) = slang_path {
@@ -252,4 +377,211 @@ pub fn compile_mesh_forward_shader(slang_path: Option<&std::path::Path>) -> Resu
     }
 
     Ok(get_mesh_forward_wgsl())
+}
+
+/// Hardcoded WGSL fallback for the G-buffer pass.
+pub fn get_gbuffer_wgsl() -> String {
+    r#"
+struct CameraUniform {
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    view_projection: mat4x4<f32>,
+    position: vec3<f32>,
+    near_plane: f32,
+    far_plane: f32,
+    _pad1: f32,
+    viewport_size: vec2<f32>,
+    _padding: f32,
+    _pad2: vec3<f32>,
+};
+
+struct DrawUniforms {
+    model_matrix: mat4x4<f32>,
+    normal_matrix: mat4x4<f32>,
+    base_color: vec4<f32>,
+    roughness: f32,
+    metallic: f32,
+    _pad: vec2<f32>,
+    emission: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+@group(1) @binding(0) var<uniform> draw: DrawUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) tex_coords: vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_normal: vec3<f32>,
+    @location(1) world_pos: vec3<f32>,
+    @location(2) tex_coords: vec2<f32>,
+};
+
+struct GBufferOutput {
+    @location(0) albedo: vec4<f32>,
+    @location(1) normal: vec4<f32>,
+};
+
+@vertex
+fn vs_main(model: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let world_pos = draw.model_matrix * vec4<f32>(model.position, 1.0);
+    out.clip_position = camera.view_projection * world_pos;
+    out.world_normal = normalize((draw.normal_matrix * vec4<f32>(model.normal, 0.0)).xyz);
+    out.world_pos = world_pos.xyz;
+    out.tex_coords = model.tex_coords;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> GBufferOutput {
+    var out: GBufferOutput;
+    out.albedo = draw.base_color;
+    out.normal = vec4<f32>(in.world_normal * 0.5 + 0.5, 1.0);
+    return out;
+}
+"#
+    .to_string()
+}
+
+/// Hardcoded WGSL fallback for the deferred lighting pass.
+pub fn get_deferred_light_wgsl() -> String {
+    r#"
+struct CameraUniform {
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    view_projection: mat4x4<f32>,
+    position: vec3<f32>,
+    near_plane: f32,
+    far_plane: f32,
+    _pad1: f32,
+    viewport_size: vec2<f32>,
+    _padding: f32,
+    _pad2: vec3<f32>,
+};
+
+struct PointLight {
+    position: vec3<f32>,
+    range: f32,
+    color: vec3<f32>,
+    intensity: f32,
+};
+
+struct LightingUniforms {
+    light_count: u32,
+    _pad: vec3<u32>,
+    lights: array<PointLight, 32>,
+};
+
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+
+@group(1) @binding(0) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(1) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(2) var gbuffer_depth: texture_depth_2d;
+@group(1) @binding(3) var gbuffer_sampler: sampler;
+
+@group(2) @binding(0) var<uniform> lighting: LightingUniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var out: VertexOutput;
+    let uv = vec2<f32>(f32((vertex_index << 1u) & 2u), f32(vertex_index & 2u));
+    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = vec2<f32>(uv.x, 1.0 - uv.y);
+    return out;
+}
+
+fn reconstruct_world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
+    let ndc = vec4<f32>(uv * 2.0 - 1.0, depth, 1.0);
+    let inv_vp = camera.view_projection;
+    // For simplicity in fallback, approximate position from camera
+    return camera.position + vec3<f32>(ndc.x, ndc.y, 0.0);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let tex_coords = vec2<i32>(in.position.xy);
+    let albedo = textureLoad(gbuffer_albedo, tex_coords, 0).rgb;
+    let normal_raw = textureLoad(gbuffer_normal, tex_coords, 0).rgb;
+    let normal = normalize(normal_raw * 2.0 - 1.0);
+    let depth = textureLoad(gbuffer_depth, tex_coords, 0);
+
+    // Skip empty pixels (depth at 1.0 = far plane)
+    if depth >= 1.0 {
+        discard;
+    }
+
+    // Ambient light
+    var color = albedo * vec3<f32>(0.08, 0.08, 0.1);
+
+    // Accumulate point lights
+    for (var i = 0u; i < lighting.light_count; i = i + 1u) {
+        let light = lighting.lights[i];
+        // Simple directional approximation from light position
+        let light_dir = normalize(light.position);
+        let ndotl = max(dot(normal, light_dir), 0.0);
+        let attenuation = light.intensity;
+        color = color + albedo * light.color * ndotl * attenuation;
+    }
+
+    // If no lights, use a default directional light
+    if lighting.light_count == 0u {
+        let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
+        let ndotl = max(dot(normal, light_dir), 0.0);
+        color = albedo * (vec3<f32>(0.15, 0.15, 0.18) + ndotl * 0.85);
+    }
+
+    return vec4<f32>(color, 1.0);
+}
+"#
+    .to_string()
+}
+
+/// Hardcoded WGSL fallback for the tone mapping pass.
+pub fn get_tonemap_wgsl() -> String {
+    r#"
+@group(0) @binding(0) var hdr_texture: texture_2d<f32>;
+@group(0) @binding(1) var hdr_sampler: sampler;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var out: VertexOutput;
+    let uv = vec2<f32>(f32((vertex_index << 1u) & 2u), f32(vertex_index & 2u));
+    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = vec2<f32>(uv.x, 1.0 - uv.y);
+    return out;
+}
+
+// ACES tone mapping curve
+fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let hdr_color = textureSample(hdr_texture, hdr_sampler, in.uv).rgb;
+    let sdr_color = aces_tonemap(hdr_color);
+    return vec4<f32>(sdr_color, 1.0);
+}
+"#
+    .to_string()
 }

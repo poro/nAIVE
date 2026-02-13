@@ -4,6 +4,8 @@ mod components;
 mod engine;
 mod material;
 mod mesh;
+mod pipeline;
+mod reflect;
 mod renderer;
 mod scene;
 mod shader;

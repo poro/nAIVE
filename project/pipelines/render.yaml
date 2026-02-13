@@ -1,0 +1,53 @@
+version: 1
+settings:
+  vsync: true
+  hdr: true
+
+resources:
+  - name: gbuffer_albedo
+    type: texture_2d
+    format: rgba8
+    size: viewport
+  - name: gbuffer_normal
+    type: texture_2d
+    format: rgba16f
+    size: viewport
+  - name: gbuffer_depth
+    type: texture_2d
+    format: depth32f
+    size: viewport
+  - name: hdr_buffer
+    type: texture_2d
+    format: rgba16f
+    size: viewport
+
+passes:
+  - name: geometry_pass
+    type: rasterize
+    shader: shaders/passes/gbuffer.slang
+    inputs:
+      scene_meshes: auto
+      scene_materials: auto
+    outputs:
+      color: gbuffer_albedo
+      normal: gbuffer_normal
+      depth: gbuffer_depth
+
+  - name: lighting_pass
+    type: fullscreen
+    shader: shaders/passes/deferred_light.slang
+    inputs:
+      gbuffer_albedo: gbuffer_albedo
+      gbuffer_normal: gbuffer_normal
+      gbuffer_depth: gbuffer_depth
+      scene_lights: auto
+    outputs:
+      color: hdr_buffer
+
+  - name: tonemap_pass
+    type: fullscreen
+    shader: shaders/passes/tonemap.slang
+    inputs:
+      hdr: hdr_buffer
+    outputs:
+      color: swapchain
