@@ -854,7 +854,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let mesh_valid = mesh_depth < 1.0;
     let splat_valid = splat_color.a > 0.004;
 
-    // Depth compositing
+    // Composite: prefer closer of mesh vs splat, blend if overlapping
     if splat_valid && (!mesh_valid || splat_depth < mesh_depth) {
         let bg = select(vec3<f32>(0.0), mesh_color, mesh_valid);
         let blended = splat_color.rgb + bg * (1.0 - splat_color.a);

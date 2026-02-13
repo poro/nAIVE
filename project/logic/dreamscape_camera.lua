@@ -10,7 +10,8 @@ function update(dt)
     local x = self.radius * math.cos(self.time)
     local z = self.radius * math.sin(self.time)
     entity.set_position(_entity_string_id, x, self.height, z)
-    local yaw = math.deg(math.atan2(-x, -z))
+    -- atan2(x, z) gives the yaw to rotate NEG_Z toward the origin
+    local yaw = math.deg(math.atan2(x, z))
     local pitch = -math.deg(math.atan2(self.height - 1.5, self.radius))
     entity.set_rotation(_entity_string_id, pitch, yaw, 0)
 end

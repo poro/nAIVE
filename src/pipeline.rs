@@ -237,7 +237,7 @@ pub enum ResourceSize {
 /// Map format string from YAML to wgpu::TextureFormat.
 pub fn format_from_string(s: &str) -> Result<wgpu::TextureFormat, PipelineError> {
     match s {
-        "rgba8" => Ok(wgpu::TextureFormat::Rgba8UnormSrgb),
+        "rgba8" => Ok(wgpu::TextureFormat::Rgba8Unorm),
         "rgba8unorm" => Ok(wgpu::TextureFormat::Rgba8Unorm),
         "rgb16f" | "rgba16f" => Ok(wgpu::TextureFormat::Rgba16Float),
         "rg16f" => Ok(wgpu::TextureFormat::Rg16Float),
@@ -555,14 +555,20 @@ pub fn compile_pipeline(
             }
         }
 
-        // Sort color targets by output slot name for deterministic ordering
-        // "color" first, "normal" second, etc.
+        // Sort color targets by MRT slot priority to match shader @location indices.
+        // The G-buffer shader outputs: @location(0)=color, @location(1)=normal, @location(2)=emission.
+        // Alphabetical sort would put emission before normal — this custom sort prevents that.
         let mut output_pairs: Vec<(&String, &String)> = pass_def
             .outputs
             .iter()
             .filter(|(k, _)| *k != "depth")
             .collect();
-        output_pairs.sort_by_key(|(k, _)| k.as_str());
+        output_pairs.sort_by_key(|(k, _)| match k.as_str() {
+            "color" | "albedo" => 0,
+            "normal" => 1,
+            "emission" => 2,
+            other => 3 + other.len() as u32, // unknown slots come last, stable
+        });
         color_targets = output_pairs.iter().map(|(_, v)| v.to_string()).collect();
 
         // Compile the shader (try SLANG first, then fallback)
@@ -964,7 +970,7 @@ fn create_lighting_pipeline(
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -974,7 +980,7 @@ fn create_lighting_pipeline(
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -1000,7 +1006,7 @@ fn create_lighting_pipeline(
                 binding: 4,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -1132,7 +1138,7 @@ fn create_lighting_pipeline_with_splats(
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -1142,7 +1148,7 @@ fn create_lighting_pipeline_with_splats(
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -1168,7 +1174,7 @@ fn create_lighting_pipeline_with_splats(
                 binding: 4,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -1220,7 +1226,7 @@ fn create_lighting_pipeline_with_splats(
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
@@ -1754,6 +1760,7 @@ fn execute_rasterize_pass(
         render_pass.set_pipeline(&pass.pipeline);
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
+        let mut draw_count = 0u32;
         for (draw_index, (_entity, (_, mesh_renderer))) in
             (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
         {
@@ -1767,6 +1774,12 @@ fn execute_rasterize_pass(
                 wgpu::IndexFormat::Uint32,
             );
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
+            draw_count += 1;
+        }
+        if draw_count == 0 {
+            tracing::warn!("Rasterize pass '{}': ZERO entities drawn!", pass.name);
+        } else {
+            tracing::debug!("Rasterize pass '{}': {} entities drawn", pass.name, draw_count);
         }
     }
 }
@@ -2269,7 +2282,7 @@ passes:
     fn test_format_from_string() {
         assert_eq!(
             format_from_string("rgba8").unwrap(),
-            wgpu::TextureFormat::Rgba8UnormSrgb
+            wgpu::TextureFormat::Rgba8Unorm
         );
         assert_eq!(
             format_from_string("rgba16f").unwrap(),

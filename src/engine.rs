@@ -416,7 +416,15 @@ impl Engine {
     fn try_load_pipeline(&mut self) {
         let pipeline_arg = match &self.args.pipeline {
             Some(p) => p.clone(),
-            None => return,
+            None => {
+                // Auto-detect: use pipelines/render.yaml if it exists
+                let default_path = self.project_root.join("pipelines/render.yaml");
+                if default_path.exists() {
+                    "pipelines/render.yaml".to_string()
+                } else {
+                    return;
+                }
+            }
         };
 
         let gpu = match &self.gpu {

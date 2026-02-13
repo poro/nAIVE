@@ -243,13 +243,14 @@ fn create_procedural_sphere(device: &wgpu::Device, radius: f32, rings: u32, sect
             let curr_row = ring * (sectors + 1);
             let next_row = (ring + 1) * (sectors + 1);
 
+            // CCW winding when viewed from outside the sphere
             indices.push(curr_row + sector);
-            indices.push(next_row + sector);
             indices.push(next_row + sector + 1);
+            indices.push(next_row + sector);
 
             indices.push(curr_row + sector);
-            indices.push(next_row + sector + 1);
             indices.push(curr_row + sector + 1);
+            indices.push(next_row + sector + 1);
         }
     }
 
