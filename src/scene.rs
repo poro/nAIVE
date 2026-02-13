@@ -83,6 +83,12 @@ pub struct ComponentMap {
     pub point_light: Option<PointLightDef>,
     #[serde(default)]
     pub gaussian_splat: Option<GaussianSplatDef>,
+    #[serde(default)]
+    pub rigid_body: Option<RigidBodyDef>,
+    #[serde(default)]
+    pub collider: Option<ColliderDef>,
+    #[serde(default)]
+    pub character_controller: Option<CharacterControllerDef>,
     /// Absorbs unknown component types for forward compatibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
@@ -156,6 +162,65 @@ pub struct GaussianSplatDef {
     pub source: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RigidBodyDef {
+    #[serde(default = "default_body_type")]
+    pub body_type: String,
+    #[serde(default = "default_mass")]
+    pub mass: f32,
+}
+
+fn default_body_type() -> String {
+    "static".to_string()
+}
+fn default_mass() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ColliderDef {
+    #[serde(default = "default_collider_shape")]
+    pub shape: String,
+    #[serde(default = "default_half_extents")]
+    pub half_extents: Option<[f32; 3]>,
+    #[serde(default)]
+    pub radius: Option<f32>,
+    #[serde(default)]
+    pub half_height: Option<f32>,
+    #[serde(default)]
+    pub is_trigger: bool,
+}
+
+fn default_collider_shape() -> String {
+    "box".to_string()
+}
+fn default_half_extents() -> Option<[f32; 3]> {
+    Some([0.5, 0.5, 0.5])
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CharacterControllerDef {
+    #[serde(default = "default_move_speed")]
+    pub move_speed: f32,
+    #[serde(default = "default_sprint_multiplier")]
+    pub sprint_multiplier: f32,
+    #[serde(default = "default_jump_impulse")]
+    pub jump_impulse: f32,
+    #[serde(default = "default_step_height")]
+    pub step_height: f32,
+    #[serde(default = "default_player_height")]
+    pub height: f32,
+    #[serde(default = "default_player_radius")]
+    pub radius: f32,
+}
+
+fn default_move_speed() -> f32 { 5.0 }
+fn default_sprint_multiplier() -> f32 { 1.8 }
+fn default_jump_impulse() -> f32 { 7.0 }
+fn default_step_height() -> f32 { 0.3 }
+fn default_player_height() -> f32 { 1.8 }
+fn default_player_radius() -> f32 { 0.3 }
+
 fn default_white() -> [f32; 3] {
     [1.0, 1.0, 1.0]
 }
@@ -223,6 +288,15 @@ fn merge_entity(parent: &EntityDef, child: &EntityDef) -> EntityDef {
     }
     if merged.components.gaussian_splat.is_none() {
         merged.components.gaussian_splat = parent.components.gaussian_splat.clone();
+    }
+    if merged.components.rigid_body.is_none() {
+        merged.components.rigid_body = parent.components.rigid_body.clone();
+    }
+    if merged.components.collider.is_none() {
+        merged.components.collider = parent.components.collider.clone();
+    }
+    if merged.components.character_controller.is_none() {
+        merged.components.character_controller = parent.components.character_controller.clone();
     }
 
     // Merge extra components from parent that child doesn't have
@@ -339,8 +413,8 @@ entities:
         let scene: SceneFile = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(scene.entities.len(), 1);
         assert!(scene.entities[0].components.transform.is_some());
-        // rigid_body and script should be in extra
-        assert!(scene.entities[0].components.extra.contains_key("rigid_body"));
+        // rigid_body is now a recognized component, script goes to extra
+        assert!(scene.entities[0].components.rigid_body.is_some());
         assert!(scene.entities[0].components.extra.contains_key("script"));
     }
 }

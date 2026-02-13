@@ -15,7 +15,7 @@ pub struct CameraUniform {
     pub _pad1: f32,                     // offset 212 (align viewport_size to WGSL vec2 alignment 8)
     pub viewport_size: [f32; 2],        // offset 216
     pub _padding: f32,                  // offset 224
-    pub _pad2: [f32; 3],               // offset 228 (round struct to WGSL alignment 16 = 240)
+    pub _pad2: [f32; 7],               // offset 228 (WGSL vec3 alignment pads to 256)
 }
 
 impl Default for CameraUniform {
@@ -30,7 +30,7 @@ impl Default for CameraUniform {
             _pad1: 0.0,
             viewport_size: [1280.0, 720.0],
             _padding: 0.0,
-            _pad2: [0.0; 3],
+            _pad2: [0.0; 7],
         }
     }
 }
@@ -116,7 +116,7 @@ impl CameraState {
             _pad1: 0.0,
             viewport_size: [viewport_width as f32, viewport_height as f32],
             _padding: 0.0,
-            _pad2: [0.0; 3],
+            _pad2: [0.0; 7],
         };
 
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));

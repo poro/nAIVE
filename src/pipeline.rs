@@ -391,7 +391,7 @@ pub const MAX_LIGHTS: usize = 32;
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightingUniforms {
     pub light_count: u32,
-    pub _pad: [u32; 3],
+    pub _pad: [u32; 7], // WGSL vec3<u32> has alignment 16, pushing header to 32 bytes
     pub lights: [PointLightUniform; MAX_LIGHTS],
 }
 
@@ -399,7 +399,7 @@ impl Default for LightingUniforms {
     fn default() -> Self {
         Self {
             light_count: 0,
-            _pad: [0; 3],
+            _pad: [0; 7],
             lights: [PointLightUniform {
                 position: [0.0; 3],
                 range: 0.0,

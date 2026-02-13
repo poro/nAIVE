@@ -85,6 +85,26 @@ pub struct PointLight {
     pub range: f32,
 }
 
+/// First-person player marker component.
+#[derive(Debug, Clone)]
+pub struct Player {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub height: f32,
+    pub radius: f32,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            yaw: 0.0,
+            pitch: 0.0,
+            height: 1.8,
+            radius: 0.3,
+        }
+    }
+}
+
 /// Tag component storing the entity's YAML id string.
 #[derive(Debug, Clone)]
 pub struct EntityId(pub String);

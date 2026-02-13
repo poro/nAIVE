@@ -10,14 +10,18 @@ use winit::window::{Window, WindowId};
 
 use crate::camera::CameraState;
 use crate::cli::CliArgs;
-use crate::components::{Camera, CameraRole, GaussianSplat, Transform};
+use crate::components::{Camera, CameraRole, GaussianSplat, Player, Transform};
+use crate::input::InputState;
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
+use crate::physics::{CharacterController, Collider as ColliderComp, PhysicsWorld, RigidBody as RigidBodyComp};
 use crate::pipeline::CompiledPipeline;
 use crate::splat::SplatCache;
 use crate::renderer::{DrawUniformPool, GpuState};
 use crate::watcher::WatchEvent;
 use crate::world::SceneWorld;
+
+use winit::keyboard::KeyCode;
 
 /// Main engine struct implementing winit's ApplicationHandler.
 pub struct Engine {
@@ -41,6 +45,12 @@ pub struct Engine {
     // Phase 3: compiled render pipeline
     pub compiled_pipeline: Option<CompiledPipeline>,
     pipeline_path: Option<PathBuf>,
+
+    // Phase 5: input + physics
+    pub input_state: Option<InputState>,
+    pub physics_world: Option<PhysicsWorld>,
+    last_frame_time: Option<instant::Instant>,
+    delta_time: f32,
 }
 
 impl Engine {
@@ -62,6 +72,10 @@ impl Engine {
             scene_path: None,
             compiled_pipeline: None,
             pipeline_path: None,
+            input_state: None,
+            physics_world: None,
+            last_frame_time: None,
+            delta_time: 1.0 / 60.0,
         }
     }
 
@@ -139,6 +153,7 @@ impl Engine {
             &mut self.mesh_cache,
             &mut self.material_cache,
             &mut self.splat_cache,
+            None,
         );
 
         self.scene_world = Some(scene_world);
@@ -148,6 +163,127 @@ impl Engine {
         self.scene_path = Some(scene_path);
 
         tracing::info!("Scene loaded and forward pipeline created");
+
+        // Phase 5: Initialize input system
+        let bindings = crate::input::load_bindings(&self.project_root);
+        self.input_state = Some(InputState::new(bindings));
+
+        // Phase 5: Initialize physics world
+        let gravity = if let Some(sw) = &self.scene_world {
+            if let Some(scene) = &sw.current_scene {
+                glam::Vec3::from(scene.settings.gravity)
+            } else {
+                glam::Vec3::new(0.0, -9.81, 0.0)
+            }
+        } else {
+            glam::Vec3::new(0.0, -9.81, 0.0)
+        };
+        let mut physics_world = PhysicsWorld::new(gravity);
+
+        // Spawn physics components for entities that have them
+        if let Some(sw) = &mut self.scene_world {
+            if let Some(scene) = &sw.current_scene {
+                let scene_clone = scene.clone();
+                for entity_def in &scene_clone.entities {
+                    if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
+                        let pos = if let Some(t) = &entity_def.components.transform {
+                            glam::Vec3::from(t.position)
+                        } else {
+                            glam::Vec3::ZERO
+                        };
+                        let rot = if let Some(t) = &entity_def.components.transform {
+                            crate::world::euler_degrees_to_quat(t.rotation)
+                        } else {
+                            glam::Quat::IDENTITY
+                        };
+
+                        if let Some(cc_def) = &entity_def.components.character_controller {
+                            let half_height = cc_def.height / 2.0 - cc_def.radius;
+                            let (rb_handle, col_handle) = physics_world.add_character_body(
+                                entity,
+                                pos,
+                                half_height.max(0.1),
+                                cc_def.radius,
+                            );
+                            let rb_comp = crate::physics::RigidBody {
+                                handle: rb_handle,
+                                body_type: crate::physics::PhysicsBodyType::Kinematic,
+                            };
+                            let col_comp = crate::physics::Collider {
+                                handle: col_handle,
+                                shape: crate::physics::PhysicsShape::Capsule {
+                                    half_height: half_height.max(0.1),
+                                    radius: cc_def.radius,
+                                },
+                                is_trigger: false,
+                            };
+                            let cc_comp = CharacterController {
+                                move_speed: cc_def.move_speed,
+                                sprint_multiplier: cc_def.sprint_multiplier,
+                                jump_impulse: cc_def.jump_impulse,
+                                step_height: cc_def.step_height,
+                                ..Default::default()
+                            };
+                            let player = crate::components::Player {
+                                height: cc_def.height,
+                                radius: cc_def.radius,
+                                ..Default::default()
+                            };
+                            let _ = sw.world.insert(entity, (rb_comp, col_comp, cc_comp, player));
+                        } else if let Some(col_def) = &entity_def.components.collider {
+                            let shape = crate::world::parse_collider_shape(col_def);
+                            let is_trigger = col_def.is_trigger;
+                            let body_type = entity_def
+                                .components
+                                .rigid_body
+                                .as_ref()
+                                .map(|rb| rb.body_type.as_str())
+                                .unwrap_or("static");
+
+                            match body_type {
+                                "dynamic" => {
+                                    let mass = entity_def
+                                        .components
+                                        .rigid_body
+                                        .as_ref()
+                                        .map(|rb| rb.mass)
+                                        .unwrap_or(1.0);
+                                    let (rb_handle, col_handle) = physics_world
+                                        .add_dynamic_body(entity, pos, rot, shape.clone(), mass);
+                                    let rb_comp = crate::physics::RigidBody {
+                                        handle: rb_handle,
+                                        body_type: crate::physics::PhysicsBodyType::Dynamic,
+                                    };
+                                    let col_comp = crate::physics::Collider {
+                                        handle: col_handle,
+                                        shape,
+                                        is_trigger,
+                                    };
+                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
+                                }
+                                _ => {
+                                    let (rb_handle, col_handle) = physics_world
+                                        .add_static_body(entity, pos, rot, shape.clone(), is_trigger);
+                                    let rb_comp = crate::physics::RigidBody {
+                                        handle: rb_handle,
+                                        body_type: crate::physics::PhysicsBodyType::Static,
+                                    };
+                                    let col_comp = crate::physics::Collider {
+                                        handle: col_handle,
+                                        shape,
+                                        is_trigger,
+                                    };
+                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.physics_world = Some(physics_world);
+        self.last_frame_time = Some(instant::Instant::now());
+        tracing::info!("Physics world initialized");
 
         // Phase 3: try to compile the render pipeline if --pipeline was given
         self.try_load_pipeline();
@@ -330,6 +466,7 @@ impl Engine {
             &mut self.mesh_cache,
             &mut self.material_cache,
             &mut self.splat_cache,
+            None,
         );
 
         tracing::info!("Scene hot-reload complete");
@@ -423,6 +560,109 @@ impl Engine {
         }
     }
 
+    /// Update the FPS camera controller: mouse look + WASD movement + physics.
+    fn update_fps_controller(&mut self) {
+        let input = match &self.input_state {
+            Some(i) => i,
+            None => return,
+        };
+        let scene_world = match &mut self.scene_world {
+            Some(sw) => sw,
+            None => return,
+        };
+        let physics_world = match &mut self.physics_world {
+            Some(pw) => pw,
+            None => return,
+        };
+
+        let dt = self.delta_time;
+
+        // Collect player entity data
+        let mut player_updates: Vec<(hecs::Entity, glam::Vec3, f32, f32, rapier3d::prelude::RigidBodyHandle, rapier3d::prelude::ColliderHandle, f32, f32, f32, bool, glam::Vec3)> = Vec::new();
+
+        for (entity, (player, cc, rb, col)) in scene_world
+            .world
+            .query::<(&Player, &CharacterController, &RigidBodyComp, &ColliderComp)>()
+            .iter()
+        {
+            // Mouse look
+            let mouse_delta = input.mouse_delta();
+            let sensitivity = 0.002;
+            let new_yaw = player.yaw - mouse_delta.x * sensitivity;
+            let new_pitch = (player.pitch - mouse_delta.y * sensitivity)
+                .clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
+
+            // Movement
+            let move_input = input.axis_2d("move_forward", "move_backward", "move_left", "move_right");
+            let speed = if input.pressed("sprint") {
+                cc.move_speed * cc.sprint_multiplier
+            } else {
+                cc.move_speed
+            };
+
+            // Calculate movement direction relative to yaw
+            let forward = glam::Vec3::new(-new_yaw.sin(), 0.0, -new_yaw.cos());
+            let right = glam::Vec3::new(forward.z, 0.0, -forward.x);
+            let move_dir = (forward * move_input.y + right * move_input.x).normalize_or_zero();
+            let mut desired = move_dir * speed * dt;
+
+            // Vertical velocity for gravity + jump
+            let mut vel_y = cc.velocity.y;
+            if cc.grounded {
+                vel_y = 0.0;
+                if input.just_pressed("jump") {
+                    vel_y = cc.jump_impulse;
+                }
+            }
+            vel_y += physics_world.gravity.y * dt;
+            desired.y = vel_y * dt;
+
+            player_updates.push((
+                entity,
+                desired,
+                new_yaw,
+                new_pitch,
+                rb.handle,
+                col.handle,
+                vel_y,
+                player.height,
+                player.radius,
+                cc.grounded,
+                cc.velocity,
+            ));
+        }
+
+        // Apply updates
+        for (entity, desired, new_yaw, new_pitch, rb_handle, col_handle, vel_y, _height, _radius, _was_grounded, _old_vel) in player_updates {
+            let (_effective, grounded) = physics_world.move_character(rb_handle, col_handle, desired, dt);
+
+            // Update ECS components
+            if let Ok(mut player) = scene_world.world.get::<&mut Player>(entity) {
+                player.yaw = new_yaw;
+                player.pitch = new_pitch;
+            }
+            if let Ok(mut cc) = scene_world.world.get::<&mut CharacterController>(entity) {
+                cc.grounded = grounded;
+                cc.velocity.y = if grounded && vel_y < 0.0 { 0.0 } else { vel_y };
+            }
+
+            // The physics body position is already updated by move_character
+            // Sync it back to the transform
+            if let Some(body) = physics_world.rigid_body_set.get(rb_handle) {
+                let pos = body.position().translation;
+                if let Ok(mut transform) = scene_world.world.get::<&mut Transform>(entity) {
+                    transform.position = glam::Vec3::new(pos.x, pos.y, pos.z);
+                    transform.rotation = glam::Quat::from_rotation_y(new_yaw);
+                    transform.dirty = true;
+                }
+            }
+        }
+
+        // Step physics for non-character bodies
+        physics_world.step(dt);
+        physics_world.sync_to_ecs(&mut scene_world.world);
+    }
+
     /// Update the camera uniform from the main camera entity.
     fn update_camera(&mut self) {
         let gpu = match &self.gpu {
@@ -438,19 +678,47 @@ impl Engine {
             None => return,
         };
 
-        // Find the main camera entity
-        for (_entity, (transform, camera)) in
-            scene_world.world.query::<(&Transform, &Camera)>().iter()
+        // Check if there's a player entity controlling the camera
+        let mut player_camera_applied = false;
+        for (_entity, (transform, player, camera)) in
+            scene_world.world.query::<(&Transform, &Player, &Camera)>().iter()
         {
             if camera.role == CameraRole::Main {
+                // Override camera transform with player look direction
+                let look_rotation = glam::Quat::from_rotation_y(player.yaw)
+                    * glam::Quat::from_rotation_x(player.pitch);
+                let cam_transform = Transform {
+                    position: transform.position + glam::Vec3::new(0.0, player.height * 0.4, 0.0),
+                    rotation: look_rotation,
+                    ..transform.clone()
+                };
                 camera_state.update(
                     &gpu.queue,
                     camera,
-                    transform,
+                    &cam_transform,
                     gpu.config.width,
                     gpu.config.height,
                 );
+                player_camera_applied = true;
                 break;
+            }
+        }
+
+        if !player_camera_applied {
+            // Find the main camera entity (non-player)
+            for (_entity, (transform, camera)) in
+                scene_world.world.query::<(&Transform, &Camera)>().iter()
+            {
+                if camera.role == CameraRole::Main {
+                    camera_state.update(
+                        &gpu.queue,
+                        camera,
+                        transform,
+                        gpu.config.width,
+                        gpu.config.height,
+                    );
+                    break;
+                }
             }
         }
     }
@@ -495,6 +763,11 @@ impl ApplicationHandler for Engine {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Feed all events to input system
+        if let Some(input) = &mut self.input_state {
+            input.handle_window_event(&event);
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 tracing::info!("Close requested, exiting");
@@ -531,10 +804,56 @@ impl ApplicationHandler for Engine {
                 }
             }
             WindowEvent::RedrawRequested => {
+                // Calculate delta time
+                let now = instant::Instant::now();
+                if let Some(last) = self.last_frame_time {
+                    self.delta_time = now.duration_since(last).as_secs_f32().min(0.1);
+                }
+                self.last_frame_time = Some(now);
+
+                // Begin input frame
+                if let Some(input) = &mut self.input_state {
+                    input.begin_frame();
+                }
+
+                // Handle Escape to toggle cursor capture
+                if let Some(input) = &self.input_state {
+                    if input.key_held(KeyCode::Escape) {
+                        if let Some(gpu) = &self.gpu {
+                            let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::None);
+                            gpu.window.set_cursor_visible(true);
+                        }
+                        if let Some(input) = &mut self.input_state {
+                            input.cursor_captured = false;
+                        }
+                    }
+                }
+
+                // Handle mouse click to capture cursor
+                if let Some(input) = &self.input_state {
+                    if !input.cursor_captured {
+                        if input.just_pressed("attack") {
+                            if let Some(gpu) = &self.gpu {
+                                let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                    .or_else(|_| gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Confined));
+                                gpu.window.set_cursor_visible(false);
+                            }
+                            if let Some(input) = &mut self.input_state {
+                                input.cursor_captured = true;
+                            }
+                        }
+                    }
+                }
+
                 // Poll for file changes (shader + scene + pipeline)
                 self.poll_changes();
 
                 if self.scene_world.is_some() {
+                    // Phase 5: FPS controller update (physics + input)
+                    if self.input_state.as_ref().map(|i| i.cursor_captured).unwrap_or(false) {
+                        self.update_fps_controller();
+                    }
+
                     // Update transforms and camera
                     crate::transform::update_transforms(
                         &mut self.scene_world.as_mut().unwrap().world,
@@ -622,6 +941,17 @@ impl ApplicationHandler for Engine {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let Some(input) = &mut self.input_state {
+            input.handle_device_event(&event);
         }
     }
 

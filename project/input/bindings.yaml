@@ -1,0 +1,17 @@
+actions:
+  move_forward:
+    - W
+  move_backward:
+    - S
+  move_left:
+    - A
+  move_right:
+    - D
+  jump:
+    - Space
+  interact:
+    - E
+  sprint:
+    - ShiftLeft
+  attack:
+    - Left

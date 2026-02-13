@@ -6,6 +6,7 @@ use hecs::World;
 use crate::components::*;
 use crate::mesh::MeshCache;
 use crate::material::MaterialCache;
+use crate::physics::{self, CharacterController, PhysicsShape, PhysicsWorld};
 use crate::scene::{EntityDef, SceneFile};
 use crate::splat::SplatCache;
 
@@ -37,9 +38,14 @@ pub fn spawn_all_entities(
     mesh_cache: &mut MeshCache,
     material_cache: &mut MaterialCache,
     splat_cache: &mut SplatCache,
+    physics_world: Option<&mut PhysicsWorld>,
 ) {
+    let pw_ptr = physics_world.map(|pw| pw as *mut PhysicsWorld);
     for entity_def in &scene.entities {
-        spawn_entity(scene_world, entity_def, device, project_root, mesh_cache, material_cache, splat_cache);
+        // SAFETY: we need to reborrow the physics world for each entity spawn since
+        // Option<&mut T> is not Copy. The reference is valid for the entire loop.
+        let pw_ref = pw_ptr.map(|ptr| unsafe { &mut *ptr });
+        spawn_entity(scene_world, entity_def, device, project_root, mesh_cache, material_cache, splat_cache, pw_ref);
     }
     scene_world.current_scene = Some(scene.clone());
     tracing::info!(
@@ -50,6 +56,7 @@ pub fn spawn_all_entities(
 }
 
 /// Spawn a single entity from its definition.
+#[allow(clippy::too_many_arguments)]
 fn spawn_entity(
     scene_world: &mut SceneWorld,
     entity_def: &EntityDef,
@@ -58,6 +65,7 @@ fn spawn_entity(
     mesh_cache: &mut MeshCache,
     material_cache: &mut MaterialCache,
     splat_cache: &mut SplatCache,
+    physics_world: Option<&mut PhysicsWorld>,
 ) {
     let entity_id = EntityId(entity_def.id.clone());
     let tags = Tags(entity_def.tags.clone());
@@ -175,10 +183,124 @@ fn spawn_entity(
     scene_world
         .entity_registry
         .insert(entity_def.id.clone(), entity);
+
+    // Spawn physics components if physics world is available
+    if let Some(pw) = physics_world {
+        let pos = if let Some(t) = &entity_def.components.transform {
+            glam::Vec3::from(t.position)
+        } else {
+            glam::Vec3::ZERO
+        };
+        let rot = if let Some(t) = &entity_def.components.transform {
+            euler_degrees_to_quat(t.rotation)
+        } else {
+            glam::Quat::IDENTITY
+        };
+
+        // Character controller takes priority
+        if let Some(cc_def) = &entity_def.components.character_controller {
+            let half_height = cc_def.height / 2.0 - cc_def.radius;
+            let (rb_handle, col_handle) =
+                pw.add_character_body(entity, pos, half_height.max(0.1), cc_def.radius);
+
+            let rb_comp = physics::RigidBody {
+                handle: rb_handle,
+                body_type: physics::PhysicsBodyType::Kinematic,
+            };
+            let col_comp = physics::Collider {
+                handle: col_handle,
+                shape: PhysicsShape::Capsule {
+                    half_height: half_height.max(0.1),
+                    radius: cc_def.radius,
+                },
+                is_trigger: false,
+            };
+            let cc_comp = CharacterController {
+                move_speed: cc_def.move_speed,
+                sprint_multiplier: cc_def.sprint_multiplier,
+                jump_impulse: cc_def.jump_impulse,
+                step_height: cc_def.step_height,
+                ..Default::default()
+            };
+            let player = Player {
+                yaw: 0.0,
+                pitch: 0.0,
+                height: cc_def.height,
+                radius: cc_def.radius,
+            };
+            let _ = scene_world.world.insert(entity, (rb_comp, col_comp, cc_comp, player));
+        } else if let Some(col_def) = &entity_def.components.collider {
+            let shape = parse_collider_shape(col_def);
+            let is_trigger = col_def.is_trigger;
+
+            let body_type = entity_def
+                .components
+                .rigid_body
+                .as_ref()
+                .map(|rb| rb.body_type.as_str())
+                .unwrap_or("static");
+
+            match body_type {
+                "dynamic" => {
+                    let mass = entity_def
+                        .components
+                        .rigid_body
+                        .as_ref()
+                        .map(|rb| rb.mass)
+                        .unwrap_or(1.0);
+                    let (rb_handle, col_handle) =
+                        pw.add_dynamic_body(entity, pos, rot, shape.clone(), mass);
+                    let rb_comp = physics::RigidBody {
+                        handle: rb_handle,
+                        body_type: physics::PhysicsBodyType::Dynamic,
+                    };
+                    let col_comp = physics::Collider {
+                        handle: col_handle,
+                        shape,
+                        is_trigger,
+                    };
+                    let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
+                }
+                _ => {
+                    let (rb_handle, col_handle) =
+                        pw.add_static_body(entity, pos, rot, shape.clone(), is_trigger);
+                    let rb_comp = physics::RigidBody {
+                        handle: rb_handle,
+                        body_type: physics::PhysicsBodyType::Static,
+                    };
+                    let col_comp = physics::Collider {
+                        handle: col_handle,
+                        shape,
+                        is_trigger,
+                    };
+                    let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
+                }
+            }
+        }
+    }
+}
+
+/// Parse a shape from a collider definition.
+pub fn parse_collider_shape(col_def: &crate::scene::ColliderDef) -> PhysicsShape {
+    match col_def.shape.as_str() {
+        "sphere" => PhysicsShape::Sphere {
+            radius: col_def.radius.unwrap_or(0.5),
+        },
+        "capsule" => PhysicsShape::Capsule {
+            half_height: col_def.half_height.unwrap_or(0.5),
+            radius: col_def.radius.unwrap_or(0.3),
+        },
+        _ => {
+            let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
+            PhysicsShape::Box {
+                half_extents: glam::Vec3::from(he),
+            }
+        }
+    }
 }
 
 /// Convert Euler degrees [pitch, yaw, roll] to a Quaternion.
-fn euler_degrees_to_quat(euler: [f32; 3]) -> glam::Quat {
+pub fn euler_degrees_to_quat(euler: [f32; 3]) -> glam::Quat {
     let [pitch, yaw, roll] = euler;
     glam::Quat::from_euler(
         glam::EulerRot::YXZ,
@@ -189,6 +311,7 @@ fn euler_degrees_to_quat(euler: [f32; 3]) -> glam::Quat {
 }
 
 /// Reconcile a scene update: diff old vs new, spawn/despawn/patch entities.
+#[allow(clippy::too_many_arguments)]
 pub fn reconcile_scene(
     scene_world: &mut SceneWorld,
     new_scene: &SceneFile,
@@ -197,11 +320,12 @@ pub fn reconcile_scene(
     mesh_cache: &mut MeshCache,
     material_cache: &mut MaterialCache,
     splat_cache: &mut SplatCache,
+    physics_world: Option<&mut PhysicsWorld>,
 ) {
     let old_scene = match &scene_world.current_scene {
         Some(s) => s.clone(),
         None => {
-            spawn_all_entities(scene_world, new_scene, device, project_root, mesh_cache, material_cache, splat_cache);
+            spawn_all_entities(scene_world, new_scene, device, project_root, mesh_cache, material_cache, splat_cache, physics_world);
             return;
         }
     };
@@ -220,7 +344,7 @@ pub fn reconcile_scene(
     // 2. Spawn new entities
     for entity_def in &new_scene.entities {
         if !old_ids.contains(entity_def.id.as_str()) {
-            spawn_entity(scene_world, entity_def, device, project_root, mesh_cache, material_cache, splat_cache);
+            spawn_entity(scene_world, entity_def, device, project_root, mesh_cache, material_cache, splat_cache, None);
             tracing::info!("Hot-reload: spawned entity '{}'", entity_def.id);
         }
     }
