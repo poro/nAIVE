@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>nAIVE Engine - Demos &amp; Showcases</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1a2e; color: #e0e0e0; font-family: system-ui, -apple-system, sans-serif; padding: 20px 40px; line-height: 1.6; }
+    h1 { color: #e94560; text-align: center; font-size: 2.2em; margin: 20px 0 8px; }
+    .subtitle { text-align: center; color: #7a7a9e; font-size: 1.1em; margin-bottom: 40px; }
+    h2 { color: #0f3460; background: #e94560; padding: 8px 16px; border-radius: 4px; display: inline-block; margin: 30px 0 16px; font-size: 1.2em; }
+    h3 { color: #e94560; margin: 16px 0 8px; font-size: 1.05em; }
+
+    .demo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 20px 0 40px; }
+    @media (max-width: 900px) { .demo-grid { grid-template-columns: 1fr; } }
+
+    .demo-card {
+      background: #16213e; border-radius: 10px; padding: 24px; border: 1px solid #0f3460;
+      transition: transform 0.15s, border-color 0.15s;
+    }
+    .demo-card:hover { transform: translateY(-2px); border-color: #e94560; }
+
+    .demo-card .number {
+      display: inline-block; background: #e94560; color: #fff; font-weight: 700;
+      width: 28px; height: 28px; text-align: center; line-height: 28px; border-radius: 50%;
+      font-size: 0.85em; margin-right: 8px;
+    }
+    .demo-card .title { font-weight: 700; color: #fff; font-size: 1.1em; }
+    .demo-card .tagline { color: #e94560; font-style: italic; margin: 6px 0 10px; font-size: 0.92em; }
+    .demo-card .desc { color: #b0b0c8; font-size: 0.93em; margin-bottom: 12px; }
+    .demo-card .cmd {
+      background: #0d1b2a; border-radius: 6px; padding: 10px 14px; font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.85em; color: #7ec8e3; margin: 8px 0; overflow-x: auto; white-space: pre;
+    }
+    .demo-card .cmd .comment { color: #5a6a7e; }
+    .demo-card .highlights { margin-top: 10px; }
+    .demo-card .highlights li { color: #9eafc0; font-size: 0.9em; margin: 3px 0; list-style: none; }
+    .demo-card .highlights li::before { content: "\25B8 "; color: #e94560; }
+
+    .phase-tag {
+      display: inline-block; background: #0f3460; color: #7ec8e3; font-size: 0.72em;
+      padding: 2px 8px; border-radius: 3px; margin-left: 8px; vertical-align: middle; font-weight: 600;
+    }
+
+    .hero-card {
+      background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
+      border: 2px solid #e94560; grid-column: 1 / -1; text-align: center; padding: 30px;
+    }
+    .hero-card .title { font-size: 1.3em; }
+    .hero-card .desc { max-width: 700px; margin: 10px auto; }
+
+    .section-intro { color: #9eafc0; max-width: 800px; margin: 0 auto 20px; text-align: center; font-size: 0.95em; }
+
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+    th { background: #0f3460; color: #e94560; padding: 8px 12px; text-align: left; font-size: 0.9em; }
+    td { padding: 8px 12px; border-bottom: 1px solid #16213e; font-size: 0.9em; }
+    tr:nth-child(even) td { background: rgba(22, 33, 62, 0.5); }
+
+    .footer { text-align: center; color: #5a6a7e; margin-top: 40px; padding: 20px; font-size: 0.85em; border-top: 1px solid #16213e; }
+  </style>
+</head>
+<body>
+
+  <h1>nAIVE - Demos &amp; Showcases</h1>
+  <p class="subtitle">AI-Native Interactive Visual Engine &mdash; 10 Phases of Brilliance</p>
+
+  <!-- =========================================================== -->
+  <h2>Flagship Demo</h2>
+
+  <div class="demo-grid">
+    <div class="demo-card hero-card">
+      <span class="title">The Relic &mdash; Complete Dungeon Crawler</span>
+      <span class="phase-tag">Phase 9</span>
+      <p class="tagline">"Every system in the engine, working together in one playable experience."</p>
+      <p class="desc">
+        A first-person dungeon crawler that exercises all 10 phases of the engine simultaneously.
+        Navigate a torch-lit stone dungeon, open a physics-driven gate, battle a patrolling goblin guardian
+        with a finite-state-machine AI, and claim the golden relic. Deferred HDR lighting with flickering
+        torchlight, Rapier 3D physics, Lua-scripted entity behaviors, event-driven game logic, and a full
+        win/lose condition &mdash; all defined in pure YAML + Lua, zero recompilation needed.
+      </p>
+      <div class="cmd"><span class="comment"># Play The Relic</span>
+cargo run -- --scene scenes/relic.yaml</div>
+      <ul class="highlights">
+        <li>15 entities orchestrated by 6 Lua scripts</li>
+        <li>Guardian AI: patrol &rarr; detect &rarr; chase &rarr; melee attack FSM</li>
+        <li>Interactive door with swing animation</li>
+        <li>4 torches with layered sine-wave flicker (each uniquely phased)</li>
+        <li>Player FPS controller: WASD, sprint, jump, interact, melee combat</li>
+        <li>Full event schema: player.damaged, door.opened, enemy.defeated, game.level_complete</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>Rendering Showcases</h2>
+  <p class="section-intro">From raw triangles to a full deferred HDR pipeline with Gaussian splatting compositing.</p>
+
+  <div class="demo-grid">
+
+    <div class="demo-card">
+      <span class="number">1</span><span class="title">Deferred Rendering Pipeline</span>
+      <span class="phase-tag">Phase 3</span>
+      <p class="tagline">"A full GPU pipeline described in 73 lines of YAML."</p>
+      <p class="desc">
+        The entire multi-pass rendering pipeline is data-driven: G-Buffer geometry pass, Gaussian splat pass,
+        deferred lighting accumulation, and HDR tonemapping &mdash; all wired through
+        <code>pipelines/render.yaml</code>. Add or reorder passes without touching Rust code.
+      </p>
+      <div class="cmd"><span class="comment"># The pipeline YAML drives everything</span>
+cat project/pipelines/render.yaml
+
+<span class="comment"># 4 passes: geometry &rarr; splat &rarr; lighting &rarr; tonemap</span></div>
+      <ul class="highlights">
+        <li>G-Buffer: albedo (RGBA8), normals (RGBA16F), depth (D32F)</li>
+        <li>HDR light accumulation with per-light attenuation</li>
+        <li>Reinhard tonemapping + gamma correction to swapchain</li>
+        <li>Shader reflection auto-generates bind group layouts</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">2</span><span class="title">Gaussian Splatting + Mesh Compositing</span>
+      <span class="phase-tag">Phase 4</span>
+      <p class="tagline">"3D Gaussian splats and traditional meshes, depth-composited in a single frame."</p>
+      <p class="desc">
+        Load .ply 3D Gaussian Splat captures alongside conventional glTF meshes. The engine depth-composites
+        both representations so splats and meshes coexist naturally &mdash; a NeRF-era mesh sitting inside a
+        traditionally-modeled dungeon room.
+      </p>
+      <div class="cmd"><span class="comment"># Splat compositing test scene</span>
+cargo run -- --scene scenes/splat_test.yaml</div>
+      <ul class="highlights">
+        <li>Loads .ply splat files with spherical harmonics, opacity, scale</li>
+        <li>CPU-side per-frame depth sorting for correct alpha blending</li>
+        <li>GPU storage buffers for splat data</li>
+        <li>Splat depth + mesh depth merged in the lighting pass</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">3</span><span class="title">SLANG Shader Hot-Reload</span>
+      <span class="phase-tag">Phase 1</span>
+      <p class="tagline">"Edit a shader, save the file, see the result on the next frame."</p>
+      <p class="desc">
+        Shaders are written in SLANG (with WGSL fallback) and automatically recompiled when
+        the file changes on disk. The file watcher detects modifications and the pipeline
+        re-creates GPU state seamlessly &mdash; no restart, no stutter.
+      </p>
+      <div class="cmd"><span class="comment"># Edit a shader while the engine runs</span>
+$EDITOR project/shaders/passes/deferred_light.slang
+<span class="comment"># Changes appear in real time</span></div>
+      <ul class="highlights">
+        <li>SLANG &rarr; WGSL cross-compilation via shader-slang</li>
+        <li>notify-based file watcher triggers recompilation</li>
+        <li>Graceful fallback: invalid shader keeps the last good version</li>
+        <li>Works for all 4 pipeline passes simultaneously</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">4</span><span class="title">Dynamic Torch Lighting</span>
+      <span class="phase-tag">Phase 7 + 9</span>
+      <p class="tagline">"Four torches, four unique flickers, one atmospheric dungeon."</p>
+      <p class="desc">
+        Each torch runs an independent Lua script with a random phase offset and layered
+        sine waves (3 frequencies) producing organic light flicker. The deferred lighting
+        pass accumulates all point lights with range-based attenuation.
+      </p>
+      <div class="cmd"><span class="comment"># torch_flicker.lua: layered sine waves</span>
+local f = sin(t)*0.5 + sin(t*2.3)*0.3 + sin(t*5.7)*0.2</div>
+      <ul class="highlights">
+        <li>Per-torch random phase offset (no two torches flicker alike)</li>
+        <li>Warm color [1.0, 0.7, 0.3] with 10m range</li>
+        <li>Intensity clamped to minimum 0.5 (never fully dark)</li>
+        <li>Deferred pipeline: lights are free regardless of scene geometry</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>AI &amp; Automation Showcases</h2>
+  <p class="section-intro">The "AI-Native" in nAIVE. External AI agents can observe, control, and test the game.</p>
+
+  <div class="demo-grid">
+
+    <div class="demo-card">
+      <span class="number">5</span><span class="title">Headless AI Playtesting</span>
+      <span class="phase-tag">Phase 10</span>
+      <p class="tagline">"A Lua script plays through the entire dungeon without a screen."</p>
+      <p class="desc">
+        Run the complete game loop headlessly &mdash; no GPU, no window. Lua test scripts inject
+        synthetic inputs, advance time, assert game state, and verify the full gameplay loop:
+        movement, door interaction, combat, item pickup, and win conditions.
+      </p>
+      <div class="cmd"><span class="comment"># Run the full automated test suite</span>
+cargo run -- test tests/test_relic.lua
+
+<span class="comment"># 5 tests: movement, bounds, scripts, state, playthrough</span></div>
+      <ul class="highlights">
+        <li><code>test_full_playthrough</code>: walks to door, opens it, collects relic</li>
+        <li><code>test_player_stays_in_bounds</code>: verifies all 4 walls contain the player</li>
+        <li><code>test_scripts_running</code>: confirms guardian patrols + relic bobs</li>
+        <li><code>test_game_state_initialized</code>: asserts HP=100, game_over=false</li>
+        <li>Frame-stepping and time-warping for deterministic tests</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">6</span><span class="title">MCP Server &mdash; AI Controls the Game</span>
+      <span class="phase-tag">Phase 8</span>
+      <p class="tagline">"Claude (or any LLM) can list entities, move objects, and inject input &mdash; live."</p>
+      <p class="desc">
+        The MCP server bridges JSON-RPC 2.0 over stdin/stdout to the engine's Unix domain socket.
+        An AI agent can query every entity, modify transforms, spawn/destroy objects, emit events,
+        inject keyboard/mouse input, and pause/resume the game &mdash; all through standard tool-use.
+      </p>
+      <div class="cmd"><span class="comment"># 9 MCP tools available:</span>
+naive_list_entities      <span class="comment"># See all entities + tags</span>
+naive_query_entity       <span class="comment"># Read any component</span>
+naive_modify_entity      <span class="comment"># Change transforms, lights</span>
+naive_spawn_entity       <span class="comment"># Create new entities live</span>
+naive_destroy_entity     <span class="comment"># Remove entities</span>
+naive_emit_event         <span class="comment"># Fire game events</span>
+naive_query_events       <span class="comment"># Read event log</span>
+naive_inject_input       <span class="comment"># Press keys, move mouse</span>
+naive_runtime_control    <span class="comment"># Pause / resume / status</span></div>
+      <ul class="highlights">
+        <li>Full MCP protocol compliance (2024-11-05)</li>
+        <li>Unix domain socket IPC at /tmp/naive-runtime.sock</li>
+        <li>AI can play the game, design levels, or QA test</li>
+        <li>Real-time bidirectional game state access</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">7</span><span class="title">Command Socket Live Control</span>
+      <span class="phase-tag">Phase 8</span>
+      <p class="tagline">"Pipe JSON into a socket, reshape the game world in real time."</p>
+      <p class="desc">
+        The engine listens on a Unix domain socket for JSON commands. Any process &mdash; a shell
+        script, a Python notebook, a monitoring dashboard &mdash; can query and mutate the running
+        game without any SDK or library dependency.
+      </p>
+      <div class="cmd"><span class="comment"># Teleport the player from the command line</span>
+echo '{"cmd":"modify_entity","entity_id":"player","components":{"transform":{"position":[0,1,-6]}}}' \
+  | socat - UNIX:/tmp/naive-runtime.sock
+
+<span class="comment"># List all entities</span>
+echo '{"cmd":"list_entities"}' | socat - UNIX:/tmp/naive-runtime.sock</div>
+      <ul class="highlights">
+        <li>Zero-dependency JSON protocol over Unix sockets</li>
+        <li>Thread-safe: commands queued to main thread via mpsc channel</li>
+        <li>Query + mutate any entity component</li>
+        <li>Spawn/destroy entities at runtime</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">8</span><span class="title">Guardian Goblin FSM AI</span>
+      <span class="phase-tag">Phase 6 + 9</span>
+      <p class="tagline">"73 lines of Lua, one convincing enemy."</p>
+      <p class="desc">
+        The guardian goblin demonstrates a complete finite-state-machine AI written entirely in Lua.
+        It patrols side-to-side, detects the player within 8m, chases at double speed,
+        and attacks in melee range on a cooldown timer. It takes damage and can be defeated.
+      </p>
+      <div class="cmd"><span class="comment"># Guardian state machine (simplified)</span>
+if dist &lt; attack_range then    <span class="comment">-- Melee attack</span>
+elseif dist &lt; detect_range then <span class="comment">-- Chase player</span>
+else                             <span class="comment">-- Patrol side to side</span>
+end</div>
+      <ul class="highlights">
+        <li>3 states: patrol (1.5 m/s), chase (3.0 m/s), attack (20 dmg)</li>
+        <li>Detection range: 8m, attack range: 1.8m</li>
+        <li>Cooldown-based attack interval (1.5s between strikes)</li>
+        <li>Emits events: player.damaged, player.died, enemy.defeated</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>Data-Driven Architecture Showcases</h2>
+  <p class="section-intro">Everything is YAML + Lua. The Rust engine is the runtime; the game is pure data.</p>
+
+  <div class="demo-grid">
+
+    <div class="demo-card">
+      <span class="number">9</span><span class="title">Scene-as-YAML</span>
+      <span class="phase-tag">Phase 2</span>
+      <p class="tagline">"250 lines of YAML defines an entire playable dungeon."</p>
+      <p class="desc">
+        The Relic scene declares 15 entities &mdash; player, walls, floor, ceiling, pillars, gate,
+        torches, guardian, relic, pedestal &mdash; entirely in YAML. Each entity specifies its
+        transform, mesh, material, collider, script, and light components declaratively.
+        Swap the scene file, get a completely different game.
+      </p>
+      <div class="cmd"><span class="comment"># Entity definition in scenes/relic.yaml</span>
+- id: guardian
+  tags: [enemy, guardian]
+  components:
+    transform:
+      position: [0, 0.75, -6]
+      scale: [0.8, 1.5, 0.8]
+    mesh_renderer:
+      mesh: assets/meshes/cube.gltf
+      material: assets/materials/goblin.yaml
+    script:
+      source: logic/guardian.lua</div>
+      <ul class="highlights">
+        <li>Scene, materials, pipeline, input bindings, events &mdash; all YAML</li>
+        <li>Hot-reload: edit relic.yaml and the scene rebuilds</li>
+        <li>ECS-style component composition: mix and match freely</li>
+        <li>Hierarchical entity system via hecs</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">10</span><span class="title">Live Script Hot-Reload</span>
+      <span class="phase-tag">Phase 6</span>
+      <p class="tagline">"Edit guardian.lua, save, watch the goblin change behavior mid-game."</p>
+      <p class="desc">
+        Every Lua script is watched for changes. On modification, the VM reloads the script,
+        calls <code>on_reload()</code> if defined, and the entity picks up new behavior instantly.
+        Iterate on AI logic, door animations, or pickup mechanics without restarting.
+      </p>
+      <div class="cmd"><span class="comment"># While the game is running:</span>
+$EDITOR project/logic/guardian.lua
+<span class="comment"># Change detect_range from 8 to 20</span>
+<span class="comment"># Guardian immediately becomes more aggressive</span></div>
+      <ul class="highlights">
+        <li>Per-entity sandboxed Lua environments (mlua metatables)</li>
+        <li>Dangerous stdlib disabled: no os, io, loadfile, dofile</li>
+        <li>Lifecycle hooks: init(), update(dt), on_reload()</li>
+        <li>Lua API: entity, input, events, game state, tween, audio</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">11</span><span class="title">Event Bus with Schema Validation</span>
+      <span class="phase-tag">Phase 7</span>
+      <p class="tagline">"Type-checked game events defined in YAML, logged in a ring buffer."</p>
+      <p class="desc">
+        Game events (player.damaged, door.opened, item.collected, enemy.defeated, game.level_complete)
+        are defined in an event schema with required fields. The event bus validates payloads at
+        emit-time, logs to a ring buffer, and dispatches to Lua listeners.
+      </p>
+      <div class="cmd"><span class="comment"># events/schema.yaml</span>
+player.damaged:
+  description: "Player took damage"
+  fields: [amount, source]
+
+<span class="comment"># Emitted from Lua:</span>
+events.emit("player.damaged", {amount=20, source="guardian"})</div>
+      <ul class="highlights">
+        <li>7 event types with field validation</li>
+        <li>Ring buffer logging (bounded memory)</li>
+        <li>Queryable from MCP: naive_query_events</li>
+        <li>Drives game logic: death, victory, door state</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">12</span><span class="title">Physics Playground</span>
+      <span class="phase-tag">Phase 5</span>
+      <p class="tagline">"Rapier 3D physics with character controller, slopes, and autostep."</p>
+      <p class="desc">
+        The physics system integrates Rapier 3D with box, sphere, and capsule colliders.
+        The player character controller handles slope climbing, automatic step-up over
+        small obstacles, and ground snapping. Trigger volumes fire enter/exit events.
+      </p>
+      <div class="cmd"><span class="comment"># Physics test scene</span>
+cargo run -- --scene scenes/physics_test.yaml</div>
+      <ul class="highlights">
+        <li>Character controller: 0.3m radius, 1.8m height, 0.3m step</li>
+        <li>Gravity: -9.81 m/s, jump impulse: 6.0</li>
+        <li>60 Hz physics tick, frame-rate independent</li>
+        <li>Collision shapes defined declaratively in scene YAML</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>Quick Reference: All Runnable Demos</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Demo</th>
+        <th>Command</th>
+        <th>Requires GPU</th>
+        <th>Phases Exercised</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>The Relic (full game)</td>
+        <td><code>cargo run -- --scene scenes/relic.yaml</code></td>
+        <td>Yes</td>
+        <td>1-9</td>
+      </tr>
+      <tr>
+        <td>Splat Compositing</td>
+        <td><code>cargo run -- --scene scenes/splat_test.yaml</code></td>
+        <td>Yes</td>
+        <td>1-4</td>
+      </tr>
+      <tr>
+        <td>Physics Playground</td>
+        <td><code>cargo run -- --scene scenes/physics_test.yaml</code></td>
+        <td>Yes</td>
+        <td>1-5</td>
+      </tr>
+      <tr>
+        <td>Headless Test Suite</td>
+        <td><code>cargo run -- test tests/test_relic.lua</code></td>
+        <td>No</td>
+        <td>2, 5-7, 10</td>
+      </tr>
+      <tr>
+        <td>MCP Server</td>
+        <td><code>cargo run --bin naive_mcp</code></td>
+        <td>No (bridge)</td>
+        <td>8</td>
+      </tr>
+      <tr>
+        <td>Socket Live Control</td>
+        <td><code>echo '{"cmd":"list_entities"}' | socat - UNIX:/tmp/naive-runtime.sock</code></td>
+        <td>Engine running</td>
+        <td>8</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- =========================================================== -->
+  <h2>Suggested Live Demo Script (5 minutes)</h2>
+
+  <div class="demo-card" style="max-width: 800px; margin: 16px auto;">
+    <ol style="padding-left: 20px; color: #b0b0c8; font-size: 0.93em;">
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Launch The Relic</strong> &mdash; <code>cargo run -- --scene scenes/relic.yaml</code>. Walk around the dungeon, show the flickering torchlight and deferred rendering.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Open the gate</strong> &mdash; Walk up and press E. The door swings open with physics animation.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Fight the guardian</strong> &mdash; Enter the inner chamber. The goblin detects you, chases, and attacks. Left-click to fight back. Show the event log.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Collect the relic</strong> &mdash; After defeating the guardian, pick up the golden relic. Level complete.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Hot-reload a shader</strong> &mdash; While the game runs, edit <code>deferred_light.slang</code> (change light color or attenuation). Save. Watch the lighting change in real time.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Hot-reload a script</strong> &mdash; Edit <code>guardian.lua</code>, double the detect range. Save. The goblin immediately becomes more aggressive.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Socket control</strong> &mdash; In a second terminal, use <code>socat</code> to teleport the player, spawn a new light, or list all entities via JSON commands.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Headless test</strong> &mdash; Kill the window. Run <code>cargo run -- test tests/test_relic.lua</code>. The entire game plays itself with no GPU. Show all 5 tests passing.</li>
+    </ol>
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>What Makes nAIVE Brilliant</h2>
+
+  <div class="demo-card" style="max-width: 800px; margin: 16px auto;">
+    <table>
+      <tr><td style="color: #e94560; font-weight: 700; width: 200px;">Zero-compile iteration</td><td>Scenes, materials, pipelines, shaders, scripts, input bindings, and event schemas are all hot-reloadable data files.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">AI-first architecture</td><td>MCP server + command socket + headless mode = an AI agent can design, play, and QA-test a game without human intervention.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">Cutting-edge rendering</td><td>Gaussian splatting composited with mesh-based deferred rendering in a single data-driven pipeline.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">From-scratch in Rust</td><td>No Unity, no Unreal, no Bevy. Custom ECS, custom renderer, custom physics integration &mdash; all type-safe Rust.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">10-phase engineering</td><td>Each phase builds cleanly on the last: window &rarr; scene &rarr; deferred &rarr; splats &rarr; physics &rarr; scripting &rarr; events &rarr; sockets &rarr; game &rarr; testing.</td></tr>
+    </table>
+  </div>
+
+  <div class="footer">
+    nAIVE Engine &mdash; AI-Native Interactive Visual Engine<br>
+    Rust + wgpu + Rapier + Lua + SLANG &mdash; Built in 10 phases
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>nAIVE Engine Architecture</title>
+  <style>
+    body { background: #1a1a2e; color: #e0e0e0; font-family: system-ui; margin: 0; padding: 20px; }
+    h1 { color: #e94560; text-align: center; }
+    h2 { color: #0f3460; background: #e94560; padding: 8px 16px; border-radius: 4px; display: inline-block; }
+    .diagram { background: #16213e; border-radius: 8px; padding: 20px; margin: 20px 0; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>nAIVE - AI-Native Interactive Visual Engine</h1>
+
+  <h2>System Architecture</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+graph TB
+    subgraph CLI["CLI Layer"]
+        CLAP["clap CLI Parser<br/>--scene --pipeline --project"]
+        MAIN["main.rs<br/>Entry Point"]
+    end
+
+    subgraph ENGINE["Engine Core (engine.rs)"]
+        EL["winit Event Loop<br/>ApplicationHandler"]
+        DT["Delta Time"]
+        PAUSE["Pause State"]
+    end
+
+    subgraph ECS["ECS World (hecs)"]
+        SW["SceneWorld<br/>world + entity_registry"]
+        TRANSFORM["Transform"]
+        MESH_R["MeshRenderer"]
+        PL["PointLight"]
+        PLAYER["Player"]
+        CAM["Camera"]
+        SCRIPT_C["Script"]
+        TAGS["Tags / EntityId"]
+        CC["CharacterController"]
+        GS["GaussianSplat"]
+    end
+
+    subgraph SCENE["Scene System"]
+        YAML_P["YAML Parser<br/>serde_yaml"]
+        SCENE_F["SceneFile<br/>entities + settings"]
+        SPAWN["spawn_all_entities()"]
+        RECONCILE["reconcile_scene()<br/>hot-reload diff"]
+    end
+
+    subgraph RENDER["Rendering Pipeline"]
+        GPU["GpuState<br/>wgpu device/queue/surface"]
+        PIPE_YAML["Pipeline YAML<br/>DAG of passes"]
+        COMPILED["CompiledPipeline<br/>resources + passes"]
+        GBUF["G-Buffer Pass<br/>albedo + normal + depth"]
+        LIGHT["Lighting Pass<br/>point lights + ambient"]
+        TONE["Tonemap Pass<br/>HDR → SDR"]
+        SPLAT_P["Splat Pass<br/>Gaussian billboards"]
+        FWD["Forward Fallback"]
+    end
+
+    subgraph SHADER["Shader System"]
+        SLANG["SLANG Compiler<br/>shader-slang crate"]
+        WGSL["WGSL Fallback"]
+        REFLECT["Reflection API<br/>auto bind group layouts"]
+    end
+
+    subgraph PHYSICS["Physics (Rapier 3D)"]
+        PW["PhysicsWorld<br/>rigid bodies + colliders"]
+        CHAR["Character Controller<br/>move_character()"]
+        STEP["step() + sync_to_ecs()"]
+    end
+
+    subgraph SCRIPTING["Lua Scripting (mlua)"]
+        LUA["ScriptRuntime<br/>single Lua VM"]
+        ENV["Per-Entity Environments<br/>self table + metatable"]
+        HOOKS["Lifecycle Hooks<br/>init / update / on_reload"]
+        API_IN["input API<br/>pressed / just_pressed"]
+        API_ENT["entity API<br/>get/set position/rotation/light"]
+        API_EVT["events API<br/>events.emit()"]
+        API_PHY["physics API<br/>raycast / overlap"]
+        GAME_T["game table<br/>shared state"]
+    end
+
+    subgraph INPUT["Input System"]
+        BINDINGS["bindings.yaml<br/>action → key mapping"]
+        IS["InputState<br/>held / just_pressed / delta"]
+        SYNTH["Synthetic Injection<br/>inject_key_press()"]
+        CURSOR["Cursor Capture<br/>FPS mouse lock"]
+    end
+
+    subgraph EVENTS["Event System"]
+        EB["EventBus<br/>ring buffer log"]
+        SCHEMA["events/schema.yaml<br/>validation"]
+        EMIT["emit() / flush() / tick()"]
+    end
+
+    subgraph ASSETS["Asset System"]
+        MESH_C["MeshCache<br/>procedural cube fallback"]
+        MAT_C["MaterialCache<br/>YAML materials"]
+        SPLAT_C["SplatCache<br/>PLY parser + GPU buffers"]
+    end
+
+    subgraph HOT["Hot-Reload (notify)"]
+        WATCH["File Watcher"]
+        W_SHADER["Shader Changed"]
+        W_SCENE["Scene Changed"]
+        W_MAT["Material Changed"]
+        W_PIPE["Pipeline Changed"]
+        W_SCRIPT["Script Changed"]
+        W_SPLAT["Splat Changed"]
+    end
+
+    subgraph IPC["External Control"]
+        SOCK["Unix Domain Socket<br/>/tmp/naive-runtime.sock"]
+        CMD["Command Protocol<br/>JSON request/response"]
+        MCP["MCP Server Binary<br/>naive_mcp"]
+    end
+
+    subgraph AUDIO["Audio (Kira)"]
+        AUDIO_S["AudioSystem<br/>spatial audio"]
+    end
+
+    subgraph TWEEN["Animation"]
+        TW["TweenSystem<br/>property animation"]
+    end
+
+    CLAP --> MAIN
+    MAIN --> EL
+
+    EL -->|"WindowEvent"| IS
+    EL -->|"DeviceEvent"| IS
+    EL -->|"RedrawRequested"| DT
+
+    DT --> CHAR
+    DT --> HOOKS
+    DT --> EMIT
+    DT --> TW
+
+    YAML_P --> SCENE_F
+    SCENE_F --> SPAWN
+    SPAWN --> SW
+    SPAWN --> MESH_C
+    SPAWN --> MAT_C
+
+    SW --> TRANSFORM
+    SW --> MESH_R
+    SW --> PL
+    SW --> PLAYER
+    SW --> CAM
+    SW --> SCRIPT_C
+    SW --> CC
+    SW --> GS
+
+    IS -->|"raw ptr"| API_IN
+    SW -->|"raw mut ptr"| API_ENT
+    EB -->|"raw mut ptr"| API_EVT
+    PW -->|"raw ptr"| API_PHY
+
+    LUA --> ENV
+    ENV --> HOOKS
+    ENV --> GAME_T
+
+    CHAR --> PW
+    STEP --> SW
+
+    PIPE_YAML --> COMPILED
+    COMPILED --> GBUF
+    COMPILED --> LIGHT
+    COMPILED --> TONE
+    COMPILED --> SPLAT_P
+    SLANG --> WGSL
+    SLANG --> REFLECT
+
+    WATCH --> W_SHADER
+    WATCH --> W_SCENE
+    WATCH --> W_SCRIPT
+    WATCH --> W_PIPE
+
+    SOCK --> CMD
+    CMD -->|"inject_input"| SYNTH
+    CMD -->|"emit_event"| EB
+    CMD -->|"query/modify"| SW
+    MCP --> SOCK
+
+    SYNTH --> IS
+
+    classDef core fill:#e94560,stroke:#0f3460,color:#fff
+    classDef ecs fill:#0f3460,stroke:#e94560,color:#fff
+    classDef render fill:#533483,stroke:#e94560,color:#fff
+    classDef script fill:#1a5276,stroke:#e94560,color:#fff
+    classDef input fill:#1e8449,stroke:#fff,color:#fff
+    classDef event fill:#b7950b,stroke:#fff,color:#000
+
+    class EL,DT,PAUSE core
+    class SW,TRANSFORM,MESH_R,PL,PLAYER,CAM,SCRIPT_C,CC,GS,TAGS ecs
+    class GPU,COMPILED,GBUF,LIGHT,TONE,SPLAT_P,FWD render
+    class LUA,ENV,HOOKS,API_IN,API_ENT,API_EVT,API_PHY,GAME_T script
+    class IS,BINDINGS,SYNTH,CURSOR input
+    class EB,SCHEMA,EMIT event
+    </pre>
+  </div>
+
+  <h2>Frame Update Sequence</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+    participant W as winit
+    participant E as Engine
+    participant I as InputState
+    participant P as PhysicsWorld
+    participant S as ScriptRuntime
+    participant EB as EventBus
+    participant R as Renderer
+
+    W->>E: KeyboardInput / MouseInput
+    E->>I: handle_window_event()
+
+    W->>E: RedrawRequested
+    E->>E: calculate delta_time
+
+    Note over E: Escape → release cursor
+    Note over E: Any key → capture cursor
+
+    E->>I: axis_2d() / pressed()
+    E->>P: move_character(desired_velocity)
+    P->>P: step(dt)
+    P-->>E: sync_to_ecs()
+
+    loop For each Script entity
+        E->>S: call_update(entity, dt)
+        S->>I: input.just_pressed()
+        S->>EB: events.emit()
+        S->>E: entity.set_position()
+    end
+
+    E->>EB: tick(dt) + flush()
+    E->>E: update_transforms()
+
+    E->>R: execute_pipeline()
+    R->>R: G-Buffer Pass
+    R->>R: Splat Pass
+    R->>R: Lighting Pass
+    R->>R: Tonemap Pass
+
+    E->>I: begin_frame() [clear transient]
+    E->>W: request_redraw()
+    </pre>
+  </div>
+
+  <h2>Data Flow: Scene Loading</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+    A["relic.yaml"] -->|"serde_yaml"| B["SceneFile"]
+    B -->|"spawn_all_entities()"| C["hecs World"]
+    C --> D["Transform"]
+    C --> E["MeshRenderer"]
+    C --> F["PointLight"]
+    C --> G["Camera + Player"]
+    C --> H["CharacterController"]
+    C --> I["Script"]
+
+    E -->|"mesh path"| J["MeshCache<br/>procedural cube"]
+    E -->|"material path"| K["MaterialCache<br/>YAML → uniforms"]
+
+    H -->|"Rapier body"| L["PhysicsWorld"]
+
+    I -->|"load .lua"| M["ScriptRuntime"]
+    M -->|"raw ptrs"| N["InputState"]
+    M -->|"raw ptrs"| O["SceneWorld"]
+    M -->|"raw ptrs"| P["EventBus"]
+    M -->|"raw ptrs"| L
+
+    style A fill:#e94560
+    style C fill:#0f3460,color:#fff
+    style L fill:#533483,color:#fff
+    style M fill:#1a5276,color:#fff
+    </pre>
+  </div>
+
+  <h2>Deferred Rendering Pipeline</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+    subgraph GBuf["G-Buffer Pass"]
+        G1["Vertex Shader<br/>MVP transform"]
+        G2["Fragment Shader<br/>output albedo, normal, depth"]
+    end
+
+    subgraph Splat["Splat Pass (optional)"]
+        S1["Billboard Quads<br/>sorted back-to-front"]
+        S2["2D Gaussian<br/>alpha blending"]
+    end
+
+    subgraph Light["Lighting Pass"]
+        L1["Fullscreen Quad"]
+        L2["Reconstruct world pos<br/>inv_view_projection × depth"]
+        L3["Point Light Loop<br/>attenuation = I / (1+d²) × range⁴"]
+        L4["Depth Composite<br/>mesh vs splat"]
+    end
+
+    subgraph Tone["Tonemap Pass"]
+        T1["Reinhard Tonemap"]
+        T2["Gamma Correction"]
+    end
+
+    GBuf -->|"albedo_rt<br/>normal_rt<br/>depth"| Light
+    Splat -->|"splat_color<br/>splat_depth"| Light
+    Light -->|"hdr_rt"| Tone
+    Tone -->|"swapchain"| SCREEN["Display"]
+
+    style GBuf fill:#0f3460,color:#fff
+    style Splat fill:#533483,color:#fff
+    style Light fill:#1a5276,color:#fff
+    style Tone fill:#e94560,color:#fff
+    </pre>
+  </div>
+
+  <h2>Relic Game Entity Map</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+graph TD
+    subgraph Room["Dungeon Room 16×5×16"]
+        FLOOR["floor<br/>stone cube"]
+        CEIL["ceiling<br/>stone cube"]
+        WN["wall_north"]
+        WS["wall_south"]
+        WE["wall_east"]
+        WW["wall_west"]
+    end
+
+    subgraph Gameplay["Interactive Entities"]
+        PLAYER["player<br/>Camera + CharacterController<br/>player_fps.lua"]
+        GATE["gate<br/>door_swing.lua<br/>E to open"]
+        GUARDIAN["guardian<br/>guardian.lua<br/>patrol → chase → attack"]
+        RELIC["relic<br/>relic_pickup.lua<br/>E to collect → win"]
+    end
+
+    subgraph Decor["Decoration"]
+        T1["torch_01<br/>torch_flicker.lua"]
+        T2["torch_02"]
+        T3["torch_03"]
+        T4["torch_04"]
+        P1["pillar_01"]
+        P2["pillar_02"]
+        P3["pillar_03"]
+        P4["pillar_04"]
+        PED["pedestal"]
+    end
+
+    PLAYER -->|"interact"| GATE
+    PLAYER -->|"attack"| GUARDIAN
+    PLAYER -->|"interact"| RELIC
+    GUARDIAN -->|"guards"| RELIC
+    RELIC -->|"sits on"| PED
+
+    style PLAYER fill:#e94560,color:#fff
+    style GUARDIAN fill:#1e8449,color:#fff
+    style RELIC fill:#b7950b,color:#000
+    style GATE fill:#784212,color:#fff
+    </pre>
+  </div>
+
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#0f3460',
+        primaryTextColor: '#e0e0e0',
+        primaryBorderColor: '#e94560',
+        lineColor: '#e94560',
+        secondaryColor: '#533483',
+        tertiaryColor: '#1a5276'
+      }
+    });
+  </script>
+</body>
+</html>
