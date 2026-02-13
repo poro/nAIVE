@@ -996,10 +996,18 @@ impl ApplicationHandler for Engine {
                     }
                 }
 
-                // Handle mouse click to capture cursor
+                // Handle mouse click or any movement key to capture cursor
                 if let Some(input) = &self.input_state {
                     if !input.cursor_captured {
-                        if input.just_pressed("attack") {
+                        let should_capture = input.just_pressed("attack")
+                            || input.just_pressed("move_forward")
+                            || input.just_pressed("move_backward")
+                            || input.just_pressed("move_left")
+                            || input.just_pressed("move_right")
+                            || input.just_pressed("jump")
+                            || input.just_pressed("interact");
+                        if should_capture {
+                            tracing::info!("Capturing cursor for FPS mode");
                             if let Some(gpu) = &self.gpu {
                                 let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Locked)
                                     .or_else(|_| gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Confined));
