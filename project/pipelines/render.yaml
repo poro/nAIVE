@@ -16,6 +16,14 @@ resources:
     type: texture_2d
     format: depth32f
     size: viewport
+  - name: splat_color
+    type: texture_2d
+    format: rgba16f
+    size: viewport
+  - name: splat_depth
+    type: texture_2d
+    format: depth32f
+    size: viewport
   - name: hdr_buffer
     type: texture_2d
     format: rgba16f
@@ -33,6 +41,15 @@ passes:
       normal: gbuffer_normal
       depth: gbuffer_depth
 
+  - name: splat_pass
+    type: splat
+    shader: shaders/passes/gaussian_splat.slang
+    inputs:
+      scene_splats: auto
+    outputs:
+      color: splat_color
+      depth: splat_depth
+
   - name: lighting_pass
     type: fullscreen
     shader: shaders/passes/deferred_light.slang
@@ -40,6 +57,8 @@ passes:
       gbuffer_albedo: gbuffer_albedo
       gbuffer_normal: gbuffer_normal
       gbuffer_depth: gbuffer_depth
+      splat_color: splat_color
+      splat_depth: splat_depth
       scene_lights: auto
     outputs:
       color: hdr_buffer

@@ -9,6 +9,7 @@ mod reflect;
 mod renderer;
 mod scene;
 mod shader;
+mod splat;
 mod transform;
 mod watcher;
 mod world;

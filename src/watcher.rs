@@ -11,6 +11,7 @@ pub enum WatchEvent {
     SceneChanged(PathBuf),
     MaterialChanged(PathBuf),
     PipelineChanged(PathBuf),
+    SplatChanged(PathBuf),
 }
 
 /// Creates a file watcher on the project directory and returns a receiver
@@ -48,6 +49,10 @@ pub fn start_watching_all(
                                             tx.send(WatchEvent::PipelineChanged(path.clone()));
                                     }
                                 }
+                                "ply" => {
+                                    tracing::info!("Splat file changed: {:?}", path);
+                                    let _ = tx.send(WatchEvent::SplatChanged(path.clone()));
+                                }
                                 _ => {}
                             }
                         }
@@ -65,6 +70,7 @@ pub fn start_watching_all(
         project_root.join("shaders"),
         project_root.join("scenes"),
         project_root.join("assets/materials"),
+        project_root.join("assets/splats"),
         project_root.join("pipelines"),
     ];
 

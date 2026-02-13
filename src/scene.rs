@@ -81,6 +81,8 @@ pub struct ComponentMap {
     pub camera: Option<CameraDef>,
     #[serde(default)]
     pub point_light: Option<PointLightDef>,
+    #[serde(default)]
+    pub gaussian_splat: Option<GaussianSplatDef>,
     /// Absorbs unknown component types for forward compatibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
@@ -149,6 +151,11 @@ pub struct PointLightDef {
     pub range: f32,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GaussianSplatDef {
+    pub source: String,
+}
+
 fn default_white() -> [f32; 3] {
     [1.0, 1.0, 1.0]
 }
@@ -213,6 +220,9 @@ fn merge_entity(parent: &EntityDef, child: &EntityDef) -> EntityDef {
     }
     if merged.components.point_light.is_none() {
         merged.components.point_light = parent.components.point_light.clone();
+    }
+    if merged.components.gaussian_splat.is_none() {
+        merged.components.gaussian_splat = parent.components.gaussian_splat.clone();
     }
 
     // Merge extra components from parent that child doesn't have

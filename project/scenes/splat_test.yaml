@@ -1,0 +1,41 @@
+name: "Phase 4 Splat Test"
+settings:
+  ambient_light: [0.2, 0.2, 0.25]
+  gravity: [0, -9.81, 0]
+
+entities:
+  - id: main_camera
+    components:
+      transform:
+        position: [0, 2, 5]
+        rotation: [0, 0, 0]
+      camera:
+        fov: 75
+        near: 0.1
+        far: 100
+        role: main
+
+  - id: cube_01
+    components:
+      transform:
+        position: [-2, 0, 0]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/default.yaml
+
+  - id: splat_cloud
+    components:
+      transform:
+        position: [0, 0, 0]
+      gaussian_splat:
+        source: assets/splats/test.ply
+
+  - id: sun_light
+    components:
+      transform:
+        position: [5, 10, -3]
+      point_light:
+        color: [1.0, 0.95, 0.9]
+        intensity: 10.0
+        range: 50.0

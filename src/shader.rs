@@ -546,6 +546,232 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     .to_string()
 }
 
+/// Hardcoded WGSL for the Gaussian splat rendering pass.
+/// Renders each splat as a camera-facing billboard quad with 2D Gaussian falloff.
+pub fn get_splat_render_wgsl() -> String {
+    r#"
+struct CameraUniform {
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    view_projection: mat4x4<f32>,
+    position: vec3<f32>,
+    near_plane: f32,
+    far_plane: f32,
+    _pad1: f32,
+    viewport_size: vec2<f32>,
+    _padding: f32,
+    _pad2: vec3<f32>,
+};
+
+struct GaussianSplat {
+    position: vec3<f32>,
+    opacity: f32,
+    scale: vec3<f32>,
+    _pad0: f32,
+    rotation: vec4<f32>,
+    sh_dc: vec3<f32>,
+    _pad1: f32,
+};
+
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+
+@group(1) @binding(0) var<storage, read> splats: array<GaussianSplat>;
+@group(1) @binding(1) var<storage, read> sorted_indices: array<u32>;
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec3<f32>,
+    @location(2) opacity: f32,
+};
+
+// Build a rotation matrix from a quaternion
+fn quat_to_mat3(q: vec4<f32>) -> mat3x3<f32> {
+    let x = q.x; let y = q.y; let z = q.z; let w = q.w;
+    let x2 = x + x; let y2 = y + y; let z2 = z + z;
+    let xx = x * x2; let xy = x * y2; let xz = x * z2;
+    let yy = y * y2; let yz = y * z2; let zz = z * z2;
+    let wx = w * x2; let wy = w * y2; let wz = w * z2;
+    return mat3x3<f32>(
+        vec3<f32>(1.0 - (yy + zz), xy + wz, xz - wy),
+        vec3<f32>(xy - wz, 1.0 - (xx + zz), yz + wx),
+        vec3<f32>(xz + wy, yz - wx, 1.0 - (xx + yy)),
+    );
+}
+
+@vertex
+fn vs_main(
+    @builtin(instance_index) instance_index: u32,
+    @builtin(vertex_index) vertex_index: u32,
+) -> VertexOutput {
+    var out: VertexOutput;
+
+    // Look up the sorted splat index
+    let splat_idx = sorted_indices[instance_index];
+    let splat = splats[splat_idx];
+
+    // Quad vertices: two triangles forming a quad [-1,1] x [-1,1]
+    // Triangle 1: (0,1,2) = (-1,-1), (1,-1), (1,1)
+    // Triangle 2: (3,4,5) = (-1,-1), (1,1), (-1,1)
+    var quad_pos: array<vec2<f32>, 6> = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 1.0, -1.0),
+        vec2<f32>( 1.0,  1.0),
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 1.0,  1.0),
+        vec2<f32>(-1.0,  1.0),
+    );
+
+    let uv = quad_pos[vertex_index];
+    out.uv = uv;
+    out.color = splat.sh_dc;
+    out.opacity = splat.opacity;
+
+    // Compute the 3D covariance axes from rotation and scale
+    let rot_mat = quat_to_mat3(splat.rotation);
+    let scaled_x = rot_mat[0] * splat.scale.x;
+    let scaled_y = rot_mat[1] * splat.scale.y;
+
+    // Billboard: offset the splat center in world space along the covariance axes
+    // Use 2x scale for the quad extent (covers ~95% of Gaussian at 2 sigma)
+    let world_offset = scaled_x * uv.x * 2.0 + scaled_y * uv.y * 2.0;
+    let world_pos = splat.position + world_offset;
+
+    out.clip_position = camera.view_projection * vec4<f32>(world_pos, 1.0);
+
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // 2D Gaussian falloff: exp(-0.5 * |uv|^2)
+    let d = dot(in.uv, in.uv);
+    if d > 4.0 {
+        discard;
+    }
+    let alpha = in.opacity * exp(-0.5 * d);
+
+    // Threshold very transparent fragments
+    if alpha < 0.004 {
+        discard;
+    }
+
+    return vec4<f32>(in.color * alpha, alpha);
+}
+"#
+    .to_string()
+}
+
+/// Hardcoded WGSL for the deferred lighting pass with splat compositing.
+/// Composites splat_color over mesh lighting using depth comparison.
+pub fn get_deferred_light_with_splats_wgsl() -> String {
+    r#"
+struct CameraUniform {
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    view_projection: mat4x4<f32>,
+    position: vec3<f32>,
+    near_plane: f32,
+    far_plane: f32,
+    _pad1: f32,
+    viewport_size: vec2<f32>,
+    _padding: f32,
+    _pad2: vec3<f32>,
+};
+
+struct PointLight {
+    position: vec3<f32>,
+    range: f32,
+    color: vec3<f32>,
+    intensity: f32,
+};
+
+struct LightingUniforms {
+    light_count: u32,
+    _pad: vec3<u32>,
+    lights: array<PointLight, 32>,
+};
+
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+
+@group(1) @binding(0) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(1) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(2) var gbuffer_depth: texture_depth_2d;
+@group(1) @binding(3) var gbuffer_sampler: sampler;
+
+@group(2) @binding(0) var<uniform> lighting: LightingUniforms;
+
+@group(3) @binding(0) var splat_color_tex: texture_2d<f32>;
+@group(3) @binding(1) var splat_depth_tex: texture_depth_2d;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var out: VertexOutput;
+    let uv = vec2<f32>(f32((vertex_index << 1u) & 2u), f32(vertex_index & 2u));
+    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = vec2<f32>(uv.x, 1.0 - uv.y);
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let tex_coords = vec2<i32>(in.position.xy);
+    let albedo = textureLoad(gbuffer_albedo, tex_coords, 0).rgb;
+    let normal_raw = textureLoad(gbuffer_normal, tex_coords, 0).rgb;
+    let normal = normalize(normal_raw * 2.0 - 1.0);
+    let mesh_depth = textureLoad(gbuffer_depth, tex_coords, 0);
+
+    // Sample splat targets
+    let splat_color = textureLoad(splat_color_tex, tex_coords, 0);
+    let splat_depth = textureLoad(splat_depth_tex, tex_coords, 0);
+
+    // Compute mesh lighting
+    var mesh_color = albedo * vec3<f32>(0.08, 0.08, 0.1);
+
+    for (var i = 0u; i < lighting.light_count; i = i + 1u) {
+        let light = lighting.lights[i];
+        let light_dir = normalize(light.position);
+        let ndotl = max(dot(normal, light_dir), 0.0);
+        let attenuation = light.intensity;
+        mesh_color = mesh_color + albedo * light.color * ndotl * attenuation;
+    }
+
+    if lighting.light_count == 0u {
+        let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
+        let ndotl = max(dot(normal, light_dir), 0.0);
+        mesh_color = albedo * (vec3<f32>(0.15, 0.15, 0.18) + ndotl * 0.85);
+    }
+
+    let mesh_valid = mesh_depth < 1.0;
+    let splat_valid = splat_color.a > 0.004;
+
+    // Depth compositing
+    if splat_valid && (!mesh_valid || splat_depth < mesh_depth) {
+        // Splat is closer or mesh is empty: blend splat over background
+        let bg = select(vec3<f32>(0.0), mesh_color, mesh_valid);
+        let blended = splat_color.rgb + bg * (1.0 - splat_color.a);
+        return vec4<f32>(blended, 1.0);
+    } else if mesh_valid {
+        // Mesh is closer: use mesh lighting, blend splat behind
+        if splat_valid {
+            let blended = mesh_color * (1.0 - splat_color.a * 0.0) + splat_color.rgb * 0.0;
+            return vec4<f32>(mesh_color, 1.0);
+        }
+        return vec4<f32>(mesh_color, 1.0);
+    }
+
+    // Nothing at this pixel
+    discard;
+}
+"#
+    .to_string()
+}
+
 /// Hardcoded WGSL fallback for the tone mapping pass.
 pub fn get_tonemap_wgsl() -> String {
     r#"

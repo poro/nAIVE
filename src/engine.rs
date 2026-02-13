@@ -10,10 +10,11 @@ use winit::window::{Window, WindowId};
 
 use crate::camera::CameraState;
 use crate::cli::CliArgs;
-use crate::components::{Camera, CameraRole, Transform};
+use crate::components::{Camera, CameraRole, GaussianSplat, Transform};
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
 use crate::pipeline::CompiledPipeline;
+use crate::splat::SplatCache;
 use crate::renderer::{DrawUniformPool, GpuState};
 use crate::watcher::WatchEvent;
 use crate::world::SceneWorld;
@@ -31,6 +32,7 @@ pub struct Engine {
     pub scene_world: Option<SceneWorld>,
     pub mesh_cache: MeshCache,
     pub material_cache: MaterialCache,
+    pub splat_cache: SplatCache,
     pub camera_state: Option<CameraState>,
     pub draw_pool: Option<DrawUniformPool>,
     pub forward_pipeline: Option<wgpu::RenderPipeline>,
@@ -53,6 +55,7 @@ impl Engine {
             scene_world: None,
             mesh_cache: MeshCache::new(),
             material_cache: MaterialCache::new(),
+            splat_cache: SplatCache::new(),
             camera_state: None,
             draw_pool: None,
             forward_pipeline: None,
@@ -135,6 +138,7 @@ impl Engine {
             &self.project_root,
             &mut self.mesh_cache,
             &mut self.material_cache,
+            &mut self.splat_cache,
         );
 
         self.scene_world = Some(scene_world);
@@ -325,9 +329,34 @@ impl Engine {
             &self.project_root,
             &mut self.mesh_cache,
             &mut self.material_cache,
+            &mut self.splat_cache,
         );
 
         tracing::info!("Scene hot-reload complete");
+    }
+
+    /// Handle a splat (.ply) file change by invalidating the cache and reloading.
+    fn handle_splat_reload(&mut self, changed_path: &Path) {
+        tracing::info!("Hot-reloading splat: {:?}", changed_path);
+
+        // Try to extract relative path from project root
+        if let Ok(relative) = changed_path.strip_prefix(&self.project_root) {
+            let relative_str = relative.to_string_lossy().to_string();
+            self.splat_cache.invalidate(&relative_str);
+        }
+
+        // Also invalidate by filename in case of different path resolution
+        if let Some(file_name) = changed_path.file_name() {
+            let name_str = file_name.to_string_lossy().to_string();
+            self.splat_cache.invalidate(&name_str);
+        }
+
+        // Reloading will happen automatically on next frame when get_or_load is called
+        // Force pipeline recompilation to pick up new splat data
+        if self.compiled_pipeline.is_some() {
+            self.compiled_pipeline = None;
+            self.try_load_pipeline();
+        }
     }
 
     /// Handle a pipeline YAML file change.
@@ -351,6 +380,7 @@ impl Engine {
 
         let mut shader_paths = std::collections::HashSet::new();
         let mut scene_paths = std::collections::HashSet::new();
+        let mut splat_paths = std::collections::HashSet::new();
         let mut pipeline_changed = false;
 
         for event in events {
@@ -368,6 +398,9 @@ impl Engine {
                     tracing::info!("Pipeline file changed: {:?}", path);
                     pipeline_changed = true;
                 }
+                WatchEvent::SplatChanged(path) => {
+                    splat_paths.insert(path);
+                }
             }
         }
 
@@ -377,6 +410,10 @@ impl Engine {
 
         for path in scene_paths {
             self.handle_scene_reload(&path);
+        }
+
+        for path in &splat_paths {
+            self.handle_splat_reload(path);
         }
 
         if pipeline_changed {
@@ -504,6 +541,22 @@ impl ApplicationHandler for Engine {
                     );
                     self.update_camera();
 
+                    // Sort splats for correct alpha blending (CPU back-to-front)
+                    if let (Some(gpu), Some(scene_world), Some(camera_state)) =
+                        (&self.gpu, &self.scene_world, &self.camera_state)
+                    {
+                        let view_matrix = camera_state.view_matrix();
+                        for (_entity, splat) in
+                            scene_world.world.query::<&GaussianSplat>().iter()
+                        {
+                            self.splat_cache.sort_splats(
+                                splat.splat_handle,
+                                &view_matrix,
+                                &gpu.queue,
+                            );
+                        }
+                    }
+
                     // Phase 3: use compiled pipeline if available
                     if self.compiled_pipeline.is_some() {
                         if let (
@@ -527,6 +580,7 @@ impl ApplicationHandler for Engine {
                                 draw_pool,
                                 &self.mesh_cache,
                                 &self.material_cache,
+                                &self.splat_cache,
                             );
                         }
                     } else {

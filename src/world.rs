@@ -7,6 +7,7 @@ use crate::components::*;
 use crate::mesh::MeshCache;
 use crate::material::MaterialCache;
 use crate::scene::{EntityDef, SceneFile};
+use crate::splat::SplatCache;
 
 /// Central scene state: the ECS world plus entity name registry.
 pub struct SceneWorld {
@@ -35,9 +36,10 @@ pub fn spawn_all_entities(
     project_root: &Path,
     mesh_cache: &mut MeshCache,
     material_cache: &mut MaterialCache,
+    splat_cache: &mut SplatCache,
 ) {
     for entity_def in &scene.entities {
-        spawn_entity(scene_world, entity_def, device, project_root, mesh_cache, material_cache);
+        spawn_entity(scene_world, entity_def, device, project_root, mesh_cache, material_cache, splat_cache);
     }
     scene_world.current_scene = Some(scene.clone());
     tracing::info!(
@@ -55,6 +57,7 @@ fn spawn_entity(
     project_root: &Path,
     mesh_cache: &mut MeshCache,
     material_cache: &mut MaterialCache,
+    splat_cache: &mut SplatCache,
 ) {
     let entity_id = EntityId(entity_def.id.clone());
     let tags = Tags(entity_def.tags.clone());
@@ -72,6 +75,21 @@ fn spawn_entity(
     } else {
         Transform::default()
     };
+
+    // Handle gaussian splat entities
+    if let Some(gs) = &entity_def.components.gaussian_splat {
+        let splat_handle = match splat_cache.get_or_load(device, project_root, &gs.source) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("Failed to load splat '{}' for entity '{}': {}", gs.source, entity_def.id, e);
+                return;
+            }
+        };
+        let gaussian_splat = GaussianSplat { splat_handle };
+        let entity = scene_world.world.spawn((entity_id, tags, transform, gaussian_splat));
+        scene_world.entity_registry.insert(entity_def.id.clone(), entity);
+        return;
+    }
 
     // Start with base components all entities have
     let entity = if let Some(mr) = &entity_def.components.mesh_renderer {
@@ -178,11 +196,12 @@ pub fn reconcile_scene(
     project_root: &Path,
     mesh_cache: &mut MeshCache,
     material_cache: &mut MaterialCache,
+    splat_cache: &mut SplatCache,
 ) {
     let old_scene = match &scene_world.current_scene {
         Some(s) => s.clone(),
         None => {
-            spawn_all_entities(scene_world, new_scene, device, project_root, mesh_cache, material_cache);
+            spawn_all_entities(scene_world, new_scene, device, project_root, mesh_cache, material_cache, splat_cache);
             return;
         }
     };
@@ -201,7 +220,7 @@ pub fn reconcile_scene(
     // 2. Spawn new entities
     for entity_def in &new_scene.entities {
         if !old_ids.contains(entity_def.id.as_str()) {
-            spawn_entity(scene_world, entity_def, device, project_root, mesh_cache, material_cache);
+            spawn_entity(scene_world, entity_def, device, project_root, mesh_cache, material_cache, splat_cache);
             tracing::info!("Hot-reload: spawned entity '{}'", entity_def.id);
         }
     }

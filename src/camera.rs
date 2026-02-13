@@ -121,4 +121,9 @@ impl CameraState {
 
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
     }
+
+    /// Get the current view matrix.
+    pub fn view_matrix(&self) -> Mat4 {
+        Mat4::from_cols_array_2d(&self.uniform.view)
+    }
 }

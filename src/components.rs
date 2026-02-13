@@ -39,6 +39,16 @@ pub struct MeshHandle(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MaterialHandle(pub usize);
 
+/// Newtype handle into the splat cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SplatHandle(pub usize);
+
+/// Identifies this entity as a Gaussian splat cloud to render.
+#[derive(Debug, Clone)]
+pub struct GaussianSplat {
+    pub splat_handle: SplatHandle,
+}
+
 /// Camera component.
 #[derive(Debug, Clone)]
 pub struct Camera {
