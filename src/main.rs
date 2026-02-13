@@ -1,6 +1,8 @@
+mod audio;
 mod camera;
 mod cli;
 mod components;
+mod events;
 mod engine;
 mod input;
 mod material;
@@ -14,6 +16,7 @@ mod scripting;
 mod shader;
 mod splat;
 mod transform;
+mod tween;
 mod watcher;
 mod world;
 

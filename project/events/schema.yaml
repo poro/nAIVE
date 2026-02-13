@@ -1,0 +1,29 @@
+events:
+  player.damaged:
+    description: "Player took damage"
+    fields:
+      - amount
+      - source
+  player.died:
+    description: "Player health reached zero"
+    fields: []
+  player.interacted:
+    description: "Player pressed interact on an object"
+    fields:
+      - target_entity
+  door.opened:
+    description: "A door was opened"
+    fields:
+      - door_id
+  item.collected:
+    description: "Player collected an item"
+    fields:
+      - item_id
+      - item_type
+  enemy.defeated:
+    description: "An enemy was defeated"
+    fields:
+      - enemy_id
+  game.level_complete:
+    description: "The level was completed"
+    fields: []

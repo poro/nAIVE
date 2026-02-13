@@ -54,6 +54,9 @@ rapier3d = { version = "0.22", features = ["simd-stable"] }
 # Scripting
 mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }
 
+# Audio
+kira = "0.9"
+
 # Time
 instant = "0.1"
 

@@ -8,9 +8,12 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
+use crate::audio::AudioSystem;
 use crate::camera::CameraState;
 use crate::cli::CliArgs;
 use crate::components::{Camera, CameraRole, GaussianSplat, Player, Transform};
+use crate::events::EventBus;
+use crate::tween::TweenSystem;
 use crate::input::InputState;
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
@@ -55,6 +58,11 @@ pub struct Engine {
 
     // Phase 6: scripting
     pub script_runtime: Option<ScriptRuntime>,
+
+    // Phase 7: events + audio + tweens
+    pub event_bus: EventBus,
+    pub audio_system: AudioSystem,
+    pub tween_system: TweenSystem,
 }
 
 impl Engine {
@@ -81,6 +89,9 @@ impl Engine {
             last_frame_time: None,
             delta_time: 1.0 / 60.0,
             script_runtime: None,
+            event_bus: EventBus::new(1000),
+            audio_system: AudioSystem::new(),
+            tween_system: TweenSystem::new(),
         }
     }
 
@@ -349,13 +360,16 @@ impl Engine {
             // Mark all as initialized
         }
         if let Some(sw) = &mut self.scene_world {
-            for (_entity, mut script) in sw.world.query::<&mut Script>().iter() {
+            for (_entity, script) in sw.world.query::<&mut Script>().iter() {
                 script.initialized = true;
             }
         }
 
         self.script_runtime = Some(script_runtime);
         tracing::info!("Script runtime initialized");
+
+        // Phase 7: Initialize event bus schema and audio
+        self.event_bus.load_schema(&self.project_root);
 
         // Phase 3: try to compile the render pipeline if --pipeline was given
         self.try_load_pipeline();
@@ -960,6 +974,22 @@ impl ApplicationHandler for Engine {
                     {
                         for (entity, _script) in scene_world.world.query::<&Script>().iter() {
                             script_runtime.call_update(entity, dt);
+                        }
+                    }
+
+                    // Phase 7: Tick event bus and tweens
+                    self.event_bus.tick(dt as f64);
+                    self.event_bus.flush();
+                    let _tween_results = self.tween_system.update(dt);
+                    self.audio_system.cleanup();
+
+                    // Update listener position for spatial audio
+                    if let Some(scene_world) = &self.scene_world {
+                        for (_entity, (transform, _player)) in
+                            scene_world.world.query::<(&Transform, &Player)>().iter()
+                        {
+                            self.audio_system.set_listener_position(transform.position);
+                            break;
                         }
                     }
 
