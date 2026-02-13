@@ -460,8 +460,8 @@ struct CameraUniform {
     far_plane: f32,
     _pad1: f32,
     viewport_size: vec2<f32>,
-    _padding: f32,
-    _pad2: vec3<f32>,
+    _pad2: vec4<f32>,
+    inv_view_projection: mat4x4<f32>,
 };
 
 struct PointLight {
@@ -501,10 +501,10 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 }
 
 fn reconstruct_world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
-    let ndc = vec4<f32>(uv * 2.0 - 1.0, depth, 1.0);
-    let inv_vp = camera.view_projection;
-    // For simplicity in fallback, approximate position from camera
-    return camera.position + vec3<f32>(ndc.x, ndc.y, 0.0);
+    // Convert UV [0,1] to clip space [-1,1], flip Y for NDC
+    let clip = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, depth, 1.0);
+    let world_h = camera.inv_view_projection * clip;
+    return world_h.xyz / world_h.w;
 }
 
 @fragment
@@ -520,16 +520,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
+    // Reconstruct world position from depth
+    let uv = in.uv;
+    let world_pos = reconstruct_world_pos(uv, depth);
+
     // Ambient light
     var color = albedo * vec3<f32>(0.08, 0.08, 0.1);
 
-    // Accumulate point lights
+    // Accumulate point lights with proper attenuation
     for (var i = 0u; i < lighting.light_count; i = i + 1u) {
         let light = lighting.lights[i];
-        // Simple directional approximation from light position
-        let light_dir = normalize(light.position);
+        let to_light = light.position - world_pos;
+        let dist = length(to_light);
+
+        // Range-based cutoff
+        if dist > light.range {
+            continue;
+        }
+
+        let light_dir = to_light / dist;
         let ndotl = max(dot(normal, light_dir), 0.0);
-        let attenuation = light.intensity;
+
+        // Inverse-square falloff with range attenuation
+        let dist_atten = 1.0 / (1.0 + dist * dist);
+        let range_factor = saturate(1.0 - pow(dist / light.range, 4.0));
+        let attenuation = light.intensity * dist_atten * range_factor;
+
         color = color + albedo * light.color * ndotl * attenuation;
     }
 

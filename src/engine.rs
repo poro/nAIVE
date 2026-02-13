@@ -983,11 +983,6 @@ impl ApplicationHandler for Engine {
                 // Phase 8: Process command socket before input
                 self.process_commands();
 
-                // Begin input frame
-                if let Some(input) = &mut self.input_state {
-                    input.begin_frame();
-                }
-
                 // Handle Escape to toggle cursor capture
                 if let Some(input) = &self.input_state {
                     if input.key_held(KeyCode::Escape) {
@@ -1138,6 +1133,11 @@ impl ApplicationHandler for Engine {
                         crate::renderer::render(gpu);
                         gpu.window.request_redraw();
                     }
+                }
+
+                // End of frame: clear transient input state for next frame
+                if let Some(input) = &mut self.input_state {
+                    input.begin_frame();
                 }
             }
             _ => {}

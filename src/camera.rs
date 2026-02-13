@@ -14,8 +14,8 @@ pub struct CameraUniform {
     pub far_plane: f32,                 // offset 208
     pub _pad1: f32,                     // offset 212 (align viewport_size to WGSL vec2 alignment 8)
     pub viewport_size: [f32; 2],        // offset 216
-    pub _padding: f32,                  // offset 224
-    pub _pad2: [f32; 7],               // offset 228 (WGSL vec3 alignment pads to 256)
+    pub _pad2: [f32; 4],               // offset 224 → 240 (align mat4 to 16)
+    pub inv_view_projection: [[f32; 4]; 4], // offset 240, 64 bytes → total 304
 }
 
 impl Default for CameraUniform {
@@ -29,8 +29,8 @@ impl Default for CameraUniform {
             far_plane: 100.0,
             _pad1: 0.0,
             viewport_size: [1280.0, 720.0],
-            _padding: 0.0,
-            _pad2: [0.0; 7],
+            _pad2: [0.0; 4],
+            inv_view_projection: Mat4::IDENTITY.to_cols_array_2d(),
         }
     }
 }
@@ -106,6 +106,8 @@ impl CameraState {
         );
         let view_projection = projection * view;
 
+        let inv_view_projection = view_projection.inverse();
+
         self.uniform = CameraUniform {
             view: view.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
@@ -115,8 +117,8 @@ impl CameraState {
             far_plane: camera.far,
             _pad1: 0.0,
             viewport_size: [viewport_width as f32, viewport_height as f32],
-            _padding: 0.0,
-            _pad2: [0.0; 7],
+            _pad2: [0.0; 4],
+            inv_view_projection: inv_view_projection.to_cols_array_2d(),
         };
 
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));

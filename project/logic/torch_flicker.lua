@@ -1,7 +1,7 @@
 -- Torch flicker: oscillates point_light intensity for atmosphere
 
 function init()
-    self.base_intensity = 8.0
+    self.base_intensity = 1.5
     self.time = math.random() * 10 -- random phase offset per torch
     self.speed = 3.0 + math.random() * 2.0
     self.amount = 0.3
