@@ -16,6 +16,7 @@ mod scene;
 mod scripting;
 mod shader;
 mod splat;
+mod test_runner;
 mod transform;
 mod tween;
 mod watcher;
@@ -36,6 +37,32 @@ fn main() {
     tracing::info!("nAIVE runtime v{}", env!("CARGO_PKG_VERSION"));
     tracing::info!("Project root: {}", args.project);
 
+    // Handle subcommands
+    if let Some(cli::Command::Test { test_file }) = &args.command {
+        let project_root = std::path::Path::new(&args.project);
+        let test_path = project_root.join(test_file);
+        if !test_path.exists() {
+            eprintln!("Test file not found: {}", test_path.display());
+            std::process::exit(1);
+        }
+
+        let results = test_runner::run_test_file(project_root, &test_path);
+
+        let total = results.len();
+        let passed = results.iter().filter(|r| r.passed).count();
+        let failed = total - passed;
+
+        println!();
+        if failed == 0 {
+            println!("All {} tests passed.", total);
+            std::process::exit(0);
+        } else {
+            println!("{} passed, {} failed.", passed, failed);
+            std::process::exit(1);
+        }
+    }
+
+    // Default: run the windowed engine
     let event_loop =
         winit::event_loop::EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);

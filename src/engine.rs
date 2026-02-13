@@ -752,7 +752,7 @@ impl Engine {
 
             // Calculate movement direction relative to yaw
             let forward = glam::Vec3::new(-new_yaw.sin(), 0.0, -new_yaw.cos());
-            let right = glam::Vec3::new(forward.z, 0.0, -forward.x);
+            let right = glam::Vec3::new(-forward.z, 0.0, forward.x);
             let move_dir = (forward * move_input.y + right * move_input.x).normalize_or_zero();
             let mut desired = move_dir * speed * dt;
 

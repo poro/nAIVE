@@ -360,27 +360,33 @@ impl InputState {
     }
 
     /// Inject synthetic key press (for MCP/testing).
+    /// Cancels any pending release for the same key so last-write wins.
     pub fn inject_key_press(&mut self, key_name: &str) {
         if let Some(code) = key_name_to_code(key_name) {
             self.synthetic_keys_pressed.insert(code);
+            self.synthetic_keys_released.remove(&code);
         }
     }
 
     /// Inject synthetic key release (for MCP/testing).
+    /// Cancels any pending press for the same key so last-write wins.
     pub fn inject_key_release(&mut self, key_name: &str) {
         if let Some(code) = key_name_to_code(key_name) {
             self.synthetic_keys_released.insert(code);
+            self.synthetic_keys_pressed.remove(&code);
         }
     }
 
     /// Inject synthetic mouse button press.
     pub fn inject_mouse_press(&mut self, button: MouseButton) {
         self.synthetic_mouse_pressed.insert(button);
+        self.synthetic_mouse_released.remove(&button);
     }
 
     /// Inject synthetic mouse button release.
     pub fn inject_mouse_release(&mut self, button: MouseButton) {
         self.synthetic_mouse_released.insert(button);
+        self.synthetic_mouse_pressed.remove(&button);
     }
 
     /// Inject synthetic mouse motion.

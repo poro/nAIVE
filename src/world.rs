@@ -310,6 +310,178 @@ pub fn euler_degrees_to_quat(euler: [f32; 3]) -> glam::Quat {
     )
 }
 
+/// Spawn all entities headlessly (no GPU resources needed).
+/// Skips MeshRenderer and GaussianSplat components. Used for test runner.
+pub fn spawn_all_entities_headless(
+    scene_world: &mut SceneWorld,
+    scene: &SceneFile,
+    physics_world: &mut PhysicsWorld,
+) {
+    for entity_def in &scene.entities {
+        spawn_entity_headless(scene_world, entity_def, physics_world);
+    }
+    scene_world.current_scene = Some(scene.clone());
+    tracing::info!(
+        "Scene '{}' loaded headless: {} entities",
+        scene.name,
+        scene.entities.len()
+    );
+}
+
+/// Spawn a single entity headlessly (no GPU resources).
+fn spawn_entity_headless(
+    scene_world: &mut SceneWorld,
+    entity_def: &EntityDef,
+    physics_world: &mut PhysicsWorld,
+) {
+    let entity_id = EntityId(entity_def.id.clone());
+    let tags = Tags(entity_def.tags.clone());
+
+    let transform = if let Some(t) = &entity_def.components.transform {
+        Transform {
+            position: glam::Vec3::from(t.position),
+            rotation: euler_degrees_to_quat(t.rotation),
+            scale: glam::Vec3::from(t.scale),
+            world_matrix: glam::Mat4::IDENTITY,
+            parent: None,
+            dirty: true,
+        }
+    } else {
+        Transform::default()
+    };
+
+    // Skip gaussian_splat entities in headless mode (rendering only)
+    if entity_def.components.gaussian_splat.is_some() {
+        return;
+    }
+
+    // Spawn entity with non-GPU components
+    let entity = if let Some(cam) = &entity_def.components.camera {
+        let camera = Camera {
+            fov_degrees: cam.fov,
+            near: cam.near,
+            far: cam.far,
+            role: if cam.role == "main" {
+                CameraRole::Main
+            } else {
+                CameraRole::Other(cam.role.clone())
+            },
+            aspect_ratio: 16.0 / 9.0,
+        };
+        if let Some(pl) = &entity_def.components.point_light {
+            let point_light = PointLight {
+                color: glam::Vec3::from(pl.color),
+                intensity: pl.intensity,
+                range: pl.range,
+            };
+            scene_world.world.spawn((entity_id, tags, transform, camera, point_light))
+        } else {
+            scene_world.world.spawn((entity_id, tags, transform, camera))
+        }
+    } else if let Some(pl) = &entity_def.components.point_light {
+        let point_light = PointLight {
+            color: glam::Vec3::from(pl.color),
+            intensity: pl.intensity,
+            range: pl.range,
+        };
+        scene_world.world.spawn((entity_id, tags, transform, point_light))
+    } else {
+        scene_world.world.spawn((entity_id, tags, transform))
+    };
+
+    scene_world.entity_registry.insert(entity_def.id.clone(), entity);
+
+    // Spawn physics components
+    let pos = if let Some(t) = &entity_def.components.transform {
+        glam::Vec3::from(t.position)
+    } else {
+        glam::Vec3::ZERO
+    };
+    let rot = if let Some(t) = &entity_def.components.transform {
+        euler_degrees_to_quat(t.rotation)
+    } else {
+        glam::Quat::IDENTITY
+    };
+
+    if let Some(cc_def) = &entity_def.components.character_controller {
+        let half_height = cc_def.height / 2.0 - cc_def.radius;
+        let (rb_handle, col_handle) =
+            physics_world.add_character_body(entity, pos, half_height.max(0.1), cc_def.radius);
+
+        let rb_comp = physics::RigidBody {
+            handle: rb_handle,
+            body_type: physics::PhysicsBodyType::Kinematic,
+        };
+        let col_comp = physics::Collider {
+            handle: col_handle,
+            shape: PhysicsShape::Capsule {
+                half_height: half_height.max(0.1),
+                radius: cc_def.radius,
+            },
+            is_trigger: false,
+        };
+        let cc_comp = CharacterController {
+            move_speed: cc_def.move_speed,
+            sprint_multiplier: cc_def.sprint_multiplier,
+            jump_impulse: cc_def.jump_impulse,
+            step_height: cc_def.step_height,
+            ..Default::default()
+        };
+        let player = Player {
+            height: cc_def.height,
+            radius: cc_def.radius,
+            ..Default::default()
+        };
+        let _ = scene_world.world.insert(entity, (rb_comp, col_comp, cc_comp, player));
+    } else if let Some(col_def) = &entity_def.components.collider {
+        let shape = parse_collider_shape(col_def);
+        let is_trigger = col_def.is_trigger;
+        let body_type = entity_def
+            .components
+            .rigid_body
+            .as_ref()
+            .map(|rb| rb.body_type.as_str())
+            .unwrap_or("static");
+
+        match body_type {
+            "dynamic" => {
+                let mass = entity_def
+                    .components
+                    .rigid_body
+                    .as_ref()
+                    .map(|rb| rb.mass)
+                    .unwrap_or(1.0);
+                let (rb_handle, col_handle) =
+                    physics_world.add_dynamic_body(entity, pos, rot, shape.clone(), mass);
+                let rb_comp = physics::RigidBody {
+                    handle: rb_handle,
+                    body_type: physics::PhysicsBodyType::Dynamic,
+                };
+                let col_comp = physics::Collider {
+                    handle: col_handle,
+                    shape,
+                    is_trigger,
+                };
+                let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
+            }
+            _ => {
+                let (rb_handle, col_handle) =
+                    physics_world.add_static_body(entity, pos, rot, shape.clone(), is_trigger);
+                let rb_comp = physics::RigidBody {
+                    handle: rb_handle,
+                    body_type: physics::PhysicsBodyType::Static,
+                };
+                let col_comp = physics::Collider {
+                    handle: col_handle,
+                    shape,
+                    is_trigger,
+                };
+                let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
+            }
+        }
+    }
+}
+
 /// Reconcile a scene update: diff old vs new, spawn/despawn/patch entities.
 #[allow(clippy::too_many_arguments)]
 pub fn reconcile_scene(
