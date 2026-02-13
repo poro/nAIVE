@@ -330,6 +330,22 @@ impl Engine {
             }
         }
 
+        // Register entity manipulation API
+        if let Some(sw) = &mut self.scene_world {
+            let sw_ptr = sw as *mut SceneWorld;
+            if let Err(e) = script_runtime.register_entity_api(sw_ptr) {
+                tracing::error!("Failed to register entity API: {}", e);
+            }
+        }
+
+        // Register event bus API
+        {
+            let bus_ptr = &mut self.event_bus as *mut crate::events::EventBus;
+            if let Err(e) = script_runtime.register_event_api(bus_ptr) {
+                tracing::error!("Failed to register event API: {}", e);
+            }
+        }
+
         // Load scripts for entities that have them
         if let Some(sw) = &mut self.scene_world {
             if let Some(scene) = &sw.current_scene {
@@ -350,6 +366,9 @@ impl Engine {
                                 &source_path,
                             ) {
                                 tracing::error!("Failed to load script for '{}': {}", entity_def.id, e);
+                            } else {
+                                // Set the entity's YAML string ID in its script environment
+                                let _ = script_runtime.set_entity_string_id(entity, &entity_def.id);
                             }
                         }
                     }

@@ -8,9 +8,11 @@ events:
     description: "Player health reached zero"
     fields: []
   player.interacted:
-    description: "Player pressed interact on an object"
-    fields:
-      - target_entity
+    description: "Player pressed interact"
+    fields: []
+  player.attacked:
+    description: "Player pressed attack"
+    fields: []
   door.opened:
     description: "A door was opened"
     fields:

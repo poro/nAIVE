@@ -1,0 +1,249 @@
+name: "The Relic"
+settings:
+  ambient_light: [0.05, 0.05, 0.08]
+  gravity: [0, -9.81, 0]
+
+entities:
+  # === Player ===
+  - id: player
+    tags: [player]
+    components:
+      transform:
+        position: [0, 1, 6]
+      camera:
+        fov: 75
+        near: 0.1
+        far: 100
+        role: main
+      character_controller:
+        move_speed: 4.0
+        sprint_multiplier: 1.5
+        jump_impulse: 6.0
+        step_height: 0.3
+        height: 1.8
+        radius: 0.3
+      script:
+        source: logic/player_fps.lua
+
+  # === Dungeon Structure ===
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [16, 1, 16]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [8, 0.5, 8]
+
+  - id: ceiling
+    components:
+      transform:
+        position: [0, 5, 0]
+        scale: [16, 0.5, 16]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+
+  - id: wall_north
+    components:
+      transform:
+        position: [0, 2, -8]
+        scale: [16, 5, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [8, 2.5, 0.5]
+
+  - id: wall_south
+    components:
+      transform:
+        position: [0, 2, 8]
+        scale: [16, 5, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [8, 2.5, 0.5]
+
+  - id: wall_east
+    components:
+      transform:
+        position: [8, 2, 0]
+        scale: [1, 5, 16]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 2.5, 8]
+
+  - id: wall_west
+    components:
+      transform:
+        position: [-8, 2, 0]
+        scale: [1, 5, 16]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 2.5, 8]
+
+  # === Gate (interactive door) ===
+  - id: gate
+    tags: [interactable, door]
+    components:
+      transform:
+        position: [0, 1.5, -4]
+        scale: [2, 3, 0.3]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/wood.yaml
+      collider:
+        shape: box
+        half_extents: [1, 1.5, 0.15]
+      script:
+        source: logic/door_swing.lua
+
+  # === Torches ===
+  - id: torch_01
+    tags: [torch]
+    components:
+      transform:
+        position: [6, 3, 6]
+      point_light:
+        color: [1.0, 0.7, 0.3]
+        intensity: 8.0
+        range: 12.0
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_02
+    tags: [torch]
+    components:
+      transform:
+        position: [-6, 3, 6]
+      point_light:
+        color: [1.0, 0.7, 0.3]
+        intensity: 8.0
+        range: 12.0
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_03
+    tags: [torch]
+    components:
+      transform:
+        position: [6, 3, -6]
+      point_light:
+        color: [1.0, 0.7, 0.3]
+        intensity: 8.0
+        range: 12.0
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_04
+    tags: [torch]
+    components:
+      transform:
+        position: [-6, 3, -6]
+      point_light:
+        color: [1.0, 0.7, 0.3]
+        intensity: 8.0
+        range: 12.0
+      script:
+        source: logic/torch_flicker.lua
+
+  # === Guardian (goblin) ===
+  - id: guardian
+    tags: [enemy, guardian]
+    components:
+      transform:
+        position: [0, 0.75, -6]
+        scale: [0.8, 1.5, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/goblin.yaml
+      script:
+        source: logic/guardian.lua
+
+  # === Relic (golden chalice) ===
+  - id: relic
+    tags: [interactable, relic]
+    components:
+      transform:
+        position: [0, 1.2, -7]
+        scale: [0.4, 0.6, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/gold.yaml
+      script:
+        source: logic/relic_pickup.lua
+
+  # === Pedestal ===
+  - id: pedestal
+    components:
+      transform:
+        position: [0, 0.4, -7]
+        scale: [1, 0.8, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 0.4, 0.5]
+
+  # === Pillars ===
+  - id: pillar_01
+    components:
+      transform:
+        position: [4, 2, -2]
+        scale: [1, 4, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 2, 0.5]
+
+  - id: pillar_02
+    components:
+      transform:
+        position: [-4, 2, -2]
+        scale: [1, 4, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 2, 0.5]
+
+  - id: pillar_03
+    components:
+      transform:
+        position: [4, 2, 3]
+        scale: [1, 4, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 2, 0.5]
+
+  - id: pillar_04
+    components:
+      transform:
+        position: [-4, 2, 3]
+        scale: [1, 4, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 2, 0.5]

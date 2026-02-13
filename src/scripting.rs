@@ -4,8 +4,11 @@ use std::path::{Path, PathBuf};
 use glam::Vec3;
 use mlua::prelude::*;
 
+use crate::components::{PointLight, Transform};
+use crate::events::EventBus;
 use crate::input::InputState;
 use crate::physics::PhysicsWorld;
+use crate::world::SceneWorld;
 
 /// Script component attached to entities.
 #[derive(Debug, Clone)]
@@ -158,6 +161,13 @@ impl ScriptRuntime {
         }).map_err(|e| e.to_string())?;
         globals.set("print", print_fn).map_err(|e| e.to_string())?;
 
+        // Shared game state table (accessible from all script environments via globals metatable)
+        let game_table = self.lua.create_table().map_err(|e| e.to_string())?;
+        game_table.set("player_health", 100).map_err(|e| e.to_string())?;
+        game_table.set("game_over", false).map_err(|e| e.to_string())?;
+        game_table.set("level_complete", false).map_err(|e| e.to_string())?;
+        globals.set("game", game_table).map_err(|e| e.to_string())?;
+
         Ok(())
     }
 
@@ -208,6 +218,106 @@ impl ScriptRuntime {
         physics_table.set("raycast", raycast_fn).map_err(|e| e.to_string())?;
 
         globals.set("physics", physics_table).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Register entity manipulation API (get/set position, rotation, light).
+    pub fn register_entity_api(&self, scene_world_ptr: *mut SceneWorld) -> Result<(), String> {
+        let globals = self.lua.globals();
+        let entity_table = self.lua.create_table().map_err(|e| e.to_string())?;
+
+        // entity.get_position(entity_string_id) -> x, y, z
+        let get_pos_fn = self.lua.create_function(move |_, id: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(transform) = sw.world.get::<&Transform>(entity) {
+                    return Ok((transform.position.x, transform.position.y, transform.position.z));
+                }
+            }
+            Ok((0.0f32, 0.0f32, 0.0f32))
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("get_position", get_pos_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_position(entity_string_id, x, y, z)
+        let set_pos_fn = self.lua.create_function(move |_, (id, x, y, z): (String, f32, f32, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut transform) = sw.world.get::<&mut Transform>(entity) {
+                    transform.position = glam::Vec3::new(x, y, z);
+                    transform.dirty = true;
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_position", set_pos_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_rotation(entity_string_id, pitch_deg, yaw_deg, roll_deg)
+        let set_rot_fn = self.lua.create_function(move |_, (id, pitch, yaw, roll): (String, f32, f32, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut transform) = sw.world.get::<&mut Transform>(entity) {
+                    transform.rotation = crate::world::euler_degrees_to_quat([pitch, yaw, roll]);
+                    transform.dirty = true;
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_rotation", set_rot_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_light(entity_string_id, intensity)
+        let set_light_fn = self.lua.create_function(move |_, (id, intensity): (String, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut light) = sw.world.get::<&mut PointLight>(entity) {
+                    light.intensity = intensity;
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_light", set_light_fn).map_err(|e| e.to_string())?;
+
+        globals.set("entity", entity_table).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Register event bus API (events.emit).
+    pub fn register_event_api(&self, event_bus_ptr: *mut EventBus) -> Result<(), String> {
+        let globals = self.lua.globals();
+        let events_table = self.lua.create_table().map_err(|e| e.to_string())?;
+
+        // events.emit(event_type, data_table)
+        let emit_fn = self.lua.create_function(move |_, (event_type, data): (String, LuaTable)| {
+            let bus = unsafe { &mut *event_bus_ptr };
+            let mut map = HashMap::new();
+            for pair in data.pairs::<String, LuaValue>() {
+                if let Ok((key, val)) = pair {
+                    let json_val = match val {
+                        LuaValue::Integer(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+                        LuaValue::Number(n) => serde_json::Number::from_f64(n)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null),
+                        LuaValue::String(s) => serde_json::Value::String(s.to_string_lossy().to_string()),
+                        LuaValue::Boolean(b) => serde_json::Value::Bool(b),
+                        _ => serde_json::Value::Null,
+                    };
+                    map.insert(key, json_val);
+                }
+            }
+            bus.emit(&event_type, map);
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        events_table.set("emit", emit_fn).map_err(|e| e.to_string())?;
+
+        globals.set("events", events_table).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Set the _entity_string_id variable in an entity's script environment.
+    pub fn set_entity_string_id(&self, entity: hecs::Entity, string_id: &str) -> Result<(), String> {
+        if let Some(key) = self.entity_envs.get(&entity) {
+            let env: LuaTable = self.lua.registry_value(key).map_err(|e| e.to_string())?;
+            env.set("_entity_string_id", string_id.to_string()).map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
