@@ -39,6 +39,13 @@ pollster = "0.4"
 # Byte casting for vertex buffers
 bytemuck = { version = "1", features = ["derive"] }
 
+# ECS
+hecs = "0.10"
+
+# Asset loading
+gltf = "1.4"
+image = "0.25"
+
 [profile.dev]
 opt-level = 1
 

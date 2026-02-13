@@ -166,3 +166,90 @@ fn compile_slang_to_wgsl(_path: &Path) -> Result<String, ShaderError> {
         "SLANG support not compiled in (feature 'slang' disabled)".to_string(),
     ))
 }
+
+/// Hardcoded WGSL fallback for the 3D forward mesh shader.
+pub fn get_mesh_forward_wgsl() -> String {
+    r#"
+struct CameraUniform {
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    view_projection: mat4x4<f32>,
+    position: vec3<f32>,
+    near_plane: f32,
+    far_plane: f32,
+    viewport_size: vec2<f32>,
+    _padding: f32,
+};
+
+struct DrawUniforms {
+    model_matrix: mat4x4<f32>,
+    normal_matrix: mat4x4<f32>,
+    base_color: vec4<f32>,
+    roughness: f32,
+    metallic: f32,
+    _pad: vec2<f32>,
+    emission: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+@group(1) @binding(0) var<uniform> draw: DrawUniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) tex_coords: vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_normal: vec3<f32>,
+    @location(1) world_pos: vec3<f32>,
+    @location(2) tex_coords: vec2<f32>,
+};
+
+@vertex
+fn vs_main(model: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    let world_pos = draw.model_matrix * vec4<f32>(model.position, 1.0);
+    out.clip_position = camera.view_projection * world_pos;
+    out.world_normal = normalize((draw.normal_matrix * vec4<f32>(model.normal, 0.0)).xyz);
+    out.world_pos = world_pos.xyz;
+    out.tex_coords = model.tex_coords;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
+    let ndotl = max(dot(in.world_normal, light_dir), 0.0);
+    let ambient = vec3<f32>(0.15, 0.15, 0.18);
+    let diffuse = draw.base_color.rgb * (ambient + ndotl * 0.85);
+    let color = diffuse + draw.emission.rgb;
+    return vec4<f32>(color, 1.0);
+}
+"#
+    .to_string()
+}
+
+/// Attempt to compile the mesh forward shader, falling back to WGSL.
+pub fn compile_mesh_forward_shader(slang_path: Option<&std::path::Path>) -> Result<String, ShaderError> {
+    if let Some(path) = slang_path {
+        if !path.exists() {
+            tracing::warn!("Forward SLANG file not found: {:?}, using fallback WGSL", path);
+            return Ok(get_mesh_forward_wgsl());
+        }
+
+        match compile_slang_to_wgsl(path) {
+            Ok(wgsl) => {
+                tracing::info!("Forward SLANG compiled successfully: {:?}", path);
+                return Ok(wgsl);
+            }
+            Err(e) => {
+                tracing::warn!("Forward SLANG compilation failed: {}, using fallback WGSL", e);
+                return Ok(get_mesh_forward_wgsl());
+            }
+        }
+    }
+
+    Ok(get_mesh_forward_wgsl())
+}

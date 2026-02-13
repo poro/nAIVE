@@ -1,8 +1,15 @@
+mod camera;
 mod cli;
+mod components;
 mod engine;
+mod material;
+mod mesh;
 mod renderer;
+mod scene;
 mod shader;
+mod transform;
 mod watcher;
+mod world;
 
 use clap::Parser;
 use cli::CliArgs;
