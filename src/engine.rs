@@ -15,6 +15,7 @@ use crate::input::InputState;
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
 use crate::physics::{CharacterController, Collider as ColliderComp, PhysicsWorld, RigidBody as RigidBodyComp};
+use crate::scripting::{Script, ScriptRuntime};
 use crate::pipeline::CompiledPipeline;
 use crate::splat::SplatCache;
 use crate::renderer::{DrawUniformPool, GpuState};
@@ -51,6 +52,9 @@ pub struct Engine {
     pub physics_world: Option<PhysicsWorld>,
     last_frame_time: Option<instant::Instant>,
     delta_time: f32,
+
+    // Phase 6: scripting
+    pub script_runtime: Option<ScriptRuntime>,
 }
 
 impl Engine {
@@ -76,6 +80,7 @@ impl Engine {
             physics_world: None,
             last_frame_time: None,
             delta_time: 1.0 / 60.0,
+            script_runtime: None,
         }
     }
 
@@ -284,6 +289,73 @@ impl Engine {
         self.physics_world = Some(physics_world);
         self.last_frame_time = Some(instant::Instant::now());
         tracing::info!("Physics world initialized");
+
+        // Phase 6: Initialize scripting runtime
+        let mut script_runtime = ScriptRuntime::new();
+        if let Err(e) = script_runtime.register_api() {
+            tracing::error!("Failed to register script API: {}", e);
+        }
+
+        // Register input API
+        if let Some(input) = &self.input_state {
+            let input_ptr = input as *const InputState;
+            if let Err(e) = script_runtime.register_input_api(input_ptr) {
+                tracing::error!("Failed to register input API: {}", e);
+            }
+        }
+
+        // Register physics API
+        if let Some(pw) = &self.physics_world {
+            let physics_ptr = pw as *const PhysicsWorld;
+            if let Err(e) = script_runtime.register_physics_api(physics_ptr) {
+                tracing::error!("Failed to register physics API: {}", e);
+            }
+        }
+
+        // Load scripts for entities that have them
+        if let Some(sw) = &mut self.scene_world {
+            if let Some(scene) = &sw.current_scene {
+                let scene_clone = scene.clone();
+                for entity_def in &scene_clone.entities {
+                    if let Some(script_def) = &entity_def.components.script {
+                        if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
+                            let source_path = std::path::PathBuf::from(&script_def.source);
+                            let script_comp = Script {
+                                source: source_path.clone(),
+                                initialized: false,
+                            };
+                            let _ = sw.world.insert_one(entity, script_comp);
+
+                            if let Err(e) = script_runtime.load_script(
+                                entity,
+                                &self.project_root,
+                                &source_path,
+                            ) {
+                                tracing::error!("Failed to load script for '{}': {}", entity_def.id, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Call init on all scripts
+        if let Some(sw) = &self.scene_world {
+            for (entity, script) in sw.world.query::<&Script>().iter() {
+                if !script.initialized {
+                    script_runtime.call_init(entity);
+                }
+            }
+            // Mark all as initialized
+        }
+        if let Some(sw) = &mut self.scene_world {
+            for (_entity, mut script) in sw.world.query::<&mut Script>().iter() {
+                script.initialized = true;
+            }
+        }
+
+        self.script_runtime = Some(script_runtime);
+        tracing::info!("Script runtime initialized");
 
         // Phase 3: try to compile the render pipeline if --pipeline was given
         self.try_load_pipeline();
@@ -518,6 +590,7 @@ impl Engine {
         let mut shader_paths = std::collections::HashSet::new();
         let mut scene_paths = std::collections::HashSet::new();
         let mut splat_paths = std::collections::HashSet::new();
+        let mut script_paths = std::collections::HashSet::new();
         let mut pipeline_changed = false;
 
         for event in events {
@@ -538,6 +611,9 @@ impl Engine {
                 WatchEvent::SplatChanged(path) => {
                     splat_paths.insert(path);
                 }
+                WatchEvent::ScriptChanged(path) => {
+                    script_paths.insert(path);
+                }
             }
         }
 
@@ -556,6 +632,29 @@ impl Engine {
         if pipeline_changed {
             if let Some(path) = self.pipeline_path.clone() {
                 self.handle_pipeline_reload(&path);
+            }
+        }
+
+        // Hot-reload scripts
+        if !script_paths.is_empty() {
+            if let (Some(scene_world), Some(script_runtime)) =
+                (&self.scene_world, &mut self.script_runtime)
+            {
+                for (entity, script) in scene_world.world.query::<&Script>().iter() {
+                    for changed_path in &script_paths {
+                        let script_source_str = script.source.to_string_lossy();
+                        let changed_str = changed_path.to_string_lossy();
+                        if changed_str.ends_with(&*script_source_str)
+                            || changed_str.ends_with(script.source.file_name().unwrap_or_default().to_string_lossy().as_ref())
+                        {
+                            match script_runtime.hot_reload_script(entity, &self.project_root, &script.source) {
+                                Ok(true) => tracing::info!("Script hot-reloaded: {:?}", script.source),
+                                Ok(false) => {}
+                                Err(e) => tracing::error!("Script hot-reload failed: {}", e),
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -852,6 +951,16 @@ impl ApplicationHandler for Engine {
                     // Phase 5: FPS controller update (physics + input)
                     if self.input_state.as_ref().map(|i| i.cursor_captured).unwrap_or(false) {
                         self.update_fps_controller();
+                    }
+
+                    // Phase 6: Update scripts
+                    let dt = self.delta_time;
+                    if let (Some(scene_world), Some(script_runtime)) =
+                        (&self.scene_world, &self.script_runtime)
+                    {
+                        for (entity, _script) in scene_world.world.query::<&Script>().iter() {
+                            script_runtime.call_update(entity, dt);
+                        }
                     }
 
                     // Update transforms and camera

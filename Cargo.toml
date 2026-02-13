@@ -51,6 +51,9 @@ linked-hash-map = "0.5.6"
 # Physics
 rapier3d = { version = "0.22", features = ["simd-stable"] }
 
+# Scripting
+mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }
+
 # Time
 instant = "0.1"
 

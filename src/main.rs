@@ -10,6 +10,7 @@ mod pipeline;
 mod reflect;
 mod renderer;
 mod scene;
+mod scripting;
 mod shader;
 mod splat;
 mod transform;

@@ -89,6 +89,8 @@ pub struct ComponentMap {
     pub collider: Option<ColliderDef>,
     #[serde(default)]
     pub character_controller: Option<CharacterControllerDef>,
+    #[serde(default)]
+    pub script: Option<ScriptDef>,
     /// Absorbs unknown component types for forward compatibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
@@ -214,6 +216,11 @@ pub struct CharacterControllerDef {
     pub radius: f32,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScriptDef {
+    pub source: String,
+}
+
 fn default_move_speed() -> f32 { 5.0 }
 fn default_sprint_multiplier() -> f32 { 1.8 }
 fn default_jump_impulse() -> f32 { 7.0 }
@@ -297,6 +304,9 @@ fn merge_entity(parent: &EntityDef, child: &EntityDef) -> EntityDef {
     }
     if merged.components.character_controller.is_none() {
         merged.components.character_controller = parent.components.character_controller.clone();
+    }
+    if merged.components.script.is_none() {
+        merged.components.script = parent.components.script.clone();
     }
 
     // Merge extra components from parent that child doesn't have
@@ -413,8 +423,8 @@ entities:
         let scene: SceneFile = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(scene.entities.len(), 1);
         assert!(scene.entities[0].components.transform.is_some());
-        // rigid_body is now a recognized component, script goes to extra
+        // rigid_body and script are now recognized components
         assert!(scene.entities[0].components.rigid_body.is_some());
-        assert!(scene.entities[0].components.extra.contains_key("script"));
+        assert!(scene.entities[0].components.script.is_some());
     }
 }

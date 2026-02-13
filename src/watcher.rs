@@ -12,6 +12,7 @@ pub enum WatchEvent {
     MaterialChanged(PathBuf),
     PipelineChanged(PathBuf),
     SplatChanged(PathBuf),
+    ScriptChanged(PathBuf),
 }
 
 /// Creates a file watcher on the project directory and returns a receiver
@@ -53,6 +54,10 @@ pub fn start_watching_all(
                                     tracing::info!("Splat file changed: {:?}", path);
                                     let _ = tx.send(WatchEvent::SplatChanged(path.clone()));
                                 }
+                                "lua" => {
+                                    tracing::info!("Script file changed: {:?}", path);
+                                    let _ = tx.send(WatchEvent::ScriptChanged(path.clone()));
+                                }
                                 _ => {}
                             }
                         }
@@ -72,6 +77,7 @@ pub fn start_watching_all(
         project_root.join("assets/materials"),
         project_root.join("assets/splats"),
         project_root.join("pipelines"),
+        project_root.join("logic"),
     ];
 
     for dir in &dirs {
