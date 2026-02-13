@@ -60,6 +60,9 @@ kira = "0.9"
 # Time
 instant = "0.1"
 
+# Async / IPC
+tokio = { version = "1", features = ["net", "io-util", "rt", "sync", "macros"] }
+
 [profile.dev]
 opt-level = 1
 

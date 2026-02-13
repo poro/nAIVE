@@ -18,6 +18,10 @@ pub struct CliArgs {
     /// Path to the game project root directory
     #[arg(long, default_value = "project")]
     pub project: String,
+
+    /// Path to the command socket for external control
+    #[arg(long, default_value = "/tmp/naive-runtime.sock")]
+    pub socket: String,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]

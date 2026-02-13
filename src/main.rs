@@ -1,6 +1,7 @@
 mod audio;
 mod camera;
 mod cli;
+mod command;
 mod components;
 mod events;
 mod engine;

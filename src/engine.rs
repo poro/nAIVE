@@ -11,6 +11,7 @@ use winit::window::{Window, WindowId};
 use crate::audio::AudioSystem;
 use crate::camera::CameraState;
 use crate::cli::CliArgs;
+use crate::command::CommandServer;
 use crate::components::{Camera, CameraRole, GaussianSplat, Player, Transform};
 use crate::events::EventBus;
 use crate::tween::TweenSystem;
@@ -63,6 +64,10 @@ pub struct Engine {
     pub event_bus: EventBus,
     pub audio_system: AudioSystem,
     pub tween_system: TweenSystem,
+
+    // Phase 8: command socket
+    pub command_server: Option<CommandServer>,
+    pub paused: bool,
 }
 
 impl Engine {
@@ -92,6 +97,8 @@ impl Engine {
             event_bus: EventBus::new(1000),
             audio_system: AudioSystem::new(),
             tween_system: TweenSystem::new(),
+            command_server: None,
+            paused: false,
         }
     }
 
@@ -373,6 +380,17 @@ impl Engine {
 
         // Phase 3: try to compile the render pipeline if --pipeline was given
         self.try_load_pipeline();
+
+        // Phase 8: Start command socket server
+        match CommandServer::start(&self.args.socket) {
+            Ok(server) => {
+                tracing::info!("Command socket: {}", server.socket_path);
+                self.command_server = Some(server);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to start command server: {}", e);
+            }
+        }
     }
 
     /// Attempt to load and compile the render pipeline from YAML.
@@ -835,6 +853,25 @@ impl Engine {
             }
         }
     }
+
+    /// Process commands from the command socket.
+    fn process_commands(&mut self) {
+        let commands = match &self.command_server {
+            Some(s) => s.poll(),
+            None => return,
+        };
+
+        for pending in commands {
+            let response = crate::command::handle_command(
+                &pending.request,
+                &mut self.scene_world,
+                &mut self.event_bus,
+                &mut self.input_state,
+                &mut self.paused,
+            );
+            let _ = pending.responder.send(response);
+        }
+    }
 }
 
 impl ApplicationHandler for Engine {
@@ -924,6 +961,9 @@ impl ApplicationHandler for Engine {
                 }
                 self.last_frame_time = Some(now);
 
+                // Phase 8: Process command socket before input
+                self.process_commands();
+
                 // Begin input frame
                 if let Some(input) = &mut self.input_state {
                     input.begin_frame();
@@ -962,34 +1002,36 @@ impl ApplicationHandler for Engine {
                 self.poll_changes();
 
                 if self.scene_world.is_some() {
-                    // Phase 5: FPS controller update (physics + input)
-                    if self.input_state.as_ref().map(|i| i.cursor_captured).unwrap_or(false) {
-                        self.update_fps_controller();
-                    }
-
-                    // Phase 6: Update scripts
-                    let dt = self.delta_time;
-                    if let (Some(scene_world), Some(script_runtime)) =
-                        (&self.scene_world, &self.script_runtime)
-                    {
-                        for (entity, _script) in scene_world.world.query::<&Script>().iter() {
-                            script_runtime.call_update(entity, dt);
+                    if !self.paused {
+                        // Phase 5: FPS controller update (physics + input)
+                        if self.input_state.as_ref().map(|i| i.cursor_captured).unwrap_or(false) {
+                            self.update_fps_controller();
                         }
-                    }
 
-                    // Phase 7: Tick event bus and tweens
-                    self.event_bus.tick(dt as f64);
-                    self.event_bus.flush();
-                    let _tween_results = self.tween_system.update(dt);
-                    self.audio_system.cleanup();
-
-                    // Update listener position for spatial audio
-                    if let Some(scene_world) = &self.scene_world {
-                        for (_entity, (transform, _player)) in
-                            scene_world.world.query::<(&Transform, &Player)>().iter()
+                        // Phase 6: Update scripts
+                        let dt = self.delta_time;
+                        if let (Some(scene_world), Some(script_runtime)) =
+                            (&self.scene_world, &self.script_runtime)
                         {
-                            self.audio_system.set_listener_position(transform.position);
-                            break;
+                            for (entity, _script) in scene_world.world.query::<&Script>().iter() {
+                                script_runtime.call_update(entity, dt);
+                            }
+                        }
+
+                        // Phase 7: Tick event bus and tweens
+                        self.event_bus.tick(dt as f64);
+                        self.event_bus.flush();
+                        let _tween_results = self.tween_system.update(dt);
+                        self.audio_system.cleanup();
+
+                        // Update listener position for spatial audio
+                        if let Some(scene_world) = &self.scene_world {
+                            for (_entity, (transform, _player)) in
+                                scene_world.world.query::<(&Transform, &Player)>().iter()
+                            {
+                                self.audio_system.set_listener_position(transform.position);
+                                break;
+                            }
                         }
                     }
 
