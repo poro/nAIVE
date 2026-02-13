@@ -922,7 +922,7 @@ fn create_lighting_pipeline(
         source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
     });
 
-    // Group 1: G-buffer textures + sampler
+    // Group 1: G-buffer textures + sampler + emission
     let gbuffer_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("GBuffer Input Layout"),
         entries: &[
@@ -962,6 +962,16 @@ fn create_lighting_pipeline(
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     });
 
@@ -978,6 +988,10 @@ fn create_lighting_pipeline(
         .get("gbuffer_depth")
         .map(|r| &r.view)
         .expect("gbuffer_depth resource missing");
+    let emission_view = resources
+        .get("gbuffer_emission")
+        .map(|r| &r.view)
+        .unwrap_or(albedo_view); // fallback to albedo if emission not present
 
     let gbuffer_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("GBuffer Input Bind Group"),
@@ -998,6 +1012,10 @@ fn create_lighting_pipeline(
             wgpu::BindGroupEntry {
                 binding: 3,
                 resource: wgpu::BindingResource::Sampler(gbuffer_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(emission_view),
             },
         ],
     });
@@ -1072,7 +1090,7 @@ fn create_lighting_pipeline_with_splats(
         source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
     });
 
-    // Group 1: G-buffer textures + sampler (same as non-splat version)
+    // Group 1: G-buffer textures + sampler + emission (same as non-splat version)
     let gbuffer_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("GBuffer Input Layout"),
         entries: &[
@@ -1112,12 +1130,26 @@ fn create_lighting_pipeline_with_splats(
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     });
 
     let albedo_view = &resources.get("gbuffer_albedo").expect("gbuffer_albedo missing").view;
     let normal_view = &resources.get("gbuffer_normal").expect("gbuffer_normal missing").view;
     let gbuffer_depth_view = &resources.get("gbuffer_depth").expect("gbuffer_depth missing").view;
+    let emission_view = resources
+        .get("gbuffer_emission")
+        .map(|r| &r.view)
+        .unwrap_or(albedo_view);
 
     let gbuffer_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("GBuffer Input Bind Group"),
@@ -1138,6 +1170,10 @@ fn create_lighting_pipeline_with_splats(
             wgpu::BindGroupEntry {
                 binding: 3,
                 resource: wgpu::BindingResource::Sampler(gbuffer_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(emission_view),
             },
         ],
     });
@@ -1748,8 +1784,13 @@ pub fn rebuild_bind_groups(
             .resources
             .get("gbuffer_depth")
             .map(|r| &r.view);
+        let emission_view = compiled
+            .resources
+            .get("gbuffer_emission")
+            .map(|r| &r.view);
 
         if let (Some(albedo), Some(normal), Some(depth)) = (albedo_view, normal_view, depth_view) {
+            let emission = emission_view.unwrap_or(albedo);
             compiled.gbuffer_bind_group = Some(device.create_bind_group(
                 &wgpu::BindGroupDescriptor {
                     label: Some("GBuffer Input Bind Group (resized)"),
@@ -1770,6 +1811,10 @@ pub fn rebuild_bind_groups(
                         wgpu::BindGroupEntry {
                             binding: 3,
                             resource: wgpu::BindingResource::Sampler(&compiled.gbuffer_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(emission),
                         },
                     ],
                 },

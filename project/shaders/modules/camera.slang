@@ -8,6 +8,6 @@ struct CameraUniform {
     float far_plane;
     float _pad1;
     float2 viewport_size;
-    float _padding;
-    float3 _pad2;
+    float4 _pad2;
+    float4x4 inv_view_projection;
 };

@@ -1,4 +1,4 @@
-// G-Buffer geometry pass: writes albedo + normal to MRT
+// G-Buffer geometry pass: writes albedo+roughness, normal+metallic, emission to MRT
 import camera;
 
 struct DrawUniforms {
@@ -28,8 +28,9 @@ struct VertexOutput {
 };
 
 struct GBufferOutput {
-    float4 albedo : SV_Target0;
-    float4 normal : SV_Target1;
+    float4 albedo   : SV_Target0;  // rgb = base_color, a = roughness
+    float4 normal   : SV_Target1;  // rgb = packed normal, a = metallic
+    float4 emission : SV_Target2;  // rgb = emission color, a = 0
 };
 
 [shader("vertex")]
@@ -46,7 +47,8 @@ VertexOutput vs_main(VertexInput input) {
 [shader("fragment")]
 GBufferOutput fs_main(VertexOutput input) {
     GBufferOutput output;
-    output.albedo = draw.base_color;
-    output.normal = float4(input.worldNormal * 0.5 + 0.5, 1.0);
+    output.albedo = float4(draw.base_color.rgb, draw.roughness);
+    output.normal = float4(input.worldNormal * 0.5 + 0.5, draw.metallic);
+    output.emission = float4(draw.emission.rgb, 0.0);
     return output;
 }

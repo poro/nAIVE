@@ -173,6 +173,7 @@ fn compile_slang_to_wgsl(_path: &Path) -> Result<String, ShaderError> {
 }
 
 /// Hardcoded WGSL fallback for the 3D forward mesh shader.
+/// Uses PBR-lite: metallic darkens diffuse, roughness-based specular, emission.
 pub fn get_mesh_forward_wgsl() -> String {
     r#"
 struct CameraUniform {
@@ -182,8 +183,10 @@ struct CameraUniform {
     position: vec3<f32>,
     near_plane: f32,
     far_plane: f32,
+    _pad1: f32,
     viewport_size: vec2<f32>,
-    _padding: f32,
+    _pad2: vec4<f32>,
+    inv_view_projection: mat4x4<f32>,
 };
 
 struct DrawUniforms {
@@ -226,10 +229,23 @@ fn vs_main(model: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
+    let view_dir = normalize(camera.position - in.world_pos);
+    let half_vec = normalize(light_dir + view_dir);
+
     let ndotl = max(dot(in.world_normal, light_dir), 0.0);
-    let ambient = vec3<f32>(0.15, 0.15, 0.18);
-    let diffuse = draw.base_color.rgb * (ambient + ndotl * 0.85);
-    let color = diffuse + draw.emission.rgb;
+    let ndoth = max(dot(in.world_normal, half_vec), 0.0);
+
+    let diffuse_color = draw.base_color.rgb * (1.0 - draw.metallic);
+    let F0 = mix(vec3<f32>(0.04), draw.base_color.rgb, draw.metallic);
+
+    let ambient = vec3<f32>(0.03, 0.03, 0.04);
+    let diffuse = diffuse_color * (ambient + ndotl * 0.85);
+
+    let spec_power = max(2.0 / (draw.roughness * draw.roughness + 0.001) - 2.0, 1.0);
+    let specular = pow(ndoth, spec_power) * ndotl;
+    let spec = F0 * specular;
+
+    let color = diffuse + spec + draw.emission.rgb;
     return vec4<f32>(color, 1.0);
 }
 "#
@@ -380,6 +396,7 @@ pub fn compile_mesh_forward_shader(slang_path: Option<&std::path::Path>) -> Resu
 }
 
 /// Hardcoded WGSL fallback for the G-buffer pass.
+/// Outputs 3 MRT: albedo+roughness, normal+metallic, emission.
 pub fn get_gbuffer_wgsl() -> String {
     r#"
 struct CameraUniform {
@@ -391,8 +408,8 @@ struct CameraUniform {
     far_plane: f32,
     _pad1: f32,
     viewport_size: vec2<f32>,
-    _padding: f32,
-    _pad2: vec3<f32>,
+    _pad2: vec4<f32>,
+    inv_view_projection: mat4x4<f32>,
 };
 
 struct DrawUniforms {
@@ -422,8 +439,9 @@ struct VertexOutput {
 };
 
 struct GBufferOutput {
-    @location(0) albedo: vec4<f32>,
-    @location(1) normal: vec4<f32>,
+    @location(0) albedo: vec4<f32>,   // rgb = base_color, a = roughness
+    @location(1) normal: vec4<f32>,   // rgb = packed normal, a = metallic
+    @location(2) emission: vec4<f32>, // rgb = emission color, a = 0
 };
 
 @vertex
@@ -440,8 +458,9 @@ fn vs_main(model: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> GBufferOutput {
     var out: GBufferOutput;
-    out.albedo = draw.base_color;
-    out.normal = vec4<f32>(in.world_normal * 0.5 + 0.5, 1.0);
+    out.albedo = vec4<f32>(draw.base_color.rgb, draw.roughness);
+    out.normal = vec4<f32>(in.world_normal * 0.5 + 0.5, draw.metallic);
+    out.emission = vec4<f32>(draw.emission.rgb, 0.0);
     return out;
 }
 "#
@@ -449,6 +468,7 @@ fn fs_main(in: VertexOutput) -> GBufferOutput {
 }
 
 /// Hardcoded WGSL fallback for the deferred lighting pass.
+/// PBR-like shading with roughness, metallic, specular, and emission.
 pub fn get_deferred_light_wgsl() -> String {
     r#"
 struct CameraUniform {
@@ -483,6 +503,7 @@ struct LightingUniforms {
 @group(1) @binding(1) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(2) var gbuffer_depth: texture_depth_2d;
 @group(1) @binding(3) var gbuffer_sampler: sampler;
+@group(1) @binding(4) var gbuffer_emission: texture_2d<f32>;
 
 @group(2) @binding(0) var<uniform> lighting: LightingUniforms;
 
@@ -501,7 +522,6 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 }
 
 fn reconstruct_world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
-    // Convert UV [0,1] to clip space [-1,1], flip Y for NDC
     let clip = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, depth, 1.0);
     let world_h = camera.inv_view_projection * clip;
     return world_h.xyz / world_h.w;
@@ -510,51 +530,74 @@ fn reconstruct_world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_coords = vec2<i32>(in.position.xy);
-    let albedo = textureLoad(gbuffer_albedo, tex_coords, 0).rgb;
-    let normal_raw = textureLoad(gbuffer_normal, tex_coords, 0).rgb;
-    let normal = normalize(normal_raw * 2.0 - 1.0);
+
+    let albedo_rough = textureLoad(gbuffer_albedo, tex_coords, 0);
+    let normal_metal = textureLoad(gbuffer_normal, tex_coords, 0);
+    let emission_val = textureLoad(gbuffer_emission, tex_coords, 0);
     let depth = textureLoad(gbuffer_depth, tex_coords, 0);
 
-    // Skip empty pixels (depth at 1.0 = far plane)
     if depth >= 1.0 {
         discard;
     }
 
-    // Reconstruct world position from depth
-    let uv = in.uv;
-    let world_pos = reconstruct_world_pos(uv, depth);
+    let albedo    = albedo_rough.rgb;
+    let roughness = albedo_rough.a;
+    let normal    = normalize(normal_metal.rgb * 2.0 - 1.0);
+    let metallic  = normal_metal.a;
+    let emission  = emission_val.rgb;
 
-    // Ambient light
-    var color = albedo * vec3<f32>(0.08, 0.08, 0.1);
+    // Reconstruct world position
+    let world_pos = reconstruct_world_pos(in.uv, depth);
+    let view_dir  = normalize(camera.position - world_pos);
 
-    // Accumulate point lights with proper attenuation
+    // PBR base reflectance
+    let F0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
+    let diffuse_color = albedo * (1.0 - metallic);
+
+    // Ambient
+    var color = diffuse_color * vec3<f32>(0.03, 0.03, 0.04);
+
+    // Accumulate point lights
     for (var i = 0u; i < lighting.light_count; i = i + 1u) {
         let light = lighting.lights[i];
         let to_light = light.position - world_pos;
         let dist = length(to_light);
 
-        // Range-based cutoff
         if dist > light.range {
             continue;
         }
 
         let light_dir = to_light / dist;
-        let ndotl = max(dot(normal, light_dir), 0.0);
+        let half_vec  = normalize(light_dir + view_dir);
 
-        // Inverse-square falloff with range attenuation
+        let ndotl = max(dot(normal, light_dir), 0.0);
+        let ndoth = max(dot(normal, half_vec), 0.0);
+
+        // Attenuation: inverse-square with smooth range falloff
         let dist_atten = 1.0 / (1.0 + dist * dist);
         let range_factor = saturate(1.0 - pow(dist / light.range, 4.0));
         let attenuation = light.intensity * dist_atten * range_factor;
 
-        color = color + albedo * light.color * ndotl * attenuation;
+        // Diffuse
+        let diffuse = diffuse_color * light.color * ndotl;
+
+        // Blinn-Phong specular (roughness controls exponent)
+        let spec_power = max(2.0 / (roughness * roughness + 0.001) - 2.0, 1.0);
+        let specular = pow(ndoth, spec_power);
+        let spec = F0 * light.color * specular * ndotl;
+
+        color = color + (diffuse + spec) * attenuation;
     }
 
-    // If no lights, use a default directional light
+    // Fallback directional light when no lights in scene
     if lighting.light_count == 0u {
         let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
         let ndotl = max(dot(normal, light_dir), 0.0);
-        color = albedo * (vec3<f32>(0.15, 0.15, 0.18) + ndotl * 0.85);
+        color = diffuse_color * (vec3<f32>(0.15, 0.15, 0.18) + ndotl * 0.85);
     }
+
+    // Add emission (unlit, straight to output)
+    color = color + emission;
 
     return vec4<f32>(color, 1.0);
 }
@@ -679,7 +722,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 
 /// Hardcoded WGSL for the deferred lighting pass with splat compositing.
-/// Composites splat_color over mesh lighting using depth comparison.
+/// PBR shading + emission + depth-composited Gaussian splats.
 pub fn get_deferred_light_with_splats_wgsl() -> String {
     r#"
 struct CameraUniform {
@@ -691,8 +734,8 @@ struct CameraUniform {
     far_plane: f32,
     _pad1: f32,
     viewport_size: vec2<f32>,
-    _padding: f32,
-    _pad2: vec3<f32>,
+    _pad2: vec4<f32>,
+    inv_view_projection: mat4x4<f32>,
 };
 
 struct PointLight {
@@ -714,6 +757,7 @@ struct LightingUniforms {
 @group(1) @binding(1) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(2) var gbuffer_depth: texture_depth_2d;
 @group(1) @binding(3) var gbuffer_sampler: sampler;
+@group(1) @binding(4) var gbuffer_emission: texture_2d<f32>;
 
 @group(2) @binding(0) var<uniform> lighting: LightingUniforms;
 
@@ -734,54 +778,91 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     return out;
 }
 
+fn reconstruct_world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
+    let clip = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, depth, 1.0);
+    let world_h = camera.inv_view_projection * clip;
+    return world_h.xyz / world_h.w;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_coords = vec2<i32>(in.position.xy);
-    let albedo = textureLoad(gbuffer_albedo, tex_coords, 0).rgb;
-    let normal_raw = textureLoad(gbuffer_normal, tex_coords, 0).rgb;
-    let normal = normalize(normal_raw * 2.0 - 1.0);
+
+    let albedo_rough = textureLoad(gbuffer_albedo, tex_coords, 0);
+    let normal_metal = textureLoad(gbuffer_normal, tex_coords, 0);
+    let emission_val = textureLoad(gbuffer_emission, tex_coords, 0);
     let mesh_depth = textureLoad(gbuffer_depth, tex_coords, 0);
+
+    let albedo    = albedo_rough.rgb;
+    let roughness = albedo_rough.a;
+    let normal    = normalize(normal_metal.rgb * 2.0 - 1.0);
+    let metallic  = normal_metal.a;
+    let emission  = emission_val.rgb;
 
     // Sample splat targets
     let splat_color = textureLoad(splat_color_tex, tex_coords, 0);
     let splat_depth = textureLoad(splat_depth_tex, tex_coords, 0);
 
-    // Compute mesh lighting
-    var mesh_color = albedo * vec3<f32>(0.08, 0.08, 0.1);
+    // PBR base reflectance
+    let F0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
+    let diffuse_color = albedo * (1.0 - metallic);
+
+    // Reconstruct world position
+    let world_pos = reconstruct_world_pos(in.uv, mesh_depth);
+    let view_dir  = normalize(camera.position - world_pos);
+
+    // Compute mesh lighting with PBR
+    var mesh_color = diffuse_color * vec3<f32>(0.03, 0.03, 0.04);
 
     for (var i = 0u; i < lighting.light_count; i = i + 1u) {
         let light = lighting.lights[i];
-        let light_dir = normalize(light.position);
+        let to_light = light.position - world_pos;
+        let dist = length(to_light);
+
+        if dist > light.range {
+            continue;
+        }
+
+        let light_dir = to_light / dist;
+        let half_vec  = normalize(light_dir + view_dir);
+
         let ndotl = max(dot(normal, light_dir), 0.0);
-        let attenuation = light.intensity;
-        mesh_color = mesh_color + albedo * light.color * ndotl * attenuation;
+        let ndoth = max(dot(normal, half_vec), 0.0);
+
+        let dist_atten = 1.0 / (1.0 + dist * dist);
+        let range_factor = saturate(1.0 - pow(dist / light.range, 4.0));
+        let attenuation = light.intensity * dist_atten * range_factor;
+
+        let diffuse = diffuse_color * light.color * ndotl;
+
+        let spec_power = max(2.0 / (roughness * roughness + 0.001) - 2.0, 1.0);
+        let specular = pow(ndoth, spec_power);
+        let spec = F0 * light.color * specular * ndotl;
+
+        mesh_color = mesh_color + (diffuse + spec) * attenuation;
     }
 
     if lighting.light_count == 0u {
         let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
         let ndotl = max(dot(normal, light_dir), 0.0);
-        mesh_color = albedo * (vec3<f32>(0.15, 0.15, 0.18) + ndotl * 0.85);
+        mesh_color = diffuse_color * (vec3<f32>(0.15, 0.15, 0.18) + ndotl * 0.85);
     }
+
+    // Add emission
+    mesh_color = mesh_color + emission;
 
     let mesh_valid = mesh_depth < 1.0;
     let splat_valid = splat_color.a > 0.004;
 
     // Depth compositing
     if splat_valid && (!mesh_valid || splat_depth < mesh_depth) {
-        // Splat is closer or mesh is empty: blend splat over background
         let bg = select(vec3<f32>(0.0), mesh_color, mesh_valid);
         let blended = splat_color.rgb + bg * (1.0 - splat_color.a);
         return vec4<f32>(blended, 1.0);
     } else if mesh_valid {
-        // Mesh is closer: use mesh lighting, blend splat behind
-        if splat_valid {
-            let blended = mesh_color * (1.0 - splat_color.a * 0.0) + splat_color.rgb * 0.0;
-            return vec4<f32>(mesh_color, 1.0);
-        }
         return vec4<f32>(mesh_color, 1.0);
     }
 
-    // Nothing at this pixel
     discard;
 }
 "#
