@@ -1,0 +1,93 @@
+name: "Cosmic Splats"
+
+settings:
+  ambient_light: [0.01, 0.01, 0.02]
+  gravity: [0, 0, 0]
+
+entities:
+  - id: camera
+    tags: [camera]
+    components:
+      transform:
+        position: [0, 3, 8]
+        rotation: [0, 0, 0]
+        scale: [1, 1, 1]
+      camera:
+        fov: 70
+        near: 0.1
+        far: 1000
+        role: main
+      script:
+        source: logic/cosmic_camera.lua
+
+  - id: galaxy
+    tags: [splat, galaxy]
+    components:
+      transform:
+        position: [0, 0, 0]
+        scale: [1, 1, 1]
+      gaussian_splat:
+        source: procedural
+
+  - id: pedestal
+    tags: [environment]
+    components:
+      transform:
+        position: [0, -0.3, 0]
+        scale: [1.5, 0.6, 1.5]
+      mesh_renderer:
+        mesh: "assets/meshes/cube.gltf"
+        material: "assets/materials/dark_floor.yaml"
+
+  - id: crystal
+    tags: [interactive]
+    components:
+      transform:
+        position: [0, 1.5, 0]
+        rotation: [45, 45, 0]
+        scale: [0.6, 0.6, 0.6]
+      mesh_renderer:
+        mesh: "assets/meshes/cube.gltf"
+        material: "assets/materials/neon_cyan.yaml"
+      script:
+        source: logic/float_bob.lua
+
+  - id: nebula_light_1
+    tags: [light]
+    components:
+      transform:
+        position: [2, 0.5, 0]
+      point_light:
+        color: [0.8, 0.3, 1.0]
+        intensity: 5
+        range: 8
+
+  - id: nebula_light_2
+    tags: [light]
+    components:
+      transform:
+        position: [-2, 0.5, 0]
+      point_light:
+        color: [0.2, 0.6, 1.0]
+        intensity: 5
+        range: 8
+
+  - id: nebula_light_3
+    tags: [light]
+    components:
+      transform:
+        position: [0, 0.5, 2]
+      point_light:
+        color: [1.0, 0.5, 0.3]
+        intensity: 4
+        range: 6
+
+  - id: nebula_light_4
+    tags: [light]
+    components:
+      transform:
+        position: [0, 1, 0]
+      point_light:
+        color: [1.0, 1.0, 0.8]
+        intensity: 8
+        range: 10

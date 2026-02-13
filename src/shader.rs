@@ -870,7 +870,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 
 /// Hardcoded WGSL fallback for the tone mapping pass.
-pub fn get_tonemap_wgsl() -> String {
+/// WGSL fallback for bloom extraction pass (threshold + 13-tap tent downsample).
+pub fn get_bloom_wgsl() -> String {
     r#"
 @group(0) @binding(0) var hdr_texture: texture_2d<f32>;
 @group(0) @binding(1) var hdr_sampler: sampler;
@@ -889,7 +890,75 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     return out;
 }
 
-// ACES tone mapping curve
+fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+fn threshold_color(color: vec3<f32>, threshold: f32, knee: f32) -> vec3<f32> {
+    let lum = luminance(color);
+    var soft = lum - threshold + knee;
+    soft = clamp(soft, 0.0, 2.0 * knee);
+    soft = soft * soft / (4.0 * knee + 0.0001);
+    let contribution = max(soft, lum - threshold) / max(lum, 0.0001);
+    return color * max(contribution, 0.0);
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(hdr_texture));
+    let texel = 1.0 / dims;
+    let uv = in.uv;
+
+    // 13-tap tent filter (Jimenez 2014)
+    let a = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>(-2.0, -2.0) * texel).rgb;
+    let b = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>( 0.0, -2.0) * texel).rgb;
+    let c = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>( 2.0, -2.0) * texel).rgb;
+    let d = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>(-1.0, -1.0) * texel).rgb;
+    let e = textureSample(hdr_texture, hdr_sampler, uv).rgb;
+    let f = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>( 1.0, -1.0) * texel).rgb;
+    let g = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>(-2.0,  0.0) * texel).rgb;
+    let h = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>( 2.0,  0.0) * texel).rgb;
+    let i = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>(-1.0,  1.0) * texel).rgb;
+    let j = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>( 1.0,  1.0) * texel).rgb;
+    let k = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>(-2.0,  2.0) * texel).rgb;
+    let l = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>( 0.0,  2.0) * texel).rgb;
+    let m = textureSample(hdr_texture, hdr_sampler, uv + vec2<f32>( 2.0,  2.0) * texel).rgb;
+
+    // Weighted downsample
+    var result = e * 0.125;
+    result += (d + f + i + j) * 0.125;
+    result += (a + c + k + m) * 0.03125;
+    result += (b + g + h + l) * 0.0625;
+
+    // Soft threshold
+    result = threshold_color(result, 0.8, 0.5);
+
+    return vec4<f32>(result, 1.0);
+}
+"#
+    .to_string()
+}
+
+pub fn get_tonemap_wgsl() -> String {
+    r#"
+@group(0) @binding(0) var hdr_texture: texture_2d<f32>;
+@group(0) @binding(1) var hdr_sampler: sampler;
+@group(0) @binding(2) var bloom_texture: texture_2d<f32>;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var out: VertexOutput;
+    let uv = vec2<f32>(f32((vertex_index << 1u) & 2u), f32(vertex_index & 2u));
+    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = vec2<f32>(uv.x, 1.0 - uv.y);
+    return out;
+}
+
 fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
     let a = 2.51;
     let b = 0.03;
@@ -901,8 +970,30 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let hdr_color = textureSample(hdr_texture, hdr_sampler, in.uv).rgb;
-    let sdr_color = aces_tonemap(hdr_color);
+    let uv = in.uv;
+    let center_offset = uv - vec2<f32>(0.5, 0.5);
+    let dist_from_center = length(center_offset);
+
+    // Chromatic aberration: offset R and B channels outward from center
+    let ca_strength = 0.002;
+    let ca_offset = center_offset * ca_strength;
+    let r = textureSample(hdr_texture, hdr_sampler, uv - ca_offset).r;
+    let g = textureSample(hdr_texture, hdr_sampler, uv).g;
+    let b = textureSample(hdr_texture, hdr_sampler, uv + ca_offset).b;
+    var hdr_color = vec3<f32>(r, g, b);
+
+    // Add bloom (bilinear-filtered from half-res gives natural soft glow)
+    let bloom = textureSample(bloom_texture, hdr_sampler, uv).rgb;
+    let bloom_strength = 0.4;
+    hdr_color += bloom * bloom_strength;
+
+    // ACES tonemap
+    let sdr_color_tm = aces_tonemap(hdr_color);
+
+    // Vignette: smooth darkening at edges
+    let vignette = 1.0 - smoothstep(0.4, 0.9, dist_from_center);
+    let sdr_color = sdr_color_tm * vignette;
+
     return vec4<f32>(sdr_color, 1.0);
 }
 "#

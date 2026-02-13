@@ -112,3 +112,12 @@ pub struct EntityId(pub String);
 /// Tag component for searchable tags.
 #[derive(Debug, Clone)]
 pub struct Tags(pub Vec<String>);
+
+/// Runtime material overrides set by Lua scripts.
+/// Any `Some` field overrides the base material property.
+#[derive(Debug, Clone, Default)]
+pub struct MaterialOverride {
+    pub emission: Option<[f32; 3]>,
+    pub roughness: Option<f32>,
+    pub metallic: Option<f32>,
+}

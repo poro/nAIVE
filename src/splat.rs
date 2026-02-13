@@ -297,48 +297,108 @@ fn get_float_property(
     }
 }
 
-/// Create a small procedural splat cloud for testing when no PLY file is available.
+/// Create a galaxy/nebula spiral procedural splat cloud.
 fn create_procedural_splats(device: &wgpu::Device) -> GpuSplat {
+    use std::f32::consts::PI;
+
     let mut gpu_data = Vec::new();
     let mut cpu_positions = Vec::new();
 
-    // Generate a grid of colored splats
-    let grid_size = 5;
-    for x in -grid_size..=grid_size {
-        for y in -grid_size..=grid_size {
-            for z in -grid_size..=grid_size {
-                let pos = [x as f32 * 0.3, y as f32 * 0.3, z as f32 * 0.3];
-                cpu_positions.push(pos);
+    // Simple LCG pseudo-random for deterministic results without rand crate
+    let mut seed: u32 = 42;
+    let mut next_rand = || -> f32 {
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        ((seed >> 16) & 0x7FFF) as f32 / 32767.0
+    };
 
-                // Color based on position
-                let r = ((x + grid_size) as f32 / (2 * grid_size) as f32).clamp(0.0, 1.0);
-                let g = ((y + grid_size) as f32 / (2 * grid_size) as f32).clamp(0.0, 1.0);
-                let b = ((z + grid_size) as f32 / (2 * grid_size) as f32).clamp(0.0, 1.0);
+    let num_arms = 3;
+    let splats_per_arm = 400;
+    let core_splats = 200;
+    let total = num_arms * splats_per_arm + core_splats;
 
-                gpu_data.push(GaussianSplatGpu {
-                    position: pos,
-                    opacity: 0.8,
-                    scale: [0.05, 0.05, 0.05],
-                    _pad0: 0.0,
-                    rotation: [1.0, 0.0, 0.0, 0.0],
-                    sh_dc: [r, g, b],
-                    _pad1: 0.0,
-                });
-            }
+    // Galaxy spiral arms
+    for arm in 0..num_arms {
+        let arm_offset = (arm as f32 / num_arms as f32) * 2.0 * PI;
+        for i in 0..splats_per_arm {
+            let t = i as f32 / splats_per_arm as f32;
+            let radius = t * 3.0 + 0.3;
+            let angle = arm_offset + t * 4.0 * PI;
+
+            // Add some spread perpendicular to the arm
+            let spread = 0.15 + t * 0.3;
+            let dx = (next_rand() - 0.5) * spread;
+            let dy = (next_rand() - 0.5) * 0.15; // Thin disk
+            let dz = (next_rand() - 0.5) * spread;
+
+            let x = radius * angle.cos() + dx;
+            let y = dy;
+            let z = radius * angle.sin() + dz;
+
+            let pos = [x, y, z];
+            cpu_positions.push(pos);
+
+            // Color: warm core fading to cool blue/purple at edges
+            let core_mix = (1.0 - t).powf(1.5);
+            let r = 0.9 * core_mix + 0.15 * (1.0 - core_mix) + next_rand() * 0.1;
+            let g = 0.6 * core_mix + 0.1 * (1.0 - core_mix) + next_rand() * 0.05;
+            let b = 0.3 * core_mix + 0.7 * (1.0 - core_mix) + next_rand() * 0.15;
+
+            let opacity = (0.6 - t * 0.3).max(0.15) + next_rand() * 0.1;
+            let scale_val = 0.04 + t * 0.06 + next_rand() * 0.02;
+
+            gpu_data.push(GaussianSplatGpu {
+                position: pos,
+                opacity,
+                scale: [scale_val, scale_val * 0.5, scale_val],
+                _pad0: 0.0,
+                rotation: [1.0, 0.0, 0.0, 0.0],
+                sh_dc: [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)],
+                _pad1: 0.0,
+            });
         }
     }
 
+    // Dense bright core
+    for _ in 0..core_splats {
+        let r_dist = next_rand().powf(2.0) * 0.5;
+        let theta = next_rand() * 2.0 * PI;
+        let phi = (next_rand() - 0.5) * PI * 0.3;
+
+        let x = r_dist * theta.cos() * phi.cos();
+        let y = r_dist * phi.sin() * 0.4;
+        let z = r_dist * theta.sin() * phi.cos();
+
+        let pos = [x, y, z];
+        cpu_positions.push(pos);
+
+        // Hot white/yellow core
+        let r = 1.0;
+        let g = 0.85 + next_rand() * 0.15;
+        let b = 0.5 + next_rand() * 0.3;
+
+        gpu_data.push(GaussianSplatGpu {
+            position: pos,
+            opacity: 0.5 + next_rand() * 0.3,
+            scale: [0.06, 0.03, 0.06],
+            _pad0: 0.0,
+            rotation: [1.0, 0.0, 0.0, 0.0],
+            sh_dc: [r, g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)],
+            _pad1: 0.0,
+        });
+    }
+
     let count = gpu_data.len();
+    assert_eq!(count, total);
 
     let splat_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Procedural Splat Data"),
+        label: Some("Procedural Galaxy Splat Data"),
         contents: bytemuck::cast_slice(&gpu_data),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
 
     let initial_indices: Vec<u32> = (0..count as u32).collect();
     let sorted_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Procedural Splat Sorted Indices"),
+        label: Some("Procedural Galaxy Splat Sorted Indices"),
         contents: bytemuck::cast_slice(&initial_indices),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });

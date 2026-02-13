@@ -5,7 +5,7 @@ use serde::Deserialize;
 use wgpu::util::DeviceExt;
 
 use crate::camera::CameraState;
-use crate::components::{GaussianSplat, MeshRenderer, PointLight, Transform};
+use crate::components::{GaussianSplat, MaterialOverride, MeshRenderer, PointLight, Transform};
 use crate::material::MaterialCache;
 use crate::mesh::{MeshCache, Vertex3D};
 use crate::renderer::{DrawUniformPool, DrawUniforms, GpuState, DRAW_UNIFORM_SIZE};
@@ -229,6 +229,8 @@ impl PassType {
 #[derive(Debug, Clone, Copy)]
 pub enum ResourceSize {
     Viewport,
+    /// Viewport divided by N (e.g., ViewportDiv(2) = half resolution)
+    ViewportDiv(u32),
     Fixed(u32, u32),
 }
 
@@ -250,10 +252,18 @@ pub fn format_from_string(s: &str) -> Result<wgpu::TextureFormat, PipelineError>
     }
 }
 
-/// Parse a size string: "viewport" or "[width, height]".
+/// Parse a size string: "viewport", "viewport/2", or "[width, height]".
 pub fn parse_resource_size(s: &str) -> ResourceSize {
     if s == "viewport" {
         return ResourceSize::Viewport;
+    }
+    // Support "viewport/N" for fractional viewport sizes
+    if let Some(divisor_str) = s.strip_prefix("viewport/") {
+        if let Ok(divisor) = divisor_str.trim().parse::<u32>() {
+            if divisor > 0 {
+                return ResourceSize::ViewportDiv(divisor);
+            }
+        }
     }
     // Try parsing "[w, h]" or "w,h"
     let trimmed = s.trim_matches(|c| c == '[' || c == ']');
@@ -293,6 +303,7 @@ pub fn allocate_resources(
         let size = parse_resource_size(&def.size);
         let (width, height) = match size {
             ResourceSize::Viewport => (viewport_width, viewport_height),
+            ResourceSize::ViewportDiv(d) => (viewport_width / d, viewport_height / d),
             ResourceSize::Fixed(w, h) => (w, h),
         };
 
@@ -341,32 +352,35 @@ pub fn resize_resources(
     new_height: u32,
 ) {
     for resource in resources.values_mut() {
-        if let ResourceSize::Viewport = resource.size {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(&resource.name),
-                size: wgpu::Extent3d {
-                    width: new_width.max(1),
-                    height: new_height.max(1),
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: resource.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            resource.texture = texture;
-            resource.view = view;
-            tracing::debug!(
-                "Resized pipeline resource '{}': {}x{}",
-                resource.name,
-                new_width,
-                new_height
-            );
-        }
+        let (w, h) = match resource.size {
+            ResourceSize::Viewport => (new_width, new_height),
+            ResourceSize::ViewportDiv(d) => (new_width / d, new_height / d),
+            ResourceSize::Fixed(_, _) => continue,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&resource.name),
+            size: wgpu::Extent3d {
+                width: w.max(1),
+                height: h.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: resource.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        resource.texture = texture;
+        resource.view = view;
+        tracing::debug!(
+            "Resized pipeline resource '{}': {}x{}",
+            resource.name,
+            w,
+            h
+        );
     }
 }
 
@@ -428,6 +442,9 @@ pub struct CompiledPipeline {
     pub gbuffer_bind_group: Option<wgpu::BindGroup>,
     pub tonemap_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pub tonemap_bind_group: Option<wgpu::BindGroup>,
+    /// Bloom pass bind group (reads HDR buffer).
+    pub bloom_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    pub bloom_bind_group: Option<wgpu::BindGroup>,
     /// Bind group layout for splat data (storage buffers).
     pub splat_data_bind_group_layout: Option<wgpu::BindGroupLayout>,
     /// Bind group layout + bind group for splat compositing in lighting pass.
@@ -515,6 +532,8 @@ pub fn compile_pipeline(
     let mut gbuffer_bind_group = None;
     let mut tonemap_bind_group_layout = None;
     let mut tonemap_bind_group = None;
+    let mut bloom_bind_group_layout = None;
+    let mut bloom_bind_group = None;
     let mut splat_data_bind_group_layout = None;
     let mut splat_composite_bind_group_layout = None;
     let mut splat_composite_bind_group = None;
@@ -565,7 +584,7 @@ pub fn compile_pipeline(
             }
             PassType::Fullscreen => {
                 if pass_def.name.contains("tonemap") {
-                    // Tonemap pass: inputs from HDR buffer
+                    // Tonemap pass: inputs from HDR buffer + bloom buffer
                     let (layout, bg, pipeline) = create_tonemap_pipeline(
                         device,
                         &wgsl_source,
@@ -576,6 +595,18 @@ pub fn compile_pipeline(
                     );
                     tonemap_bind_group_layout = Some(layout);
                     tonemap_bind_group = Some(bg);
+                    pipeline
+                } else if pass_def.name.contains("bloom") {
+                    // Bloom pass: reads HDR buffer, outputs to bloom_buffer
+                    let (layout, bg, pipeline) = create_bloom_pipeline(
+                        device,
+                        &wgsl_source,
+                        &color_targets,
+                        &resources,
+                        &gbuffer_sampler,
+                    );
+                    bloom_bind_group_layout = Some(layout);
+                    bloom_bind_group = Some(bg);
                     pipeline
                 } else {
                     // Lighting pass: inputs from G-buffer
@@ -670,6 +701,8 @@ pub fn compile_pipeline(
         gbuffer_bind_group,
         tonemap_bind_group_layout,
         tonemap_bind_group,
+        bloom_bind_group_layout,
+        bloom_bind_group,
         splat_data_bind_group_layout,
         splat_composite_bind_group_layout,
         splat_composite_bind_group,
@@ -703,6 +736,7 @@ fn compile_pass_shader(shader_path: &Path, pass_name: &str) -> Result<String, Pi
             crate::shader::get_splat_render_wgsl()
         }
         name if name.contains("light") => crate::shader::get_deferred_light_wgsl(),
+        name if name.contains("bloom") => crate::shader::get_bloom_wgsl(),
         name if name.contains("tonemap") => crate::shader::get_tonemap_wgsl(),
         _ => {
             return Err(PipelineError::ShaderError(format!(
@@ -1279,30 +1313,28 @@ fn create_lighting_pipeline_with_splats(
 }
 
 /// Create the tonemap fullscreen pipeline.
-fn create_tonemap_pipeline(
+/// Create a bloom extraction pipeline: reads HDR buffer, outputs to half-res bloom buffer.
+fn create_bloom_pipeline(
     device: &wgpu::Device,
     wgsl_source: &str,
-    _color_targets: &[String],
+    color_targets: &[String],
     resources: &HashMap<String, GpuResource>,
     _gbuffer_sampler: &wgpu::Sampler,
-    surface_format: wgpu::TextureFormat,
 ) -> (wgpu::BindGroupLayout, wgpu::BindGroup, wgpu::RenderPipeline) {
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Tonemap Shader"),
+        label: Some("Bloom Shader"),
         source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
     });
 
-    // Create a filtering sampler for tonemap (reads HDR buffer with filtering)
     let hdr_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("HDR Sampler"),
+        label: Some("Bloom HDR Sampler"),
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
 
-    // Group 0: HDR texture + sampler
-    let tonemap_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Tonemap Input Layout"),
+    let bloom_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Bloom Input Layout"),
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -1326,7 +1358,132 @@ fn create_tonemap_pipeline(
     let hdr_view = resources
         .get("hdr_buffer")
         .map(|r| &r.view)
+        .expect("hdr_buffer resource missing for bloom");
+
+    let bloom_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Bloom Input Bind Group"),
+        layout: &bloom_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(hdr_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&hdr_sampler),
+            },
+        ],
+    });
+
+    // Output format from the bloom_buffer resource
+    let output_format = color_targets
+        .first()
+        .and_then(|name| resources.get(name))
+        .map(|r| r.format)
+        .unwrap_or(wgpu::TextureFormat::Rgba16Float);
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Bloom Pipeline Layout"),
+        bind_group_layouts: &[&bloom_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Bloom Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader_module,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader_module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: output_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    (bloom_layout, bloom_bind_group, pipeline)
+}
+
+fn create_tonemap_pipeline(
+    device: &wgpu::Device,
+    wgsl_source: &str,
+    _color_targets: &[String],
+    resources: &HashMap<String, GpuResource>,
+    _gbuffer_sampler: &wgpu::Sampler,
+    surface_format: wgpu::TextureFormat,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup, wgpu::RenderPipeline) {
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Tonemap Shader"),
+        source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
+    });
+
+    // Create a filtering sampler for tonemap (reads HDR buffer with filtering)
+    let hdr_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("HDR Sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    // Group 0: HDR texture + sampler + bloom texture
+    let tonemap_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Tonemap Input Layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let hdr_view = resources
+        .get("hdr_buffer")
+        .map(|r| &r.view)
         .expect("hdr_buffer resource missing");
+
+    // Bloom buffer (fall back to HDR view if bloom not present yet)
+    let bloom_view = resources
+        .get("bloom_buffer")
+        .map(|r| &r.view)
+        .unwrap_or(hdr_view);
 
     let tonemap_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Tonemap Input Bind Group"),
@@ -1339,6 +1496,10 @@ fn create_tonemap_pipeline(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(&hdr_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(bloom_view),
             },
         ],
     });
@@ -1414,21 +1575,37 @@ pub fn execute_pipeline(
         .create_view(&wgpu::TextureViewDescriptor::default());
 
     // Upload per-entity draw uniforms
-    for (draw_index, (_entity, (transform, mesh_renderer))) in
+    for (draw_index, (entity, (transform, mesh_renderer))) in
         (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
     {
         let material = material_cache.get(mesh_renderer.material_handle);
         let model_matrix = transform.world_matrix;
         let normal_matrix = model_matrix.inverse().transpose();
 
+        // Apply runtime material overrides from Lua scripts
+        let mat_override = scene_world.world.get::<&MaterialOverride>(entity).ok();
+        let roughness = mat_override
+            .as_ref()
+            .and_then(|o| o.roughness)
+            .unwrap_or(material.uniform.roughness);
+        let metallic = mat_override
+            .as_ref()
+            .and_then(|o| o.metallic)
+            .unwrap_or(material.uniform.metallic);
+        let emission = mat_override
+            .as_ref()
+            .and_then(|o| o.emission)
+            .map(|e| [e[0], e[1], e[2], 0.0])
+            .unwrap_or(material.uniform.emission);
+
         let draw_uniform = DrawUniforms {
             model_matrix: model_matrix.to_cols_array_2d(),
             normal_matrix: normal_matrix.to_cols_array_2d(),
             base_color: material.uniform.base_color,
-            roughness: material.uniform.roughness,
-            metallic: material.uniform.metallic,
+            roughness,
+            metallic,
             _pad: [0.0; 2],
-            emission: material.uniform.emission,
+            emission,
             _padding: [0.0; 20],
         };
 
@@ -1702,6 +1879,7 @@ fn execute_fullscreen_pass(
     swapchain_view: &wgpu::TextureView,
 ) {
     let is_tonemap = pass.name.contains("tonemap");
+    let is_bloom = pass.name.contains("bloom");
     let writes_to_swapchain = pass
         .color_targets
         .iter()
@@ -1742,8 +1920,13 @@ fn execute_fullscreen_pass(
         render_pass.set_pipeline(&pass.pipeline);
 
         if is_tonemap {
-            // Tonemap: group 0 = HDR texture + sampler
+            // Tonemap: group 0 = HDR texture + sampler + bloom texture
             if let Some(bg) = &compiled.tonemap_bind_group {
+                render_pass.set_bind_group(0, bg, &[]);
+            }
+        } else if is_bloom {
+            // Bloom: group 0 = HDR texture + sampler
+            if let Some(bg) = &compiled.bloom_bind_group {
                 render_pass.set_bind_group(0, bg, &[]);
             }
         } else {
@@ -1822,16 +2005,47 @@ pub fn rebuild_bind_groups(
         }
     }
 
-    // Rebuild tonemap bind group
+    // Rebuild bloom bind group
+    if let Some(layout) = &compiled.bloom_bind_group_layout {
+        if let Some(hdr_view) = compiled.resources.get("hdr_buffer").map(|r| &r.view) {
+            let hdr_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("Bloom HDR Sampler (resized)"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            compiled.bloom_bind_group = Some(device.create_bind_group(
+                &wgpu::BindGroupDescriptor {
+                    label: Some("Bloom Input Bind Group (resized)"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(hdr_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&hdr_sampler),
+                        },
+                    ],
+                },
+            ));
+        }
+    }
+
+    // Rebuild tonemap bind group (HDR + bloom)
     if let Some(layout) = &compiled.tonemap_bind_group_layout {
         if let Some(hdr_view) = compiled.resources.get("hdr_buffer").map(|r| &r.view) {
-            // Recreate sampler (or cache it)
             let hdr_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("HDR Sampler (resized)"),
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             });
+
+            let bloom_view = compiled.resources.get("bloom_buffer")
+                .map(|r| &r.view)
+                .unwrap_or(hdr_view);
 
             compiled.tonemap_bind_group = Some(device.create_bind_group(
                 &wgpu::BindGroupDescriptor {
@@ -1845,6 +2059,10 @@ pub fn rebuild_bind_groups(
                         wgpu::BindGroupEntry {
                             binding: 1,
                             resource: wgpu::BindingResource::Sampler(&hdr_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(bloom_view),
                         },
                     ],
                 },
@@ -2069,6 +2287,14 @@ passes:
         match parse_resource_size("viewport") {
             ResourceSize::Viewport => {}
             other => panic!("Expected Viewport, got: {:?}", other),
+        }
+        match parse_resource_size("viewport/2") {
+            ResourceSize::ViewportDiv(2) => {}
+            other => panic!("Expected ViewportDiv(2), got: {:?}", other),
+        }
+        match parse_resource_size("viewport/4") {
+            ResourceSize::ViewportDiv(4) => {}
+            other => panic!("Expected ViewportDiv(4), got: {:?}", other),
         }
         match parse_resource_size("[1920, 1080]") {
             ResourceSize::Fixed(1920, 1080) => {}

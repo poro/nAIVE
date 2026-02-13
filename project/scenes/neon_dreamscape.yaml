@@ -1,0 +1,200 @@
+name: "Neon Dreamscape"
+settings:
+  ambient_light: [0.01, 0.01, 0.02]
+  gravity: [0, 0, 0]
+
+entities:
+  # === Camera ===
+  - id: camera
+    tags: [camera]
+    components:
+      transform:
+        position: [0, 3, 10]
+      camera:
+        fov: 65
+        near: 0.1
+        far: 100
+        role: main
+      script:
+        source: logic/dreamscape_camera.lua
+
+  # === Dark Floor ===
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [20, 1, 20]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_floor.yaml
+
+  # === Neon Pillars (hexagonal arrangement, radius ~4) ===
+  - id: pillar_neon_1
+    tags: [pillar, neon]
+    components:
+      transform:
+        position: [4, 2, 0]
+        scale: [0.4, 4, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_pink.yaml
+
+  - id: pillar_neon_2
+    tags: [pillar, neon]
+    components:
+      transform:
+        position: [2, 2, 3.46]
+        scale: [0.4, 4, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_cyan.yaml
+
+  - id: pillar_neon_3
+    tags: [pillar, neon]
+    components:
+      transform:
+        position: [-2, 2, 3.46]
+        scale: [0.4, 4, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_purple.yaml
+
+  - id: pillar_neon_4
+    tags: [pillar, neon]
+    components:
+      transform:
+        position: [-4, 2, 0]
+        scale: [0.4, 4, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_gold.yaml
+
+  - id: pillar_neon_5
+    tags: [pillar, neon]
+    components:
+      transform:
+        position: [-2, 2, -3.46]
+        scale: [0.4, 4, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_blue.yaml
+
+  - id: pillar_neon_6
+    tags: [pillar, neon]
+    components:
+      transform:
+        position: [2, 2, -3.46]
+        scale: [0.4, 4, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_green.yaml
+
+  # === Floating Emissive Cubes ===
+  - id: emissive_cube_1
+    tags: [emissive, floating]
+    components:
+      transform:
+        position: [0, 2.5, 0]
+        scale: [0.8, 0.8, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_pink.yaml
+      script:
+        source: logic/float_bob.lua
+
+  - id: emissive_cube_2
+    tags: [emissive, floating]
+    components:
+      transform:
+        position: [1.5, 1.8, -1]
+        scale: [0.6, 0.6, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_cyan.yaml
+      script:
+        source: logic/float_bob.lua
+
+  - id: emissive_cube_3
+    tags: [emissive, floating]
+    components:
+      transform:
+        position: [-1.2, 3.2, 0.5]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_purple.yaml
+      script:
+        source: logic/float_bob.lua
+
+  # === Neon Point Lights (co-located with pillars) ===
+  - id: neon_light_1
+    tags: [light, neon]
+    components:
+      transform:
+        position: [4, 2, 0]
+      point_light:
+        color: [1.0, 0.2, 0.6]
+        intensity: 8
+        range: 12
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: neon_light_2
+    tags: [light, neon]
+    components:
+      transform:
+        position: [2, 2, 3.46]
+      point_light:
+        color: [0.1, 0.9, 1.0]
+        intensity: 8
+        range: 12
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: neon_light_3
+    tags: [light, neon]
+    components:
+      transform:
+        position: [-2, 2, 3.46]
+      point_light:
+        color: [0.6, 0.1, 1.0]
+        intensity: 8
+        range: 12
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: neon_light_4
+    tags: [light, neon]
+    components:
+      transform:
+        position: [-4, 2, 0]
+      point_light:
+        color: [1.0, 0.85, 0.2]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: neon_light_5
+    tags: [light, neon]
+    components:
+      transform:
+        position: [-2, 2, -3.46]
+      point_light:
+        color: [0.2, 0.4, 1.0]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: neon_light_6
+    tags: [light, neon]
+    components:
+      transform:
+        position: [2, 2, -3.46]
+      point_light:
+        color: [0.1, 1.0, 0.4]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua

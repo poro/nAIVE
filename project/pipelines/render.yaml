@@ -32,6 +32,10 @@ resources:
     type: texture_2d
     format: rgba16f
     size: viewport
+  - name: bloom_buffer
+    type: texture_2d
+    format: rgba16f
+    size: viewport/2
 
 passes:
   - name: geometry_pass
@@ -69,10 +73,19 @@ passes:
     outputs:
       color: hdr_buffer
 
+  - name: bloom_pass
+    type: fullscreen
+    shader: shaders/passes/bloom.slang
+    inputs:
+      hdr: hdr_buffer
+    outputs:
+      color: bloom_buffer
+
   - name: tonemap_pass
     type: fullscreen
     shader: shaders/passes/tonemap.slang
     inputs:
       hdr: hdr_buffer
+      bloom: bloom_buffer
     outputs:
       color: swapchain

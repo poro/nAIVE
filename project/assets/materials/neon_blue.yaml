@@ -1,0 +1,8 @@
+shader: shaders/passes/gbuffer.slang
+properties:
+  base_color: [0.02, 0.03, 0.1]
+  roughness: 0.3
+  metallic: 0.8
+  emission: [0.3, 0.5, 2.0]
+blend_mode: opaque
+cull_mode: back

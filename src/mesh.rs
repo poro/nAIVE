@@ -86,7 +86,26 @@ impl MeshCache {
             return Ok(handle);
         }
 
-        let gpu_mesh = load_gltf(device, project_root, mesh_path)?;
+        // Support procedural mesh specifiers: "procedural:sphere", "procedural:cube"
+        let gpu_mesh = if let Some(shape) = mesh_path.strip_prefix("procedural:") {
+            match shape {
+                "sphere" => {
+                    tracing::info!("Generating procedural sphere");
+                    create_procedural_sphere(device, 0.5, 32, 32)
+                }
+                "cube" => {
+                    tracing::info!("Generating procedural cube");
+                    create_procedural_cube(device)
+                }
+                _ => {
+                    tracing::warn!("Unknown procedural shape '{}', using cube", shape);
+                    create_procedural_cube(device)
+                }
+            }
+        } else {
+            load_gltf(device, project_root, mesh_path)?
+        };
+
         let handle = MeshHandle(self.meshes.len());
         self.meshes.push(gpu_mesh);
         self.path_to_handle.insert(key, handle);
@@ -190,6 +209,67 @@ fn generate_flat_normals(positions: &[[f32; 3]]) -> Vec<[f32; 3]> {
         }
     }
     normals
+}
+
+/// Create a procedural UV sphere.
+fn create_procedural_sphere(device: &wgpu::Device, radius: f32, rings: u32, sectors: u32) -> GpuMesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for ring in 0..=rings {
+        let theta = std::f32::consts::PI * ring as f32 / rings as f32;
+        let sin_theta = theta.sin();
+        let cos_theta = theta.cos();
+
+        for sector in 0..=sectors {
+            let phi = 2.0 * std::f32::consts::PI * sector as f32 / sectors as f32;
+            let sin_phi = phi.sin();
+            let cos_phi = phi.cos();
+
+            let nx = sin_theta * cos_phi;
+            let ny = cos_theta;
+            let nz = sin_theta * sin_phi;
+
+            vertices.push(Vertex3D {
+                position: [radius * nx, radius * ny, radius * nz],
+                normal: [nx, ny, nz],
+                tex_coords: [sector as f32 / sectors as f32, ring as f32 / rings as f32],
+            });
+        }
+    }
+
+    for ring in 0..rings {
+        for sector in 0..sectors {
+            let curr_row = ring * (sectors + 1);
+            let next_row = (ring + 1) * (sectors + 1);
+
+            indices.push(curr_row + sector);
+            indices.push(next_row + sector);
+            indices.push(next_row + sector + 1);
+
+            indices.push(curr_row + sector);
+            indices.push(next_row + sector + 1);
+            indices.push(curr_row + sector + 1);
+        }
+    }
+
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Procedural Sphere VB"),
+        contents: bytemuck::cast_slice(&vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Procedural Sphere IB"),
+        contents: bytemuck::cast_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    GpuMesh {
+        vertex_buffer,
+        index_buffer,
+        index_count: indices.len() as u32,
+    }
 }
 
 /// Create a procedural unit cube as fallback.

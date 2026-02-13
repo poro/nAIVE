@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use glam::Vec3;
 use mlua::prelude::*;
 
-use crate::components::{PointLight, Transform};
+use crate::components::{MaterialOverride, PointLight, Transform};
 use crate::events::EventBus;
 use crate::input::InputState;
 use crate::physics::PhysicsWorld;
@@ -275,6 +275,78 @@ impl ScriptRuntime {
             Ok(())
         }).map_err(|e| e.to_string())?;
         entity_table.set("set_light", set_light_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_light_color(entity_string_id, r, g, b)
+        let set_light_color_fn = self.lua.create_function(move |_, (id, r, g, b): (String, f32, f32, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut light) = sw.world.get::<&mut PointLight>(entity) {
+                    light.color = glam::Vec3::new(r, g, b);
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_light_color", set_light_color_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_emission(entity_string_id, r, g, b)
+        let set_emission_fn = self.lua.create_function(move |_, (id, r, g, b): (String, f32, f32, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                let has_override = sw.world.get::<&MaterialOverride>(entity).is_ok();
+                if has_override {
+                    if let Ok(mut mat_override) = sw.world.get::<&mut MaterialOverride>(entity) {
+                        mat_override.emission = Some([r, g, b]);
+                    }
+                } else {
+                    let _ = sw.world.insert_one(entity, MaterialOverride {
+                        emission: Some([r, g, b]),
+                        ..Default::default()
+                    });
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_emission", set_emission_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_roughness(entity_string_id, value)
+        let set_roughness_fn = self.lua.create_function(move |_, (id, value): (String, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                let has_override = sw.world.get::<&MaterialOverride>(entity).is_ok();
+                if has_override {
+                    if let Ok(mut mat_override) = sw.world.get::<&mut MaterialOverride>(entity) {
+                        mat_override.roughness = Some(value);
+                    }
+                } else {
+                    let _ = sw.world.insert_one(entity, MaterialOverride {
+                        roughness: Some(value),
+                        ..Default::default()
+                    });
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_roughness", set_roughness_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_metallic(entity_string_id, value)
+        let set_metallic_fn = self.lua.create_function(move |_, (id, value): (String, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                let has_override = sw.world.get::<&MaterialOverride>(entity).is_ok();
+                if has_override {
+                    if let Ok(mut mat_override) = sw.world.get::<&mut MaterialOverride>(entity) {
+                        mat_override.metallic = Some(value);
+                    }
+                } else {
+                    let _ = sw.world.insert_one(entity, MaterialOverride {
+                        metallic: Some(value),
+                        ..Default::default()
+                    });
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_metallic", set_metallic_fn).map_err(|e| e.to_string())?;
 
         globals.set("entity", entity_table).map_err(|e| e.to_string())?;
         Ok(())
