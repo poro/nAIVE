@@ -1,0 +1,47 @@
+[package]
+name = "naive-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["slang"]
+slang = ["dep:shader-slang"]
+
+[dependencies]
+# GPU rendering
+wgpu = { version = "24", features = ["spirv"] }
+winit = "0.30"
+
+# SLANG shader compilation (optional - disable if it won't build)
+shader-slang = { version = "0.1", optional = true }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+
+# File watching
+notify = "7"
+
+# Math
+glam = "0.29"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async bridging for wgpu device creation
+pollster = "0.4"
+
+# Byte casting for vertex buffers
+bytemuck = { version = "1", features = ["derive"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = true
