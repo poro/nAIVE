@@ -376,12 +376,15 @@ impl Engine {
             }
         }
 
-        // Call init on all scripts
+        // Call init on all scripts (collect first to release world borrow before Lua runs)
         if let Some(sw) = &self.scene_world {
-            for (entity, script) in sw.world.query::<&Script>().iter() {
-                if !script.initialized {
-                    script_runtime.call_init(entity);
-                }
+            let uninit_entities: Vec<hecs::Entity> = sw.world.query::<&Script>()
+                .iter()
+                .filter(|(_, script)| !script.initialized)
+                .map(|(entity, _)| entity)
+                .collect();
+            for entity in uninit_entities {
+                script_runtime.call_init(entity);
             }
             // Mark all as initialized
         }
@@ -699,19 +702,26 @@ impl Engine {
             if let (Some(scene_world), Some(script_runtime)) =
                 (&self.scene_world, &mut self.script_runtime)
             {
-                for (entity, script) in scene_world.world.query::<&Script>().iter() {
-                    for changed_path in &script_paths {
+                let reload_candidates: Vec<(hecs::Entity, std::path::PathBuf)> = scene_world.world
+                    .query::<&Script>().iter()
+                    .filter_map(|(entity, script)| {
                         let script_source_str = script.source.to_string_lossy();
-                        let changed_str = changed_path.to_string_lossy();
-                        if changed_str.ends_with(&*script_source_str)
-                            || changed_str.ends_with(script.source.file_name().unwrap_or_default().to_string_lossy().as_ref())
-                        {
-                            match script_runtime.hot_reload_script(entity, &self.project_root, &script.source) {
-                                Ok(true) => tracing::info!("Script hot-reloaded: {:?}", script.source),
-                                Ok(false) => {}
-                                Err(e) => tracing::error!("Script hot-reload failed: {}", e),
+                        for changed_path in &script_paths {
+                            let changed_str = changed_path.to_string_lossy();
+                            if changed_str.ends_with(&*script_source_str)
+                                || changed_str.ends_with(script.source.file_name().unwrap_or_default().to_string_lossy().as_ref())
+                            {
+                                return Some((entity, script.source.clone()));
                             }
                         }
+                        None
+                    })
+                    .collect();
+                for (entity, source) in reload_candidates {
+                    match script_runtime.hot_reload_script(entity, &self.project_root, &source) {
+                        Ok(true) => tracing::info!("Script hot-reloaded: {:?}", source),
+                        Ok(false) => {}
+                        Err(e) => tracing::error!("Script hot-reload failed: {}", e),
                     }
                 }
             }
@@ -1043,7 +1053,11 @@ impl ApplicationHandler for Engine {
                         if let (Some(scene_world), Some(script_runtime)) =
                             (&self.scene_world, &self.script_runtime)
                         {
-                            for (entity, _script) in scene_world.world.query::<&Script>().iter() {
+                            let scripted: Vec<hecs::Entity> = scene_world.world
+                                .query::<&Script>().iter()
+                                .map(|(e, _)| e)
+                                .collect();
+                            for entity in scripted {
                                 script_runtime.call_update(entity, dt);
                             }
                         }

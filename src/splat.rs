@@ -312,8 +312,8 @@ fn create_procedural_splats(device: &wgpu::Device) -> GpuSplat {
     };
 
     let num_arms = 3;
-    let splats_per_arm = 400;
-    let core_splats = 200;
+    let splats_per_arm = 1500;
+    let core_splats = 500;
     let total = num_arms * splats_per_arm + core_splats;
 
     // Galaxy spiral arms

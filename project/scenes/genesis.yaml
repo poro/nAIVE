@@ -1,0 +1,771 @@
+name: "GENESIS - The Birth of a World"
+settings:
+  ambient_light: [0.03, 0.025, 0.04]
+  gravity: [0, 0, 0]
+
+entities:
+  # ============================================================
+  # CAMERA - Cinematic keyframe choreography
+  # ============================================================
+  - id: camera
+    tags: [camera]
+    components:
+      transform:
+        position: [0, 2, 1.5]
+      camera:
+        fov: 65
+        near: 0.1
+        far: 200
+        role: main
+      script:
+        source: logic/genesis_camera.lua
+
+  # ============================================================
+  # THE SPARK - Central creation point
+  # ============================================================
+  - id: spark_core
+    tags: [spark, central]
+    components:
+      transform:
+        position: [0, 2, 0]
+        scale: [0.6, 0.6, 0.6]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/genesis_core.yaml
+      script:
+        source: logic/genesis_spark.lua
+
+  - id: chrome_orb
+    tags: [central, showcase]
+    components:
+      transform:
+        position: [0, 3.5, 0]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/chrome.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  # ============================================================
+  # GAUSSIAN SPLAT NEBULA
+  # ============================================================
+  - id: galaxy_nebula
+    tags: [splat, nebula]
+    components:
+      transform:
+        position: [0, 1.5, 0]
+        scale: [1, 1, 1]
+      gaussian_splat:
+        source: procedural
+
+  # ============================================================
+  # ENVIRONMENT - Floor & Pedestal
+  # ============================================================
+  - id: floor
+    tags: [environment]
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [30, 1, 30]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_mirror.yaml
+
+  - id: pedestal
+    tags: [environment]
+    components:
+      transform:
+        position: [0, -0.3, 0]
+        scale: [2, 0.6, 2]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_mirror.yaml
+
+  # ============================================================
+  # OBSIDIAN PILLARS - Rise from underground in Act 2
+  # 8 pillars in a circle at radius 7
+  # ============================================================
+  - id: pillar_1
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [7, 3, 0]
+        scale: [0.5, 6, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+      script:
+        source: logic/genesis_pillar_rise.lua
+
+  - id: pillar_2
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [4.95, 3, 4.95]
+        scale: [0.5, 6, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+      script:
+        source: logic/genesis_pillar_rise.lua
+
+  - id: pillar_3
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [0, 3, 7]
+        scale: [0.5, 6, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+      script:
+        source: logic/genesis_pillar_rise.lua
+
+  - id: pillar_4
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-4.95, 3, 4.95]
+        scale: [0.5, 6, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+      script:
+        source: logic/genesis_pillar_rise.lua
+
+  - id: pillar_5
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-7, 3, 0]
+        scale: [0.5, 6, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+      script:
+        source: logic/genesis_pillar_rise.lua
+
+  - id: pillar_6
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-4.95, 3, -4.95]
+        scale: [0.5, 6, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+      script:
+        source: logic/genesis_pillar_rise.lua
+
+  - id: pillar_7
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [0, 3, -7]
+        scale: [0.5, 6, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+      script:
+        source: logic/genesis_pillar_rise.lua
+
+  - id: pillar_8
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [4.95, 3, -4.95]
+        scale: [0.5, 6, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+      script:
+        source: logic/genesis_pillar_rise.lua
+
+  # ============================================================
+  # OUTER PBR RING - Copper spheres at radius 5.5
+  # Roughness varies around the ring, metallic=0.85
+  # ============================================================
+  - id: copper_sphere_1
+    tags: [pbr_ring, outer]
+    components:
+      transform:
+        position: [5.5, 1.5, 0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: copper_sphere_2
+    tags: [pbr_ring, outer]
+    components:
+      transform:
+        position: [3.89, 1.5, 3.89]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: copper_sphere_3
+    tags: [pbr_ring, outer]
+    components:
+      transform:
+        position: [0, 1.5, 5.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: copper_sphere_4
+    tags: [pbr_ring, outer]
+    components:
+      transform:
+        position: [-3.89, 1.5, 3.89]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: copper_sphere_5
+    tags: [pbr_ring, outer]
+    components:
+      transform:
+        position: [-5.5, 1.5, 0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: copper_sphere_6
+    tags: [pbr_ring, outer]
+    components:
+      transform:
+        position: [-3.89, 1.5, -3.89]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: copper_sphere_7
+    tags: [pbr_ring, outer]
+    components:
+      transform:
+        position: [0, 1.5, -5.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: copper_sphere_8
+    tags: [pbr_ring, outer]
+    components:
+      transform:
+        position: [3.89, 1.5, -3.89]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  # ============================================================
+  # INNER PBR RING - Steel spheres at radius 4
+  # Metallic varies, roughness=0.2, orbits opposite direction
+  # ============================================================
+  - id: steel_sphere_1
+    tags: [pbr_ring, inner]
+    components:
+      transform:
+        position: [4, 2.5, 0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: steel_sphere_2
+    tags: [pbr_ring, inner]
+    components:
+      transform:
+        position: [2.83, 2.5, 2.83]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: steel_sphere_3
+    tags: [pbr_ring, inner]
+    components:
+      transform:
+        position: [0, 2.5, 4]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: steel_sphere_4
+    tags: [pbr_ring, inner]
+    components:
+      transform:
+        position: [-2.83, 2.5, 2.83]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: steel_sphere_5
+    tags: [pbr_ring, inner]
+    components:
+      transform:
+        position: [-4, 2.5, 0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: steel_sphere_6
+    tags: [pbr_ring, inner]
+    components:
+      transform:
+        position: [-2.83, 2.5, -2.83]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: steel_sphere_7
+    tags: [pbr_ring, inner]
+    components:
+      transform:
+        position: [0, 2.5, -4]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: steel_sphere_8
+    tags: [pbr_ring, inner]
+    components:
+      transform:
+        position: [2.83, 2.5, -2.83]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  # ============================================================
+  # INNER ORBIT - 4 close spheres with roughness sweep
+  # ============================================================
+  - id: inner_orb_1
+    tags: [inner_orbit]
+    components:
+      transform:
+        position: [2, 2, 0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/chrome.yaml
+      script:
+        source: logic/genesis_roughness_sweep.lua
+
+  - id: inner_orb_2
+    tags: [inner_orbit]
+    components:
+      transform:
+        position: [0, 2, 2]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/chrome.yaml
+      script:
+        source: logic/genesis_roughness_sweep.lua
+
+  - id: inner_orb_3
+    tags: [inner_orbit]
+    components:
+      transform:
+        position: [-2, 2, 0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/chrome.yaml
+      script:
+        source: logic/genesis_roughness_sweep.lua
+
+  - id: inner_orb_4
+    tags: [inner_orbit]
+    components:
+      transform:
+        position: [0, 2, -2]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/chrome.yaml
+      script:
+        source: logic/genesis_roughness_sweep.lua
+
+  # ============================================================
+  # EMISSIVE CONSTELLATION - Neon cubes in a vertical spiral
+  # ============================================================
+  - id: neon_cube_1
+    tags: [emissive, constellation]
+    components:
+      transform:
+        position: [1.5, 1.2, 0.8]
+        scale: [0.35, 0.35, 0.35]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_pink.yaml
+      script:
+        source: logic/genesis_emissive_cycle.lua
+
+  - id: neon_cube_2
+    tags: [emissive, constellation]
+    components:
+      transform:
+        position: [-0.8, 2.0, 1.5]
+        scale: [0.4, 0.4, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_cyan.yaml
+      script:
+        source: logic/genesis_emissive_cycle.lua
+
+  - id: neon_cube_3
+    tags: [emissive, constellation]
+    components:
+      transform:
+        position: [0.5, 3.0, -1.2]
+        scale: [0.3, 0.3, 0.3]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_purple.yaml
+      script:
+        source: logic/genesis_emissive_cycle.lua
+
+  - id: neon_cube_4
+    tags: [emissive, constellation]
+    components:
+      transform:
+        position: [-1.3, 3.8, -0.5]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_gold.yaml
+      script:
+        source: logic/genesis_emissive_cycle.lua
+
+  - id: neon_cube_5
+    tags: [emissive, constellation]
+    components:
+      transform:
+        position: [0.9, 4.5, 0.6]
+        scale: [0.35, 0.35, 0.35]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_blue.yaml
+      script:
+        source: logic/genesis_emissive_cycle.lua
+
+  - id: neon_cube_6
+    tags: [emissive, constellation]
+    components:
+      transform:
+        position: [-0.6, 5.2, -0.8]
+        scale: [0.45, 0.45, 0.45]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_green.yaml
+      script:
+        source: logic/genesis_emissive_cycle.lua
+
+  - id: neon_cube_7
+    tags: [emissive, constellation]
+    components:
+      transform:
+        position: [1.1, 1.8, -1.5]
+        scale: [0.55, 0.55, 0.55]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_white.yaml
+      script:
+        source: logic/genesis_emissive_cycle.lua
+
+  - id: neon_cube_8
+    tags: [emissive, constellation]
+    components:
+      transform:
+        position: [-1.0, 4.0, 1.0]
+        scale: [0.3, 0.3, 0.3]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_amber.yaml
+      script:
+        source: logic/genesis_emissive_cycle.lua
+
+  # ============================================================
+  # LIGHTING ARRAY - 24 lights for dramatic effect
+  # ============================================================
+
+  # --- Key Light: dramatic sunrise in Act 3 ---
+  - id: key_light
+    tags: [light, dramatic]
+    components:
+      transform:
+        position: [0, 10, 5]
+      point_light:
+        color: [1.0, 0.9, 0.7]
+        intensity: 0.5
+        range: 30
+      script:
+        source: logic/genesis_sunrise.lua
+
+  # --- Fill Light ---
+  - id: fill_light
+    tags: [light, dramatic]
+    components:
+      transform:
+        position: [0, 8, -5]
+      point_light:
+        color: [0.3, 0.4, 0.6]
+        intensity: 0.5
+        range: 25
+      script:
+        source: logic/genesis_sunrise.lua
+
+  # --- Pillar Lights (co-located, alternating warm/cool) ---
+  - id: pillar_light_1
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [7, 4, 0]
+      point_light:
+        color: [1.0, 0.6, 0.2]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: pillar_light_2
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [4.95, 4, 4.95]
+      point_light:
+        color: [0.3, 0.5, 1.0]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: pillar_light_3
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [0, 4, 7]
+      point_light:
+        color: [1.0, 0.6, 0.2]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: pillar_light_4
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [-4.95, 4, 4.95]
+      point_light:
+        color: [0.3, 0.5, 1.0]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: pillar_light_5
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [-7, 4, 0]
+      point_light:
+        color: [1.0, 0.6, 0.2]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: pillar_light_6
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [-4.95, 4, -4.95]
+      point_light:
+        color: [0.3, 0.5, 1.0]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: pillar_light_7
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [0, 4, -7]
+      point_light:
+        color: [1.0, 0.6, 0.2]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: pillar_light_8
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [4.95, 4, -4.95]
+      point_light:
+        color: [0.3, 0.5, 1.0]
+        intensity: 6
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  # --- Core Glow (4 lights close to the spark) ---
+  - id: core_glow_1
+    tags: [light, core]
+    components:
+      transform:
+        position: [1, 2, 0]
+      point_light:
+        color: [1.0, 0.8, 0.5]
+        intensity: 12
+        range: 8
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: core_glow_2
+    tags: [light, core]
+    components:
+      transform:
+        position: [0, 2, 1]
+      point_light:
+        color: [0.5, 0.8, 1.0]
+        intensity: 10
+        range: 8
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: core_glow_3
+    tags: [light, core]
+    components:
+      transform:
+        position: [-1, 2, 0]
+      point_light:
+        color: [1.0, 0.3, 0.6]
+        intensity: 10
+        range: 8
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: core_glow_4
+    tags: [light, core]
+    components:
+      transform:
+        position: [0, 2, -1]
+      point_light:
+        color: [0.3, 1.0, 0.5]
+        intensity: 10
+        range: 8
+      script:
+        source: logic/neon_pulse.lua
+
+  # --- Accent Spots (high up, dramatic colors) ---
+  - id: accent_spot_1
+    tags: [light, accent]
+    components:
+      transform:
+        position: [6, 7, 6]
+      point_light:
+        color: [0.6, 0.1, 1.0]
+        intensity: 8
+        range: 15
+
+  - id: accent_spot_2
+    tags: [light, accent]
+    components:
+      transform:
+        position: [-6, 7, 6]
+      point_light:
+        color: [0.1, 0.9, 0.8]
+        intensity: 8
+        range: 15
+
+  - id: accent_spot_3
+    tags: [light, accent]
+    components:
+      transform:
+        position: [6, 7, -6]
+      point_light:
+        color: [1.0, 0.7, 0.1]
+        intensity: 8
+        range: 15
+
+  - id: accent_spot_4
+    tags: [light, accent]
+    components:
+      transform:
+        position: [-6, 7, -6]
+      point_light:
+        color: [1.0, 0.15, 0.15]
+        intensity: 8
+        range: 15
+
+  # --- Rim Lights (low and far, fill the floor) ---
+  - id: rim_light_1
+    tags: [light, rim]
+    components:
+      transform:
+        position: [12, 1, 0]
+      point_light:
+        color: [0.4, 0.2, 0.8]
+        intensity: 4
+        range: 20
+
+  - id: rim_light_2
+    tags: [light, rim]
+    components:
+      transform:
+        position: [-12, 1, 0]
+      point_light:
+        color: [0.8, 0.4, 0.1]
+        intensity: 4
+        range: 20
+
+  - id: rim_light_3
+    tags: [light, rim]
+    components:
+      transform:
+        position: [0, 1, 12]
+      point_light:
+        color: [0.1, 0.6, 0.9]
+        intensity: 4
+        range: 20
+
+  - id: rim_light_4
+    tags: [light, rim]
+    components:
+      transform:
+        position: [0, 1, -12]
+      point_light:
+        color: [0.9, 0.6, 0.3]
+        intensity: 4
+        range: 20

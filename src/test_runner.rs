@@ -140,11 +140,14 @@ impl TestRunner {
             }
         }
 
-        // Call init on all scripts
-        for (entity, script) in self.scene_world.world.query::<&Script>().iter() {
-            if !script.initialized {
-                self.script_runtime.call_init(entity);
-            }
+        // Call init on all scripts (collect first to release world borrow before Lua runs)
+        let uninit: Vec<hecs::Entity> = self.scene_world.world.query::<&Script>()
+            .iter()
+            .filter(|(_, s)| !s.initialized)
+            .map(|(e, _)| e)
+            .collect();
+        for entity in uninit {
+            self.script_runtime.call_init(entity);
         }
         for (_entity, script) in self.scene_world.world.query::<&mut Script>().iter() {
             script.initialized = true;
@@ -172,8 +175,12 @@ impl TestRunner {
         // FPS controller update
         self.update_fps_controller(dt);
 
-        // Update all scripts
-        for (entity, _script) in self.scene_world.world.query::<&Script>().iter() {
+        // Update all scripts (collect first to release world borrow before Lua runs)
+        let scripted: Vec<hecs::Entity> = self.scene_world.world.query::<&Script>()
+            .iter()
+            .map(|(e, _)| e)
+            .collect();
+        for entity in scripted {
             self.script_runtime.call_update(entity, dt);
         }
 
