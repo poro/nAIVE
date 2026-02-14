@@ -32,7 +32,15 @@ pub struct AudioSystem {
 
 impl AudioSystem {
     pub fn new() -> Self {
-        let manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
+        let settings = AudioManagerSettings::<DefaultBackend> {
+            capacities: kira::manager::Capacities {
+                sound_capacity: 512,
+                command_capacity: 256,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let manager = AudioManager::<DefaultBackend>::new(settings)
             .map_err(|e| {
                 tracing::warn!("Failed to initialize audio: {}. Audio disabled.", e);
                 e

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::{Quat, Vec3};
 use rapier3d::prelude::*;
@@ -101,6 +101,9 @@ pub struct PhysicsWorld {
     pub collision_events: Vec<CollisionEvent>,
     pub trigger_events: Vec<TriggerEvent>,
 
+    // Track active contact pairs from previous frame to detect new-only contacts
+    active_contact_pairs: HashSet<[ColliderHandle; 2]>,
+
     // Character controller
     pub character_controller: KinematicCharacterController,
 }
@@ -134,6 +137,7 @@ impl PhysicsWorld {
             collider_to_entity: HashMap::new(),
             collision_events: Vec::new(),
             trigger_events: Vec::new(),
+            active_contact_pairs: HashSet::new(),
             character_controller,
         }
     }
@@ -251,23 +255,31 @@ impl PhysicsWorld {
             &(),
         );
 
-        // Collect collision events from narrow phase
+        // Collect collision events from narrow phase — only newly started contacts
         self.collision_events.clear();
         self.trigger_events.clear();
 
+        let mut current_pairs = HashSet::new();
         for pair in self.narrow_phase.contact_pairs() {
             if pair.has_any_active_contact {
-                let entity_a = self.collider_to_entity.get(&pair.collider1).copied();
-                let entity_b = self.collider_to_entity.get(&pair.collider2).copied();
-                if let (Some(a), Some(b)) = (entity_a, entity_b) {
-                    self.collision_events.push(CollisionEvent {
-                        entity_a: a,
-                        entity_b: b,
-                        started: true,
-                    });
+                let key = [pair.collider1, pair.collider2];
+                current_pairs.insert(key);
+
+                // Only emit if this pair was NOT active last frame (new contact)
+                if !self.active_contact_pairs.contains(&key) {
+                    let entity_a = self.collider_to_entity.get(&pair.collider1).copied();
+                    let entity_b = self.collider_to_entity.get(&pair.collider2).copied();
+                    if let (Some(a), Some(b)) = (entity_a, entity_b) {
+                        self.collision_events.push(CollisionEvent {
+                            entity_a: a,
+                            entity_b: b,
+                            started: true,
+                        });
+                    }
                 }
             }
         }
+        self.active_contact_pairs = current_pairs;
     }
 
     /// Move a character controller and return the effective movement.
