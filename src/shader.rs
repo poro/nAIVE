@@ -95,7 +95,18 @@ fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
     let search_path_c = CString::new(search_path.as_str()).map_err(|e| {
         ShaderError::SlangCompilationFailed(format!("Invalid search path: {:?}", e))
     })?;
-    let search_paths_ptrs = [search_path_c.as_ptr()];
+    // Also add the modules directory so `import camera;` etc. resolve
+    let modules_path = path
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.join("modules"))
+        .unwrap_or_else(|| Path::new("modules").to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    let modules_path_c = CString::new(modules_path.as_str()).map_err(|e| {
+        ShaderError::SlangCompilationFailed(format!("Invalid search path: {:?}", e))
+    })?;
+    let search_paths_ptrs = [search_path_c.as_ptr(), modules_path_c.as_ptr()];
 
     let target_desc = slang::TargetDesc::default()
         .format(slang::CompileTarget::Wgsl);
