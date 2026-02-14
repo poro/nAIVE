@@ -85,6 +85,26 @@ pub struct PointLight {
     pub range: f32,
 }
 
+/// Directional light component (sun-like, infinite distance).
+#[derive(Debug, Clone)]
+pub struct DirectionalLight {
+    pub direction: Vec3,
+    pub color: Vec3,
+    pub intensity: f32,
+    pub shadow_extent: f32,
+}
+
+impl Default for DirectionalLight {
+    fn default() -> Self {
+        Self {
+            direction: Vec3::new(0.3, -1.0, 0.5).normalize(),
+            color: Vec3::ONE,
+            intensity: 1.0,
+            shadow_extent: 20.0,
+        }
+    }
+}
+
 /// First-person player marker component.
 #[derive(Debug, Clone)]
 pub struct Player {

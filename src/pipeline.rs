@@ -5,7 +5,7 @@ use serde::Deserialize;
 use wgpu::util::DeviceExt;
 
 use crate::camera::CameraState;
-use crate::components::{GaussianSplat, MaterialOverride, MeshRenderer, PointLight, Transform};
+use crate::components::{DirectionalLight, GaussianSplat, MaterialOverride, MeshRenderer, PointLight, Transform};
 use crate::material::MaterialCache;
 use crate::mesh::{MeshCache, Vertex3D};
 use crate::renderer::{DrawUniformPool, DrawUniforms, GpuState, DRAW_UNIFORM_SIZE};
@@ -212,6 +212,7 @@ pub enum PassType {
     Fullscreen,
     Compute,
     Splat,
+    Shadow,
 }
 
 impl PassType {
@@ -221,6 +222,7 @@ impl PassType {
             "fullscreen" => Some(Self::Fullscreen),
             "compute" => Some(Self::Compute),
             "splat" => Some(Self::Splat),
+            "shadow" => Some(Self::Shadow),
             _ => None,
         }
     }
@@ -398,6 +400,13 @@ pub struct PointLightUniform {
     pub intensity: f32,
 }
 
+/// Shadow pass uniforms (light view-projection matrix).
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ShadowUniforms {
+    pub light_view_projection: [[f32; 4]; 4],
+}
+
 /// Light data buffer header + array.
 pub const MAX_LIGHTS: usize = 32;
 
@@ -405,7 +414,16 @@ pub const MAX_LIGHTS: usize = 32;
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LightingUniforms {
     pub light_count: u32,
-    pub _pad: [u32; 7], // WGSL vec3<u32> has alignment 16, pushing header to 32 bytes
+    pub has_directional: u32,
+    pub _pad: [u32; 6],
+    // Directional light fields (offset 32)
+    pub dir_light_direction: [f32; 3],
+    pub dir_light_intensity: f32,
+    pub dir_light_color: [f32; 3],
+    pub _pad2: f32,
+    // Shadow light VP matrix (offset 64)
+    pub light_vp: [[f32; 4]; 4],
+    // Point lights (offset 128)
     pub lights: [PointLightUniform; MAX_LIGHTS],
 }
 
@@ -413,7 +431,13 @@ impl Default for LightingUniforms {
     fn default() -> Self {
         Self {
             light_count: 0,
-            _pad: [0; 7],
+            has_directional: 0,
+            _pad: [0; 6],
+            dir_light_direction: [0.0; 3],
+            dir_light_intensity: 0.0,
+            dir_light_color: [1.0, 1.0, 1.0],
+            _pad2: 0.0,
+            light_vp: [[0.0; 4]; 4],
             lights: [PointLightUniform {
                 position: [0.0; 3],
                 range: 0.0,
@@ -450,6 +474,15 @@ pub struct CompiledPipeline {
     /// Bind group layout + bind group for splat compositing in lighting pass.
     pub splat_composite_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pub splat_composite_bind_group: Option<wgpu::BindGroup>,
+    /// FXAA pass bind group (reads LDR buffer).
+    pub fxaa_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    pub fxaa_bind_group: Option<wgpu::BindGroup>,
+    /// Shadow map resources.
+    pub shadow_uniform_buffer: Option<wgpu::Buffer>,
+    pub shadow_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    pub shadow_bind_group: Option<wgpu::BindGroup>,
+    /// Shadow map sampler (comparison) for lighting pass.
+    pub shadow_sampler: Option<wgpu::Sampler>,
 }
 
 /// A single compiled render pass.
@@ -494,28 +527,81 @@ pub fn compile_pipeline(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
+    // Create shadow comparison sampler for lighting pass
+    let shadow_cmp_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Shadow Comparison Sampler"),
+        compare: Some(wgpu::CompareFunction::LessEqual),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    // Create a 1x1 dummy depth texture for when shadow_map is not present
+    let shadow_dummy_tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Dummy Shadow Map"),
+        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let shadow_dummy_view = shadow_dummy_tex.create_view(&Default::default());
+    let shadow_map_view = resources.get("shadow_map")
+        .map(|r| &r.view)
+        .unwrap_or(&shadow_dummy_view);
+
     let light_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Lighting Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
         });
 
     let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Lighting Bind Group"),
         layout: &light_bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: light_buffer.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(shadow_map_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&shadow_cmp_sampler),
+            },
+        ],
     });
 
     // 4. Create shared sampler for G-buffer reads
@@ -537,6 +623,12 @@ pub fn compile_pipeline(
     let mut splat_data_bind_group_layout = None;
     let mut splat_composite_bind_group_layout = None;
     let mut splat_composite_bind_group = None;
+    let mut fxaa_bind_group_layout = None;
+    let mut fxaa_bind_group = None;
+    let mut shadow_uniform_buffer = None;
+    let mut shadow_bind_group_layout = None;
+    let mut shadow_bind_group = None;
+    let shadow_sampler = Some(shadow_cmp_sampler);
 
     for pass_def in &pipeline_file.passes {
         let pass_type = PassType::from_str(&pass_def.pass_type).ok_or_else(|| {
@@ -590,17 +682,32 @@ pub fn compile_pipeline(
             }
             PassType::Fullscreen => {
                 if pass_def.name.contains("tonemap") {
-                    // Tonemap pass: inputs from HDR buffer + bloom buffer
+                    // Tonemap pass: outputs to ldr_buffer (rgba8) if it exists, else swapchain
+                    let tonemap_output_format = resources
+                        .get("ldr_buffer")
+                        .map(|r| r.format)
+                        .unwrap_or(surface_format);
                     let (layout, bg, pipeline) = create_tonemap_pipeline(
                         device,
                         &wgsl_source,
                         &color_targets,
                         &resources,
                         &gbuffer_sampler,
-                        surface_format,
+                        tonemap_output_format,
                     );
                     tonemap_bind_group_layout = Some(layout);
                     tonemap_bind_group = Some(bg);
+                    pipeline
+                } else if pass_def.name.contains("fxaa") {
+                    // FXAA pass: reads LDR buffer, writes to swapchain
+                    let (layout, bg, pipeline) = create_fxaa_pipeline(
+                        device,
+                        &wgsl_source,
+                        &resources,
+                        surface_format,
+                    );
+                    fxaa_bind_group_layout = Some(layout);
+                    fxaa_bind_group = Some(bg);
                     pipeline
                 } else if pass_def.name.contains("bloom") {
                     // Bloom pass: reads HDR buffer, outputs to bloom_buffer
@@ -670,6 +777,57 @@ pub fn compile_pipeline(
                 splat_data_bind_group_layout = Some(layout);
                 pipeline
             }
+            PassType::Shadow => {
+                // Create shadow pass resources
+                let shadow_uniform_data = ShadowUniforms {
+                    light_view_projection: [[0.0; 4]; 4],
+                };
+                let shadow_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Shadow Uniform Buffer"),
+                    contents: bytemuck::cast_slice(&[shadow_uniform_data]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
+
+                let shadow_bg_layout = device.create_bind_group_layout(
+                    &wgpu::BindGroupLayoutDescriptor {
+                        label: Some("Shadow Pass Bind Group Layout"),
+                        entries: &[wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        }],
+                    },
+                );
+
+                let shadow_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Shadow Pass Bind Group"),
+                    layout: &shadow_bg_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: shadow_buf.as_entire_binding(),
+                    }],
+                });
+
+                let pipeline = create_shadow_pipeline(
+                    device,
+                    &wgsl_source,
+                    depth_target.as_deref(),
+                    &resources,
+                    &shadow_bg_layout,
+                    &draw_pool.bind_group_layout,
+                );
+
+                shadow_uniform_buffer = Some(shadow_buf);
+                shadow_bind_group_layout = Some(shadow_bg_layout);
+                shadow_bind_group = Some(shadow_bg);
+
+                pipeline
+            }
             PassType::Compute => {
                 // Compute passes not yet implemented
                 return Err(PipelineError::InvalidFormat(
@@ -712,6 +870,12 @@ pub fn compile_pipeline(
         splat_data_bind_group_layout,
         splat_composite_bind_group_layout,
         splat_composite_bind_group,
+        fxaa_bind_group_layout,
+        fxaa_bind_group,
+        shadow_uniform_buffer,
+        shadow_bind_group_layout,
+        shadow_bind_group,
+        shadow_sampler,
     })
 }
 
@@ -744,6 +908,8 @@ fn compile_pass_shader(shader_path: &Path, pass_name: &str) -> Result<String, Pi
         name if name.contains("light") => crate::shader::get_deferred_light_wgsl(),
         name if name.contains("bloom") => crate::shader::get_bloom_wgsl(),
         name if name.contains("tonemap") => crate::shader::get_tonemap_wgsl(),
+        name if name.contains("fxaa") => crate::shader::get_fxaa_wgsl(),
+        name if name.contains("shadow") => crate::shader::get_shadow_depth_wgsl(),
         _ => {
             return Err(PipelineError::ShaderError(format!(
                 "No fallback WGSL for pass '{}'",
@@ -1548,6 +1714,168 @@ fn create_tonemap_pipeline(
     (tonemap_layout, tonemap_bind_group, pipeline)
 }
 
+/// Create the FXAA post-processing pipeline (reads LDR buffer, writes to swapchain).
+fn create_fxaa_pipeline(
+    device: &wgpu::Device,
+    wgsl_source: &str,
+    resources: &HashMap<String, GpuResource>,
+    surface_format: wgpu::TextureFormat,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup, wgpu::RenderPipeline) {
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("FXAA Shader"),
+        source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
+    });
+
+    let ldr_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("FXAA LDR Sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    let fxaa_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("FXAA Input Layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+
+    let ldr_view = resources
+        .get("ldr_buffer")
+        .map(|r| &r.view)
+        .expect("ldr_buffer resource missing for FXAA pass");
+
+    let fxaa_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("FXAA Input Bind Group"),
+        layout: &fxaa_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(ldr_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&ldr_sampler),
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("FXAA Pipeline Layout"),
+        bind_group_layouts: &[&fxaa_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("FXAA Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader_module,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader_module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    (fxaa_layout, fxaa_bind_group, pipeline)
+}
+
+/// Create a shadow depth rendering pipeline.
+fn create_shadow_pipeline(
+    device: &wgpu::Device,
+    wgsl_source: &str,
+    depth_target: Option<&str>,
+    resources: &HashMap<String, GpuResource>,
+    shadow_bind_group_layout: &wgpu::BindGroupLayout,
+    draw_bind_group_layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Shadow Depth Shader"),
+        source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Shadow Pipeline Layout"),
+        bind_group_layouts: &[shadow_bind_group_layout, draw_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let depth_format = depth_target
+        .and_then(|name| resources.get(name))
+        .map(|r| r.format)
+        .unwrap_or(wgpu::TextureFormat::Depth32Float);
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Shadow Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader_module,
+            entry_point: Some("vs_main"),
+            buffers: &[Vertex3D::desc()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader_module,
+            entry_point: Some("fs_main"),
+            targets: &[],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: depth_format,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 2.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline executor
 // ---------------------------------------------------------------------------
@@ -1622,7 +1950,7 @@ pub fn execute_pipeline(
         );
     }
 
-    // Upload light uniforms
+    // Upload light uniforms (point lights + directional light)
     let mut light_data = LightingUniforms::default();
     for (_entity, (transform, light)) in
         scene_world.world.query::<(&Transform, &PointLight)>().iter()
@@ -1638,11 +1966,46 @@ pub fn execute_pipeline(
             light_data.light_count += 1;
         }
     }
+
+    // Query directional light and compute shadow VP matrix
+    let mut light_vp = glam::Mat4::IDENTITY;
+    for (_entity, dir_light) in
+        scene_world.world.query::<&DirectionalLight>().iter()
+    {
+        light_data.has_directional = 1;
+        light_data.dir_light_direction = dir_light.direction.to_array();
+        light_data.dir_light_intensity = dir_light.intensity;
+        light_data.dir_light_color = dir_light.color.to_array();
+
+        // Compute orthographic VP from light direction
+        let extent = dir_light.shadow_extent;
+        let light_pos = -dir_light.direction.normalize() * 30.0;
+        let light_view = glam::Mat4::look_at_rh(light_pos, glam::Vec3::ZERO, glam::Vec3::Y);
+        let light_proj = glam::Mat4::orthographic_rh(
+            -extent, extent, -extent, extent, 0.1, 60.0,
+        );
+        light_vp = light_proj * light_view;
+        light_data.light_vp = light_vp.to_cols_array_2d();
+        break; // Only one directional light supported
+    }
+
     gpu.queue.write_buffer(
         &compiled.light_buffer,
         0,
         bytemuck::cast_slice(&[light_data]),
     );
+
+    // Upload shadow uniform buffer (light VP matrix for shadow pass)
+    if let Some(shadow_buf) = &compiled.shadow_uniform_buffer {
+        let shadow_data = ShadowUniforms {
+            light_view_projection: light_vp.to_cols_array_2d(),
+        };
+        gpu.queue.write_buffer(
+            shadow_buf,
+            0,
+            bytemuck::cast_slice(&[shadow_data]),
+        );
+    }
 
     // Create command encoder
     let mut encoder = gpu
@@ -1687,6 +2050,16 @@ pub fn execute_pipeline(
                     splat_cache,
                 );
             }
+            PassType::Shadow => {
+                execute_shadow_pass(
+                    &mut encoder,
+                    pass,
+                    compiled,
+                    scene_world,
+                    draw_pool,
+                    mesh_cache,
+                );
+            }
             PassType::Compute => {
                 // Not implemented yet
             }
@@ -1695,6 +2068,63 @@ pub fn execute_pipeline(
 
     gpu.queue.submit(std::iter::once(encoder.finish()));
     output.present();
+}
+
+/// Execute a shadow depth pass (renders all geometry from light's perspective).
+fn execute_shadow_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    pass: &CompiledPass,
+    compiled: &CompiledPipeline,
+    scene_world: &SceneWorld,
+    draw_pool: &DrawUniformPool,
+    mesh_cache: &MeshCache,
+) {
+    let depth_view = pass
+        .depth_target
+        .as_ref()
+        .and_then(|name| compiled.resources.get(name))
+        .map(|r| &r.view)
+        .expect("Shadow pass has no depth target");
+
+    {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(&pass.name),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        render_pass.set_pipeline(&pass.pipeline);
+
+        // Group 0: shadow uniforms (light VP matrix)
+        if let Some(bg) = &compiled.shadow_bind_group {
+            render_pass.set_bind_group(0, bg, &[]);
+        }
+
+        // Draw all mesh entities
+        for (draw_index, (_entity, (_, mesh_renderer))) in
+            (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
+        {
+            let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
+            let dynamic_offset = draw_index * DRAW_UNIFORM_SIZE as u32;
+
+            render_pass.set_bind_group(1, &draw_pool.bind_group, &[dynamic_offset]);
+            render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(
+                gpu_mesh.index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
+        }
+    }
 }
 
 /// Execute a rasterize pass (G-buffer geometry pass).
@@ -1893,6 +2323,7 @@ fn execute_fullscreen_pass(
 ) {
     let is_tonemap = pass.name.contains("tonemap");
     let is_bloom = pass.name.contains("bloom");
+    let is_fxaa = pass.name.contains("fxaa");
     let writes_to_swapchain = pass
         .color_targets
         .iter()
@@ -1932,7 +2363,12 @@ fn execute_fullscreen_pass(
 
         render_pass.set_pipeline(&pass.pipeline);
 
-        if is_tonemap {
+        if is_fxaa {
+            // FXAA: group 0 = LDR texture + sampler
+            if let Some(bg) = &compiled.fxaa_bind_group {
+                render_pass.set_bind_group(0, bg, &[]);
+            }
+        } else if is_tonemap {
             // Tonemap: group 0 = HDR texture + sampler + bloom texture
             if let Some(bg) = &compiled.tonemap_bind_group {
                 render_pass.set_bind_group(0, bg, &[]);
@@ -2083,6 +2519,34 @@ pub fn rebuild_bind_groups(
         }
     }
 
+    // Rebuild FXAA bind group
+    if let Some(layout) = &compiled.fxaa_bind_group_layout {
+        if let Some(ldr_view) = compiled.resources.get("ldr_buffer").map(|r| &r.view) {
+            let ldr_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("FXAA LDR Sampler (resized)"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            compiled.fxaa_bind_group = Some(device.create_bind_group(
+                &wgpu::BindGroupDescriptor {
+                    label: Some("FXAA Input Bind Group (resized)"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(ldr_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&ldr_sampler),
+                        },
+                    ],
+                },
+            ));
+        }
+    }
+
     // Rebuild splat composite bind group
     if let Some(layout) = &compiled.splat_composite_bind_group_layout {
         let splat_color = compiled.resources.get("splat_color").map(|r| &r.view);
@@ -2106,6 +2570,44 @@ pub fn rebuild_bind_groups(
                 },
             ));
         }
+    }
+
+    // Rebuild lighting bind group (shadow map may have been resized)
+    if let Some(sampler) = &compiled.shadow_sampler {
+        // Create dummy shadow map fallback
+        let shadow_dummy_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Dummy Shadow Map (resized)"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let shadow_dummy_view = shadow_dummy_tex.create_view(&Default::default());
+        let shadow_map_view = compiled.resources.get("shadow_map")
+            .map(|r| &r.view)
+            .unwrap_or(&shadow_dummy_view);
+
+        compiled.light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Lighting Bind Group (resized)"),
+            layout: &compiled.light_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: compiled.light_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(shadow_map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
     }
 }
 
@@ -2321,6 +2823,7 @@ passes:
         assert_eq!(PassType::from_str("fullscreen"), Some(PassType::Fullscreen));
         assert_eq!(PassType::from_str("compute"), Some(PassType::Compute));
         assert_eq!(PassType::from_str("splat"), Some(PassType::Splat));
+        assert_eq!(PassType::from_str("shadow"), Some(PassType::Shadow));
         assert_eq!(PassType::from_str("invalid"), None);
     }
 }

@@ -504,7 +504,14 @@ struct PointLight {
 
 struct LightingUniforms {
     light_count: u32,
-    _pad: vec3<u32>,
+    has_directional: u32,
+    _pad_a: vec2<u32>,
+    _pad_b: vec4<u32>,
+    dir_light_direction: vec3<f32>,
+    dir_light_intensity: f32,
+    dir_light_color: vec3<f32>,
+    _pad_c: f32,
+    light_vp: mat4x4<f32>,
     lights: array<PointLight, 32>,
 };
 
@@ -517,6 +524,8 @@ struct LightingUniforms {
 @group(1) @binding(4) var gbuffer_emission: texture_2d<f32>;
 
 @group(2) @binding(0) var<uniform> lighting: LightingUniforms;
+@group(2) @binding(1) var shadow_map: texture_depth_2d;
+@group(2) @binding(2) var shadow_sampler: sampler_comparison;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -538,6 +547,50 @@ fn reconstruct_world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     return world_h.xyz / world_h.w;
 }
 
+fn sample_shadow_pcf(world_pos: vec3<f32>) -> f32 {
+    let light_clip = lighting.light_vp * vec4<f32>(world_pos, 1.0);
+    let light_ndc = light_clip.xyz / light_clip.w;
+    let shadow_uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, -light_ndc.y * 0.5 + 0.5);
+    let shadow_depth = light_ndc.z;
+
+    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0 {
+        return 1.0;
+    }
+
+    let shadow_dim = vec2<f32>(textureDimensions(shadow_map));
+    let texel_size = 1.0 / shadow_dim;
+
+    var shadow = 0.0;
+    for (var y = -1i; y <= 1i; y = y + 1i) {
+        for (var x = -1i; x <= 1i; x = x + 1i) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            shadow = shadow + textureSampleCompare(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - 0.005);
+        }
+    }
+    return shadow / 9.0;
+}
+
+// Cook-Torrance BRDF helper functions
+fn distribution_ggx(NdotH: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let NdotH2 = NdotH * NdotH;
+    let denom = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / (3.14159265 * denom * denom + 0.0001);
+}
+
+fn geometry_smith(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
+    let r = roughness + 1.0;
+    let k = (r * r) / 8.0;
+    let ggx_v = NdotV / (NdotV * (1.0 - k) + k);
+    let ggx_l = NdotL / (NdotL * (1.0 - k) + k);
+    return ggx_v * ggx_l;
+}
+
+fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_coords = vec2<i32>(in.position.xy);
@@ -552,7 +605,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let albedo    = albedo_rough.rgb;
-    let roughness = albedo_rough.a;
+    let roughness = max(albedo_rough.a, 0.04);
     let normal    = normalize(normal_metal.rgb * 2.0 - 1.0);
     let metallic  = normal_metal.a;
     let emission  = emission_val.rgb;
@@ -566,9 +619,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let diffuse_color = albedo * (1.0 - metallic);
 
     // Ambient
-    var color = diffuse_color * vec3<f32>(0.03, 0.03, 0.04);
+    var color = diffuse_color * vec3<f32>(0.02, 0.02, 0.025);
 
-    // Accumulate point lights
+    let NdotV = max(dot(normal, view_dir), 0.001);
+
+    // Accumulate point lights with Cook-Torrance BRDF
     for (var i = 0u; i < lighting.light_count; i = i + 1u) {
         let light = lighting.lights[i];
         let to_light = light.position - world_pos;
@@ -581,30 +636,50 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let light_dir = to_light / dist;
         let half_vec  = normalize(light_dir + view_dir);
 
-        let ndotl = max(dot(normal, light_dir), 0.0);
-        let ndoth = max(dot(normal, half_vec), 0.0);
+        let NdotL = max(dot(normal, light_dir), 0.0);
+        let NdotH = max(dot(normal, half_vec), 0.0);
+        let HdotV = max(dot(half_vec, view_dir), 0.0);
 
         // Attenuation: inverse-square with smooth range falloff
         let dist_atten = 1.0 / (1.0 + dist * dist);
         let range_factor = saturate(1.0 - pow(dist / light.range, 4.0));
         let attenuation = light.intensity * dist_atten * range_factor;
 
-        // Diffuse
-        let diffuse = diffuse_color * light.color * ndotl;
+        // Cook-Torrance specular BRDF
+        let D = distribution_ggx(NdotH, roughness);
+        let G = geometry_smith(NdotV, NdotL, roughness);
+        let F = fresnel_schlick(HdotV, F0);
 
-        // Blinn-Phong specular (roughness controls exponent)
-        let spec_power = max(2.0 / (roughness * roughness + 0.001) - 2.0, 1.0);
-        let specular = pow(ndoth, spec_power);
-        let spec = F0 * light.color * specular * ndotl;
+        let numerator = D * G * F;
+        let denominator = 4.0 * NdotV * NdotL + 0.0001;
+        let specular = numerator / denominator;
 
-        color = color + (diffuse + spec) * attenuation;
+        // Energy conservation: diffuse reduced by Fresnel
+        let kD = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+        let diffuse = kD * diffuse_color / 3.14159265;
+
+        color = color + (diffuse + specular) * light.color * NdotL * attenuation;
     }
 
-    // Fallback directional light when no lights in scene
-    if lighting.light_count == 0u {
-        let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
-        let ndotl = max(dot(normal, light_dir), 0.0);
-        color = diffuse_color * (vec3<f32>(0.15, 0.15, 0.18) + ndotl * 0.85);
+    // Directional light with Cook-Torrance BRDF + shadows
+    if lighting.has_directional != 0u {
+        let dir_light_dir = normalize(-lighting.dir_light_direction);
+        let half_vec_d = normalize(dir_light_dir + view_dir);
+
+        let NdotL_d = max(dot(normal, dir_light_dir), 0.0);
+        let NdotH_d = max(dot(normal, half_vec_d), 0.0);
+        let HdotV_d = max(dot(half_vec_d, view_dir), 0.0);
+
+        let D_d = distribution_ggx(NdotH_d, roughness);
+        let G_d = geometry_smith(NdotV, NdotL_d, roughness);
+        let F_d = fresnel_schlick(HdotV_d, F0);
+
+        let spec_d = (D_d * G_d * F_d) / (4.0 * NdotV * NdotL_d + 0.0001);
+        let kD_d = (vec3<f32>(1.0) - F_d) * (1.0 - metallic);
+        let diff_d = kD_d * diffuse_color / 3.14159265;
+
+        let shadow = sample_shadow_pcf(world_pos);
+        color = color + (diff_d + spec_d) * lighting.dir_light_color * NdotL_d * lighting.dir_light_intensity * shadow;
     }
 
     // Add emission (unlit, straight to output)
@@ -758,7 +833,14 @@ struct PointLight {
 
 struct LightingUniforms {
     light_count: u32,
-    _pad: vec3<u32>,
+    has_directional: u32,
+    _pad_a: vec2<u32>,
+    _pad_b: vec4<u32>,
+    dir_light_direction: vec3<f32>,
+    dir_light_intensity: f32,
+    dir_light_color: vec3<f32>,
+    _pad_c: f32,
+    light_vp: mat4x4<f32>,
     lights: array<PointLight, 32>,
 };
 
@@ -771,6 +853,8 @@ struct LightingUniforms {
 @group(1) @binding(4) var gbuffer_emission: texture_2d<f32>;
 
 @group(2) @binding(0) var<uniform> lighting: LightingUniforms;
+@group(2) @binding(1) var shadow_map: texture_depth_2d;
+@group(2) @binding(2) var shadow_sampler: sampler_comparison;
 
 @group(3) @binding(0) var splat_color_tex: texture_2d<f32>;
 @group(3) @binding(1) var splat_depth_tex: texture_depth_2d;
@@ -795,6 +879,50 @@ fn reconstruct_world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     return world_h.xyz / world_h.w;
 }
 
+fn sample_shadow_pcf(world_pos: vec3<f32>) -> f32 {
+    let light_clip = lighting.light_vp * vec4<f32>(world_pos, 1.0);
+    let light_ndc = light_clip.xyz / light_clip.w;
+    let shadow_uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, -light_ndc.y * 0.5 + 0.5);
+    let shadow_depth = light_ndc.z;
+
+    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0 {
+        return 1.0;
+    }
+
+    let shadow_dim = vec2<f32>(textureDimensions(shadow_map));
+    let texel_size = 1.0 / shadow_dim;
+
+    var shadow = 0.0;
+    for (var y = -1i; y <= 1i; y = y + 1i) {
+        for (var x = -1i; x <= 1i; x = x + 1i) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            shadow = shadow + textureSampleCompare(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - 0.005);
+        }
+    }
+    return shadow / 9.0;
+}
+
+// Cook-Torrance BRDF helper functions
+fn distribution_ggx(NdotH: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let NdotH2 = NdotH * NdotH;
+    let denom = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / (3.14159265 * denom * denom + 0.0001);
+}
+
+fn geometry_smith(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
+    let r = roughness + 1.0;
+    let k = (r * r) / 8.0;
+    let ggx_v = NdotV / (NdotV * (1.0 - k) + k);
+    let ggx_l = NdotL / (NdotL * (1.0 - k) + k);
+    return ggx_v * ggx_l;
+}
+
+fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_coords = vec2<i32>(in.position.xy);
@@ -805,7 +933,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let mesh_depth = textureLoad(gbuffer_depth, tex_coords, 0);
 
     let albedo    = albedo_rough.rgb;
-    let roughness = albedo_rough.a;
+    let roughness = max(albedo_rough.a, 0.04);
     let normal    = normalize(normal_metal.rgb * 2.0 - 1.0);
     let metallic  = normal_metal.a;
     let emission  = emission_val.rgb;
@@ -822,8 +950,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let world_pos = reconstruct_world_pos(in.uv, mesh_depth);
     let view_dir  = normalize(camera.position - world_pos);
 
-    // Compute mesh lighting with PBR
-    var mesh_color = diffuse_color * vec3<f32>(0.03, 0.03, 0.04);
+    let NdotV = max(dot(normal, view_dir), 0.001);
+
+    // Compute mesh lighting with Cook-Torrance BRDF
+    var mesh_color = diffuse_color * vec3<f32>(0.02, 0.02, 0.025);
 
     for (var i = 0u; i < lighting.light_count; i = i + 1u) {
         let light = lighting.lights[i];
@@ -837,26 +967,48 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let light_dir = to_light / dist;
         let half_vec  = normalize(light_dir + view_dir);
 
-        let ndotl = max(dot(normal, light_dir), 0.0);
-        let ndoth = max(dot(normal, half_vec), 0.0);
+        let NdotL = max(dot(normal, light_dir), 0.0);
+        let NdotH = max(dot(normal, half_vec), 0.0);
+        let HdotV = max(dot(half_vec, view_dir), 0.0);
 
         let dist_atten = 1.0 / (1.0 + dist * dist);
         let range_factor = saturate(1.0 - pow(dist / light.range, 4.0));
         let attenuation = light.intensity * dist_atten * range_factor;
 
-        let diffuse = diffuse_color * light.color * ndotl;
+        // Cook-Torrance specular BRDF
+        let D = distribution_ggx(NdotH, roughness);
+        let G = geometry_smith(NdotV, NdotL, roughness);
+        let F = fresnel_schlick(HdotV, F0);
 
-        let spec_power = max(2.0 / (roughness * roughness + 0.001) - 2.0, 1.0);
-        let specular = pow(ndoth, spec_power);
-        let spec = F0 * light.color * specular * ndotl;
+        let numerator = D * G * F;
+        let denominator = 4.0 * NdotV * NdotL + 0.0001;
+        let specular = numerator / denominator;
 
-        mesh_color = mesh_color + (diffuse + spec) * attenuation;
+        let kD = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+        let diffuse = kD * diffuse_color / 3.14159265;
+
+        mesh_color = mesh_color + (diffuse + specular) * light.color * NdotL * attenuation;
     }
 
-    if lighting.light_count == 0u {
-        let light_dir = normalize(vec3<f32>(0.3, 1.0, 0.5));
-        let ndotl = max(dot(normal, light_dir), 0.0);
-        mesh_color = diffuse_color * (vec3<f32>(0.15, 0.15, 0.18) + ndotl * 0.85);
+    // Directional light with Cook-Torrance BRDF + shadows
+    if lighting.has_directional != 0u {
+        let dir_light_dir = normalize(-lighting.dir_light_direction);
+        let half_vec_d = normalize(dir_light_dir + view_dir);
+
+        let NdotL_d = max(dot(normal, dir_light_dir), 0.0);
+        let NdotH_d = max(dot(normal, half_vec_d), 0.0);
+        let HdotV_d = max(dot(half_vec_d, view_dir), 0.0);
+
+        let D_d = distribution_ggx(NdotH_d, roughness);
+        let G_d = geometry_smith(NdotV, NdotL_d, roughness);
+        let F_d = fresnel_schlick(HdotV_d, F0);
+
+        let spec_d = (D_d * G_d * F_d) / (4.0 * NdotV * NdotL_d + 0.0001);
+        let kD_d = (vec3<f32>(1.0) - F_d) * (1.0 - metallic);
+        let diff_d = kD_d * diffuse_color / 3.14159265;
+
+        let shadow = sample_shadow_pcf(world_pos);
+        mesh_color = mesh_color + (diff_d + spec_d) * lighting.dir_light_color * NdotL_d * lighting.dir_light_intensity * shadow;
     }
 
     // Add emission
@@ -942,7 +1094,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     result += (b + g + h + l) * 0.0625;
 
     // Soft threshold
-    result = threshold_color(result, 0.8, 0.5);
+    result = threshold_color(result, 0.5, 0.3);
 
     return vec4<f32>(result, 1.0);
 }
@@ -995,7 +1147,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Add bloom (bilinear-filtered from half-res gives natural soft glow)
     let bloom = textureSample(bloom_texture, hdr_sampler, uv).rgb;
-    let bloom_strength = 0.4;
+    let bloom_strength = 0.7;
     hdr_color += bloom * bloom_strength;
 
     // ACES tonemap
@@ -1006,6 +1158,148 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sdr_color = sdr_color_tm * vignette;
 
     return vec4<f32>(sdr_color, 1.0);
+}
+"#
+    .to_string()
+}
+
+pub fn get_fxaa_wgsl() -> String {
+    r#"
+// FXAA 3.11 — Fast Approximate Anti-Aliasing (Timothy Lottes / NVIDIA)
+
+@group(0) @binding(0) var ldr_texture: texture_2d<f32>;
+@group(0) @binding(1) var ldr_sampler: sampler;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var out: VertexOutput;
+    let uv = vec2<f32>(f32((vertex_index << 1u) & 2u), f32(vertex_index & 2u));
+    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = vec2<f32>(uv.x, 1.0 - uv.y);
+    return out;
+}
+
+fn fxaa_luma(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.299, 0.587, 0.114));
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(ldr_texture));
+    let texel = 1.0 / dims;
+    let uv = in.uv;
+
+    // Sample center and cardinal neighbors
+    let rgbM = textureSample(ldr_texture, ldr_sampler, uv).rgb;
+    let rgbN = textureSample(ldr_texture, ldr_sampler, uv + vec2<f32>(0.0, -texel.y)).rgb;
+    let rgbS = textureSample(ldr_texture, ldr_sampler, uv + vec2<f32>(0.0,  texel.y)).rgb;
+    let rgbW = textureSample(ldr_texture, ldr_sampler, uv + vec2<f32>(-texel.x, 0.0)).rgb;
+    let rgbE = textureSample(ldr_texture, ldr_sampler, uv + vec2<f32>( texel.x, 0.0)).rgb;
+
+    let lumaM = fxaa_luma(rgbM);
+    let lumaN = fxaa_luma(rgbN);
+    let lumaS = fxaa_luma(rgbS);
+    let lumaW = fxaa_luma(rgbW);
+    let lumaE = fxaa_luma(rgbE);
+
+    let lumaMin = min(lumaM, min(min(lumaN, lumaS), min(lumaW, lumaE)));
+    let lumaMax = max(lumaM, max(max(lumaN, lumaS), max(lumaW, lumaE)));
+    let lumaRange = lumaMax - lumaMin;
+
+    // FXAA quality thresholds
+    let FXAA_EDGE_THRESHOLD = 0.125;
+    let FXAA_EDGE_THRESHOLD_MIN = 0.0625;
+
+    if lumaRange < max(FXAA_EDGE_THRESHOLD_MIN, lumaMax * FXAA_EDGE_THRESHOLD) {
+        return vec4<f32>(rgbM, 1.0);
+    }
+
+    // Sample diagonal neighbors for edge direction
+    let rgbNW = textureSample(ldr_texture, ldr_sampler, uv + vec2<f32>(-texel.x, -texel.y)).rgb;
+    let rgbNE = textureSample(ldr_texture, ldr_sampler, uv + vec2<f32>( texel.x, -texel.y)).rgb;
+    let rgbSW = textureSample(ldr_texture, ldr_sampler, uv + vec2<f32>(-texel.x,  texel.y)).rgb;
+    let rgbSE = textureSample(ldr_texture, ldr_sampler, uv + vec2<f32>( texel.x,  texel.y)).rgb;
+
+    let lumaNW = fxaa_luma(rgbNW);
+    let lumaNE = fxaa_luma(rgbNE);
+    let lumaSW = fxaa_luma(rgbSW);
+    let lumaSE = fxaa_luma(rgbSE);
+
+    // Edge direction detection
+    let edgeH = abs(-2.0 * lumaW + lumaNW + lumaSW) +
+                abs(-2.0 * lumaM + lumaN + lumaS) * 2.0 +
+                abs(-2.0 * lumaE + lumaNE + lumaSE);
+    let edgeV = abs(-2.0 * lumaN + lumaNW + lumaNE) +
+                abs(-2.0 * lumaM + lumaW + lumaE) * 2.0 +
+                abs(-2.0 * lumaS + lumaSW + lumaSE);
+
+    let isHorizontal = edgeH >= edgeV;
+
+    // Compute subpixel blend factor
+    let lumaL = (lumaN + lumaS + lumaW + lumaE) * 0.25;
+    let rangeL = abs(lumaL - lumaM);
+    var blendL = max(0.0, (rangeL / lumaRange) - 0.25);
+    blendL = min(0.75, blendL * 1.3333);
+
+    // Blend along edge perpendicular
+    var blend_dir: vec2<f32>;
+    if isHorizontal {
+        if abs(lumaN - lumaM) >= abs(lumaS - lumaM) {
+            blend_dir = vec2<f32>(0.0, -texel.y);
+        } else {
+            blend_dir = vec2<f32>(0.0, texel.y);
+        }
+    } else {
+        if abs(lumaW - lumaM) >= abs(lumaE - lumaM) {
+            blend_dir = vec2<f32>(-texel.x, 0.0);
+        } else {
+            blend_dir = vec2<f32>(texel.x, 0.0);
+        }
+    }
+
+    let result = textureSample(ldr_texture, ldr_sampler, uv + blend_dir * blendL).rgb;
+    return vec4<f32>(result, 1.0);
+}
+"#
+    .to_string()
+}
+
+pub fn get_shadow_depth_wgsl() -> String {
+    r#"
+// Shadow depth pass: renders geometry from light's perspective (depth-only)
+
+struct ShadowUniforms {
+    light_view_projection: mat4x4<f32>,
+};
+
+struct DrawUniforms {
+    model_matrix: mat4x4<f32>,
+    normal_matrix: mat4x4<f32>,
+    base_color: vec4<f32>,
+    roughness: f32,
+    metallic: f32,
+    _pad: vec2<f32>,
+    emission: vec4<f32>,
+    _padding: array<vec4<f32>, 5>,
+};
+
+@group(0) @binding(0) var<uniform> shadow: ShadowUniforms;
+@group(1) @binding(0) var<uniform> draw: DrawUniforms;
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) tex_coords: vec2<f32>) -> @builtin(position) vec4<f32> {
+    let world_pos = shadow.light_view_projection * draw.model_matrix * vec4<f32>(position, 1.0);
+    return world_pos;
+}
+
+@fragment
+fn fs_main() {
+    // Depth-only pass — no color output needed
 }
 "#
     .to_string()

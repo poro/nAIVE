@@ -43,7 +43,7 @@ float4 fs_main(VertexOutput input) : SV_Target0 {
 
     // Add bloom (bilinear-filtered from half-res gives natural soft glow)
     float3 bloom = bloom_texture.Sample(hdr_sampler, uv).rgb;
-    float bloom_strength = 0.4;
+    float bloom_strength = 0.7;
     hdr_color += bloom * bloom_strength;
 
     // ACES tonemap

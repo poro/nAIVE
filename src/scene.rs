@@ -82,6 +82,8 @@ pub struct ComponentMap {
     #[serde(default)]
     pub point_light: Option<PointLightDef>,
     #[serde(default)]
+    pub directional_light: Option<DirectionalLightDef>,
+    #[serde(default)]
     pub gaussian_splat: Option<GaussianSplatDef>,
     #[serde(default)]
     pub rigid_body: Option<RigidBodyDef>,
@@ -157,6 +159,25 @@ pub struct PointLightDef {
     pub intensity: f32,
     #[serde(default = "default_range")]
     pub range: f32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DirectionalLightDef {
+    #[serde(default = "default_dir_direction")]
+    pub direction: [f32; 3],
+    #[serde(default = "default_white")]
+    pub color: [f32; 3],
+    #[serde(default = "default_intensity")]
+    pub intensity: f32,
+    #[serde(default = "default_shadow_extent")]
+    pub shadow_extent: f32,
+}
+
+fn default_dir_direction() -> [f32; 3] {
+    [0.3, -1.0, 0.5]
+}
+fn default_shadow_extent() -> f32 {
+    20.0
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -292,6 +313,9 @@ fn merge_entity(parent: &EntityDef, child: &EntityDef) -> EntityDef {
     }
     if merged.components.point_light.is_none() {
         merged.components.point_light = parent.components.point_light.clone();
+    }
+    if merged.components.directional_light.is_none() {
+        merged.components.directional_light = parent.components.directional_light.clone();
     }
     if merged.components.gaussian_splat.is_none() {
         merged.components.gaussian_splat = parent.components.gaussian_splat.clone();

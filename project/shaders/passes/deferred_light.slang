@@ -10,7 +10,14 @@ struct PointLight {
 
 struct LightingUniforms {
     uint light_count;
-    uint3 _pad;
+    uint has_directional;
+    uint2 _pad_a;
+    uint4 _pad_b;
+    float3 dir_light_direction;
+    float dir_light_intensity;
+    float3 dir_light_color;
+    float _pad_c;
+    float4x4 light_vp;
     PointLight lights[32];
 };
 
@@ -23,6 +30,8 @@ struct LightingUniforms {
 [[vk::binding(4, 1)]] Texture2D<float4> gbuffer_emission;
 
 [[vk::binding(0, 2)]] ConstantBuffer<LightingUniforms> lighting;
+[[vk::binding(1, 2)]] Texture2D<float> shadow_map;
+[[vk::binding(2, 2)]] SamplerComparisonState shadow_sampler;
 
 struct VertexOutput {
     float4 position : SV_Position;
@@ -44,6 +53,50 @@ float3 reconstructWorldPos(float2 uv, float depth) {
     return world_h.xyz / world_h.w;
 }
 
+// Cook-Torrance BRDF helper functions
+float distributionGGX(float NdotH, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH2 = NdotH * NdotH;
+    float denom = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / (3.14159265 * denom * denom + 0.0001);
+}
+
+float geometrySmith(float NdotV, float NdotL, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    float ggxV = NdotV / (NdotV * (1.0 - k) + k);
+    float ggxL = NdotL / (NdotL * (1.0 - k) + k);
+    return ggxV * ggxL;
+}
+
+float3 fresnelSchlick(float cosTheta, float3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+float sampleShadowPCF(float3 worldPos) {
+    float4 lightClip = mul(lighting.light_vp, float4(worldPos, 1.0));
+    float3 lightNdc = lightClip.xyz / lightClip.w;
+    float2 shadowUV = float2(lightNdc.x * 0.5 + 0.5, -lightNdc.y * 0.5 + 0.5);
+    float shadowDepth = lightNdc.z;
+
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0)
+        return 1.0;
+
+    uint w, h;
+    shadow_map.GetDimensions(w, h);
+    float2 texelSize = 1.0 / float2(w, h);
+
+    float shadow = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            float2 offset = float2(x, y) * texelSize;
+            shadow += shadow_map.SampleCmpLevelZero(shadow_sampler, shadowUV + offset, shadowDepth - 0.005);
+        }
+    }
+    return shadow / 9.0;
+}
+
 [shader("fragment")]
 float4 fs_main(VertexOutput input) : SV_Target0 {
     int2 texCoords = int2(input.position.xy);
@@ -57,7 +110,7 @@ float4 fs_main(VertexOutput input) : SV_Target0 {
     if (depth >= 1.0) discard;
 
     float3 albedo    = albedoRough.rgb;
-    float  roughness = albedoRough.a;
+    float  roughness = max(albedoRough.a, 0.04);
     float3 normal    = normalize(normalMetal.rgb * 2.0 - 1.0);
     float  metallic  = normalMetal.a;
     float3 emission  = emissionVal.rgb;
@@ -66,14 +119,16 @@ float4 fs_main(VertexOutput input) : SV_Target0 {
     float3 worldPos = reconstructWorldPos(input.uv, depth);
     float3 viewDir  = normalize(camera.position - worldPos);
 
-    // PBR-like base reflectance
+    // PBR base reflectance
     float3 F0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
     float3 diffuseColor = albedo * (1.0 - metallic);
 
     // Ambient
-    float3 color = diffuseColor * float3(0.03, 0.03, 0.04);
+    float3 color = diffuseColor * float3(0.02, 0.02, 0.025);
 
-    // Accumulate point lights
+    float NdotV = max(dot(normal, viewDir), 0.001);
+
+    // Accumulate point lights with Cook-Torrance BRDF
     for (uint i = 0; i < lighting.light_count; i++) {
         PointLight light = lighting.lights[i];
         float3 toLight = light.position - worldPos;
@@ -84,30 +139,50 @@ float4 fs_main(VertexOutput input) : SV_Target0 {
         float3 lightDir = toLight / dist;
         float3 halfVec  = normalize(lightDir + viewDir);
 
-        float ndotl = max(dot(normal, lightDir), 0.0);
-        float ndoth = max(dot(normal, halfVec), 0.0);
+        float NdotL = max(dot(normal, lightDir), 0.0);
+        float NdotH = max(dot(normal, halfVec), 0.0);
+        float HdotV = max(dot(halfVec, viewDir), 0.0);
 
         // Attenuation: inverse-square with smooth range falloff
         float distAtten = 1.0 / (1.0 + dist * dist);
         float rangeFactor = saturate(1.0 - pow(dist / light.range, 4.0));
         float attenuation = light.intensity * distAtten * rangeFactor;
 
-        // Diffuse
-        float3 diffuse = diffuseColor * light.color * ndotl;
+        // Cook-Torrance specular BRDF
+        float D = distributionGGX(NdotH, roughness);
+        float G = geometrySmith(NdotV, NdotL, roughness);
+        float3 F = fresnelSchlick(HdotV, F0);
 
-        // Blinn-Phong specular (roughness controls exponent)
-        float specPower = max(2.0 / (roughness * roughness + 0.001) - 2.0, 1.0);
-        float specular = pow(ndoth, specPower);
-        float3 spec = F0 * light.color * specular * ndotl;
+        float3 numerator = D * G * F;
+        float denominator = 4.0 * NdotV * NdotL + 0.0001;
+        float3 specular = numerator / denominator;
 
-        color += (diffuse + spec) * attenuation;
+        // Energy conservation: diffuse reduced by Fresnel
+        float3 kD = (float3(1.0) - F) * (1.0 - metallic);
+        float3 diffuse = kD * diffuseColor / 3.14159265;
+
+        color += (diffuse + specular) * light.color * NdotL * attenuation;
     }
 
-    // Fallback directional light when no lights in scene
-    if (lighting.light_count == 0) {
-        float3 lightDir = normalize(float3(0.3, 1.0, 0.5));
-        float ndotl = max(dot(normal, lightDir), 0.0);
-        color = diffuseColor * (float3(0.15, 0.15, 0.18) + ndotl * 0.85);
+    // Directional light with Cook-Torrance BRDF + shadows
+    if (lighting.has_directional != 0) {
+        float3 dirLightDir = normalize(-lighting.dir_light_direction);
+        float3 halfVecD = normalize(dirLightDir + viewDir);
+
+        float NdotLD = max(dot(normal, dirLightDir), 0.0);
+        float NdotHD = max(dot(normal, halfVecD), 0.0);
+        float HdotVD = max(dot(halfVecD, viewDir), 0.0);
+
+        float Dd = distributionGGX(NdotHD, roughness);
+        float Gd = geometrySmith(NdotV, NdotLD, roughness);
+        float3 Fd = fresnelSchlick(HdotVD, F0);
+
+        float3 specD = (Dd * Gd * Fd) / (4.0 * NdotV * NdotLD + 0.0001);
+        float3 kDd = (float3(1.0) - Fd) * (1.0 - metallic);
+        float3 diffD = kDd * diffuseColor / 3.14159265;
+
+        float shadow = sampleShadowPCF(worldPos);
+        color += (diffD + specD) * lighting.dir_light_color * NdotLD * lighting.dir_light_intensity * shadow;
     }
 
     // Add emission (unlit, straight to output)

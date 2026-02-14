@@ -64,7 +64,7 @@ float4 fs_main(VertexOutput input) : SV_Target0 {
     result += (b + g + h + l) * 0.0625;                          // edges
 
     // Apply bloom threshold with soft knee
-    result = threshold_color(result, 0.8, 0.5);
+    result = threshold_color(result, 0.5, 0.3);
 
     return float4(result, 1.0);
 }

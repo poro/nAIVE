@@ -36,8 +36,24 @@ resources:
     type: texture_2d
     format: rgba16f
     size: viewport/2
+  - name: ldr_buffer
+    type: texture_2d
+    format: rgba8
+    size: viewport
+  - name: shadow_map
+    type: texture_2d
+    format: depth32f
+    size: "[2048, 2048]"
 
 passes:
+  - name: shadow_pass
+    type: shadow
+    shader: shaders/passes/shadow.slang
+    inputs:
+      scene_meshes: auto
+    outputs:
+      depth: shadow_map
+
   - name: geometry_pass
     type: rasterize
     shader: shaders/passes/gbuffer.slang
@@ -69,6 +85,7 @@ passes:
       gbuffer_emission: gbuffer_emission
       splat_color: splat_color
       splat_depth: splat_depth
+      shadow_map: shadow_map
       scene_lights: auto
     outputs:
       color: hdr_buffer
@@ -87,5 +104,13 @@ passes:
     inputs:
       hdr: hdr_buffer
       bloom: bloom_buffer
+    outputs:
+      color: ldr_buffer
+
+  - name: fxaa_pass
+    type: fullscreen
+    shader: shaders/passes/fxaa.slang
+    inputs:
+      ldr: ldr_buffer
     outputs:
       color: swapchain

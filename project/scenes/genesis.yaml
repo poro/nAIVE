@@ -513,6 +513,18 @@ entities:
         source: logic/genesis_emissive_cycle.lua
 
   # ============================================================
+  # DIRECTIONAL LIGHT (SUN) - Shadows and global illumination
+  # ============================================================
+  - id: sun
+    tags: [light, directional, sun]
+    components:
+      directional_light:
+        direction: [0.3, -1.0, 0.5]
+        color: [1.0, 0.95, 0.9]
+        intensity: 2.0
+        shadow_extent: 20.0
+
+  # ============================================================
   # LIGHTING ARRAY - 24 lights for dramatic effect
   # ============================================================
 

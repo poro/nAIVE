@@ -174,6 +174,16 @@ fn spawn_entity(
         scene_world
             .world
             .spawn((entity_id, tags, transform, point_light))
+    } else if let Some(dl) = &entity_def.components.directional_light {
+        let dir_light = crate::components::DirectionalLight {
+            direction: glam::Vec3::from(dl.direction).normalize(),
+            color: glam::Vec3::from(dl.color),
+            intensity: dl.intensity,
+            shadow_extent: dl.shadow_extent,
+        };
+        scene_world
+            .world
+            .spawn((entity_id, tags, transform, dir_light))
     } else {
         scene_world
             .world
@@ -385,6 +395,14 @@ fn spawn_entity_headless(
             range: pl.range,
         };
         scene_world.world.spawn((entity_id, tags, transform, point_light))
+    } else if let Some(dl) = &entity_def.components.directional_light {
+        let dir_light = crate::components::DirectionalLight {
+            direction: glam::Vec3::from(dl.direction).normalize(),
+            color: glam::Vec3::from(dl.color),
+            intensity: dl.intensity,
+            shadow_extent: dl.shadow_extent,
+        };
+        scene_world.world.spawn((entity_id, tags, transform, dir_light))
     } else {
         scene_world.world.spawn((entity_id, tags, transform))
     };
