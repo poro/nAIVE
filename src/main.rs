@@ -1,5 +1,6 @@
 mod audio;
 mod audio_gen;
+mod build;
 mod camera;
 mod cli;
 mod command;
@@ -7,11 +8,14 @@ mod components;
 mod events;
 mod engine;
 mod font;
+mod init;
 mod input;
 mod material;
 mod mesh;
 mod physics;
 mod pipeline;
+mod project_config;
+mod publish;
 mod reflect;
 mod renderer;
 mod scene;
@@ -38,34 +42,213 @@ fn main() {
 
     let args = CliArgs::parse();
     tracing::info!("nAIVE runtime v{}", env!("CARGO_PKG_VERSION"));
-    tracing::info!("Project root: {}", args.project);
 
-    // Handle subcommands
-    if let Some(cli::Command::Test { test_file }) = &args.command {
-        let project_root = std::path::Path::new(&args.project);
-        let test_path = project_root.join(test_file);
-        if !test_path.exists() {
-            eprintln!("Test file not found: {}", test_path.display());
-            std::process::exit(1);
+    match &args.command {
+        // naive init <name>
+        Some(cli::Command::Init { name }) => {
+            if let Err(e) = init::create_project(name) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+            return;
         }
 
-        let results = test_runner::run_test_file(project_root, &test_path);
+        // naive run [--scene X]
+        Some(cli::Command::Run { scene }) => {
+            let cwd = std::env::current_dir().expect("Failed to get current directory");
+            let args = match project_config::find_config(&cwd) {
+                Some(config_path) => {
+                    let project_root = config_path.parent().unwrap();
+                    let config = match project_config::load_config(&config_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            std::process::exit(1);
+                        }
+                    };
+                    tracing::info!("Loaded project: {} v{}", config.name, config.version);
+                    let mut cli_args = project_config::to_cli_args(&config, project_root);
+                    // CLI scene override takes priority
+                    if scene.is_some() {
+                        cli_args.scene = scene.clone();
+                    }
+                    cli_args
+                }
+                None => {
+                    eprintln!("Error: No naive.yaml found in current directory or parents.");
+                    eprintln!("  Run `naive init <name>` to create a new project,");
+                    eprintln!("  or use `naive-runtime --project <path> --scene <scene>` for legacy mode.");
+                    std::process::exit(1);
+                }
+            };
+            run_engine(args);
+            return;
+        }
 
-        let total = results.len();
-        let passed = results.iter().filter(|r| r.passed).count();
-        let failed = total - passed;
+        // naive test [test_file]
+        Some(cli::Command::Test { test_file }) => {
+            match test_file {
+                // Explicit file: check if it's a relative path in a project or legacy mode
+                Some(file) => {
+                    let cwd = std::env::current_dir().expect("Failed to get current directory");
+                    let project_root = match project_config::find_config(&cwd) {
+                        Some(config_path) => config_path.parent().unwrap().to_path_buf(),
+                        None => std::path::PathBuf::from(&args.project),
+                    };
+                    let test_path = project_root.join(file);
+                    run_single_test(&project_root, &test_path);
+                }
+                // No file: discover all tests from naive.yaml
+                None => {
+                    let cwd = std::env::current_dir().expect("Failed to get current directory");
+                    let config_path = match project_config::find_config(&cwd) {
+                        Some(p) => p,
+                        None => {
+                            eprintln!("Error: No naive.yaml found. Specify a test file or run from a project directory.");
+                            std::process::exit(1);
+                        }
+                    };
+                    let project_root = config_path.parent().unwrap();
+                    let config = match project_config::load_config(&config_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                            std::process::exit(1);
+                        }
+                    };
+                    let test_files = project_config::discover_test_files(&config, project_root);
+                    if test_files.is_empty() {
+                        println!("No test files found.");
+                        return;
+                    }
+                    println!("Running {} test file(s)...\n", test_files.len());
+                    let mut total_passed = 0;
+                    let mut total_failed = 0;
+                    for test_path in &test_files {
+                        println!("--- {} ---", test_path.display());
+                        let results = test_runner::run_test_file(project_root, test_path);
+                        let passed = results.iter().filter(|r| r.passed).count();
+                        let failed = results.len() - passed;
+                        total_passed += passed;
+                        total_failed += failed;
+                        println!();
+                    }
+                    println!("{} passed, {} failed across {} files.",
+                        total_passed, total_failed, test_files.len());
+                    if total_failed > 0 {
+                        std::process::exit(1);
+                    }
+                }
+            }
+            return;
+        }
 
-        println!();
-        if failed == 0 {
-            println!("All {} tests passed.", total);
-            std::process::exit(0);
-        } else {
-            println!("{} passed, {} failed.", passed, failed);
-            std::process::exit(1);
+        // naive build [--target X]
+        Some(cli::Command::Build { target }) => {
+            let cwd = std::env::current_dir().expect("Failed to get current directory");
+            let config_path = match project_config::find_config(&cwd) {
+                Some(p) => p,
+                None => {
+                    eprintln!("Error: No naive.yaml found. Run from a project directory.");
+                    std::process::exit(1);
+                }
+            };
+            let project_root = config_path.parent().unwrap();
+            let config = match project_config::load_config(&config_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = build::bundle_project(&config, project_root, target.as_deref()) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+            return;
+        }
+
+        // naive publish
+        Some(cli::Command::Publish) => {
+            let cwd = std::env::current_dir().expect("Failed to get current directory");
+            let config_path = match project_config::find_config(&cwd) {
+                Some(p) => p,
+                None => {
+                    eprintln!("Error: No naive.yaml found. Run from a project directory.");
+                    std::process::exit(1);
+                }
+            };
+            let config = match project_config::load_config(&config_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = publish::publish_project(&config) {
+                eprintln!("Note: {}", e);
+                std::process::exit(1);
+            }
+            return;
+        }
+
+        // No subcommand: auto-detect or legacy mode
+        None => {
+            let cwd = std::env::current_dir().expect("Failed to get current directory");
+
+            // Auto-detect: if naive.yaml exists in CWD, behave like `naive run`
+            if let Some(config_path) = project_config::find_config(&cwd) {
+                // Only auto-detect if the user didn't pass explicit --scene or --project flags
+                // (i.e., they're relying on defaults)
+                if args.scene.is_none() && args.project == "project" {
+                    let project_root = config_path.parent().unwrap();
+                    let config = match project_config::load_config(&config_path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("Warning: Found naive.yaml but failed to parse: {}", e);
+                            eprintln!("Falling back to legacy mode.");
+                            tracing::info!("Project root: {}", args.project);
+                            run_engine(args);
+                            return;
+                        }
+                    };
+                    tracing::info!("Auto-detected project: {} v{}", config.name, config.version);
+                    let cli_args = project_config::to_cli_args(&config, project_root);
+                    run_engine(cli_args);
+                    return;
+                }
+            }
+
+            // Legacy mode: use --project and --scene flags as before
+            tracing::info!("Project root: {}", args.project);
+            run_engine(args);
         }
     }
+}
 
-    // Default: run the windowed engine
+fn run_single_test(project_root: &std::path::Path, test_path: &std::path::Path) {
+    if !test_path.exists() {
+        eprintln!("Test file not found: {}", test_path.display());
+        std::process::exit(1);
+    }
+
+    let results = test_runner::run_test_file(project_root, test_path);
+
+    let total = results.len();
+    let passed = results.iter().filter(|r| r.passed).count();
+    let failed = total - passed;
+
+    println!();
+    if failed == 0 {
+        println!("All {} tests passed.", total);
+        std::process::exit(0);
+    } else {
+        println!("{} passed, {} failed.", passed, failed);
+        std::process::exit(1);
+    }
+}
+
+fn run_engine(args: CliArgs) {
     let event_loop =
         winit::event_loop::EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);

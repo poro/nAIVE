@@ -1,0 +1,14 @@
+name: "Relic"
+version: "0.1.0"
+engine: "naive-runtime"
+default_scene: "scenes/relic.yaml"
+default_pipeline: "pipelines/render.yaml"
+
+test:
+  directory: "tests"
+
+build:
+  targets:
+    - "macos"
+    - "windows"
+    - "linux"

@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "naive-runtime", version, about = "nAIVE - The AI-Native Game Engine")]
+#[command(name = "naive", version, about = "nAIVE - The AI-Native Game Engine")]
 pub struct CliArgs {
-    /// Subcommand (test, etc.)
+    /// Subcommand (init, run, test, build, publish)
     #[command(subcommand)]
     pub command: Option<Command>,
 
@@ -30,11 +30,30 @@ pub struct CliArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Create a new nAIVE game project
+    Init {
+        /// Project name (becomes directory name)
+        name: String,
+    },
+    /// Run the game (reads naive.yaml in current directory)
+    Run {
+        /// Override the scene to load
+        #[arg(long)]
+        scene: Option<String>,
+    },
     /// Run automated Lua test scripts
     Test {
-        /// Path to the test Lua file (relative to project root)
-        test_file: String,
+        /// Specific test file (or runs all from naive.yaml)
+        test_file: Option<String>,
     },
+    /// Bundle game for standalone distribution
+    Build {
+        /// Target platform (macos, windows, linux)
+        #[arg(long)]
+        target: Option<String>,
+    },
+    /// Publish to nAIVE world server
+    Publish,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]

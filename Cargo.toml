@@ -3,6 +3,14 @@ name = "naive-runtime"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "naive-runtime"
+path = "src/main.rs"
+
+[[bin]]
+name = "naive"
+path = "src/main.rs"
+
 [features]
 default = ["slang"]
 slang = ["dep:shader-slang"]
