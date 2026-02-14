@@ -1,0 +1,523 @@
+name: "INFERNO - Combat Arena"
+settings:
+  ambient_light: [0.06, 0.02, 0.01]
+  gravity: [0, -9.81, 0]
+
+entities:
+  # ============================================================
+  # PLAYER - First-person combat controller
+  # ============================================================
+  - id: player
+    tags: [player]
+    components:
+      transform:
+        position: [0, 1, 12]
+      camera:
+        fov: 75
+        near: 0.1
+        far: 100
+        role: main
+      character_controller:
+        move_speed: 4.5
+        sprint_multiplier: 1.6
+        jump_impulse: 6.0
+        step_height: 0.3
+        height: 1.8
+        radius: 0.3
+      script:
+        source: logic/inferno_player.lua
+
+  # ============================================================
+  # ARENA STRUCTURE - Floor, Walls
+  # ============================================================
+  - id: arena_floor
+    tags: [environment, floor]
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [32, 1, 32]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_floor.yaml
+      collider:
+        shape: box
+        half_extents: [16, 0.5, 16]
+
+  - id: wall_north
+    tags: [environment, wall]
+    components:
+      transform:
+        position: [0, 3, -16]
+        scale: [32, 6, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_wall.yaml
+      collider:
+        shape: box
+        half_extents: [16, 3, 0.5]
+
+  - id: wall_south
+    tags: [environment, wall]
+    components:
+      transform:
+        position: [0, 3, 16]
+        scale: [32, 6, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_wall.yaml
+      collider:
+        shape: box
+        half_extents: [16, 3, 0.5]
+
+  - id: wall_east
+    tags: [environment, wall]
+    components:
+      transform:
+        position: [16, 3, 0]
+        scale: [1, 6, 32]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_wall.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 3, 16]
+
+  - id: wall_west
+    tags: [environment, wall]
+    components:
+      transform:
+        position: [-16, 3, 0]
+        scale: [1, 6, 32]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_wall.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 3, 16]
+
+  # ============================================================
+  # LAVA PITS - 4 corner hazards
+  # ============================================================
+  - id: lava_pit_ne
+    tags: [hazard, lava]
+    components:
+      transform:
+        position: [10, -0.3, -10]
+        scale: [4, 0.3, 4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_lava.yaml
+      script:
+        source: logic/inferno_lava_glow.lua
+
+  - id: lava_pit_nw
+    tags: [hazard, lava]
+    components:
+      transform:
+        position: [-10, -0.3, -10]
+        scale: [4, 0.3, 4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_lava.yaml
+      script:
+        source: logic/inferno_lava_glow.lua
+
+  - id: lava_pit_se
+    tags: [hazard, lava]
+    components:
+      transform:
+        position: [10, -0.3, 10]
+        scale: [4, 0.3, 4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_lava.yaml
+      script:
+        source: logic/inferno_lava_glow.lua
+
+  - id: lava_pit_sw
+    tags: [hazard, lava]
+    components:
+      transform:
+        position: [-10, -0.3, 10]
+        scale: [4, 0.3, 4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_lava.yaml
+      script:
+        source: logic/inferno_lava_glow.lua
+
+  # ============================================================
+  # IRON PILLARS - 4 cover points for combat
+  # ============================================================
+  - id: pillar_ne
+    tags: [environment, pillar]
+    components:
+      transform:
+        position: [6, 2.5, -6]
+        scale: [1.5, 5, 1.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_iron.yaml
+      collider:
+        shape: box
+        half_extents: [0.75, 2.5, 0.75]
+
+  - id: pillar_nw
+    tags: [environment, pillar]
+    components:
+      transform:
+        position: [-6, 2.5, -6]
+        scale: [1.5, 5, 1.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_iron.yaml
+      collider:
+        shape: box
+        half_extents: [0.75, 2.5, 0.75]
+
+  - id: pillar_se
+    tags: [environment, pillar]
+    components:
+      transform:
+        position: [6, 2.5, 6]
+        scale: [1.5, 5, 1.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_iron.yaml
+      collider:
+        shape: box
+        half_extents: [0.75, 2.5, 0.75]
+
+  - id: pillar_sw
+    tags: [environment, pillar]
+    components:
+      transform:
+        position: [-6, 2.5, 6]
+        scale: [1.5, 5, 1.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_iron.yaml
+      collider:
+        shape: box
+        half_extents: [0.75, 2.5, 0.75]
+
+  # ============================================================
+  # DEMON ENEMIES - 6 hostiles at varied positions
+  # ============================================================
+  - id: demon_1
+    tags: [enemy, demon]
+    components:
+      transform:
+        position: [8, 0.75, -8]
+        scale: [0.8, 1.5, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_demon.yaml
+      script:
+        source: logic/inferno_enemy.lua
+
+  - id: demon_2
+    tags: [enemy, demon]
+    components:
+      transform:
+        position: [-8, 0.75, -8]
+        scale: [0.8, 1.5, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_demon.yaml
+      script:
+        source: logic/inferno_enemy.lua
+
+  - id: demon_3
+    tags: [enemy, demon]
+    components:
+      transform:
+        position: [0, 0.75, -12]
+        scale: [0.8, 1.5, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_demon.yaml
+      script:
+        source: logic/inferno_enemy.lua
+
+  - id: demon_4
+    tags: [enemy, demon]
+    components:
+      transform:
+        position: [10, 0.75, 3]
+        scale: [0.8, 1.5, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_demon.yaml
+      script:
+        source: logic/inferno_enemy.lua
+
+  - id: demon_5
+    tags: [enemy, demon]
+    components:
+      transform:
+        position: [-10, 0.75, 3]
+        scale: [0.8, 1.5, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_demon.yaml
+      script:
+        source: logic/inferno_enemy.lua
+
+  - id: demon_6
+    tags: [enemy, demon]
+    components:
+      transform:
+        position: [0, 0.75, 0]
+        scale: [0.8, 1.5, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/inferno_demon.yaml
+      script:
+        source: logic/inferno_enemy.lua
+
+  # ============================================================
+  # HEALTH PICKUPS - 2 floating orbs
+  # ============================================================
+  - id: health_pickup_1
+    tags: [pickup, health]
+    components:
+      transform:
+        position: [12, 1.2, 0]
+        scale: [0.4, 0.4, 0.4]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/inferno_health.yaml
+      script:
+        source: logic/float_bob.lua
+
+  - id: health_pickup_2
+    tags: [pickup, health]
+    components:
+      transform:
+        position: [-12, 1.2, 0]
+        scale: [0.4, 0.4, 0.4]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/inferno_health.yaml
+      script:
+        source: logic/float_bob.lua
+
+  # ============================================================
+  # DIRECTIONAL LIGHT - Orange-red hellfire sun
+  # ============================================================
+  - id: sun
+    tags: [light, directional, sun]
+    components:
+      directional_light:
+        direction: [0.4, -1.0, 0.3]
+        color: [1.0, 0.45, 0.15]
+        intensity: 2.5
+        shadow_extent: 20.0
+
+  # ============================================================
+  # WALL TORCHES - 8 flickering lights along the walls
+  # Alternating warm orange and blood red
+  # ============================================================
+  - id: torch_n1
+    tags: [light, torch]
+    components:
+      transform:
+        position: [8, 4, -15.5]
+      point_light:
+        color: [1.0, 0.65, 0.2]
+        intensity: 5
+        range: 12
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_n2
+    tags: [light, torch]
+    components:
+      transform:
+        position: [-8, 4, -15.5]
+      point_light:
+        color: [0.9, 0.15, 0.1]
+        intensity: 5
+        range: 12
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_s1
+    tags: [light, torch]
+    components:
+      transform:
+        position: [8, 4, 15.5]
+      point_light:
+        color: [1.0, 0.65, 0.2]
+        intensity: 5
+        range: 12
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_s2
+    tags: [light, torch]
+    components:
+      transform:
+        position: [-8, 4, 15.5]
+      point_light:
+        color: [0.9, 0.15, 0.1]
+        intensity: 5
+        range: 12
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_e1
+    tags: [light, torch]
+    components:
+      transform:
+        position: [15.5, 4, 8]
+      point_light:
+        color: [1.0, 0.65, 0.2]
+        intensity: 5
+        range: 12
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_e2
+    tags: [light, torch]
+    components:
+      transform:
+        position: [15.5, 4, -8]
+      point_light:
+        color: [0.9, 0.15, 0.1]
+        intensity: 5
+        range: 12
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_w1
+    tags: [light, torch]
+    components:
+      transform:
+        position: [-15.5, 4, 8]
+      point_light:
+        color: [1.0, 0.65, 0.2]
+        intensity: 5
+        range: 12
+      script:
+        source: logic/torch_flicker.lua
+
+  - id: torch_w2
+    tags: [light, torch]
+    components:
+      transform:
+        position: [-15.5, 4, -8]
+      point_light:
+        color: [0.9, 0.15, 0.1]
+        intensity: 5
+        range: 12
+      script:
+        source: logic/torch_flicker.lua
+
+  # ============================================================
+  # LAVA GLOW LIGHTS - 4 near the corner pits
+  # ============================================================
+  - id: lava_glow_ne
+    tags: [light, lava]
+    components:
+      transform:
+        position: [10, 1, -10]
+      point_light:
+        color: [1.0, 0.5, 0.05]
+        intensity: 8
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: lava_glow_nw
+    tags: [light, lava]
+    components:
+      transform:
+        position: [-10, 1, -10]
+      point_light:
+        color: [1.0, 0.5, 0.05]
+        intensity: 8
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: lava_glow_se
+    tags: [light, lava]
+    components:
+      transform:
+        position: [10, 1, 10]
+      point_light:
+        color: [1.0, 0.5, 0.05]
+        intensity: 8
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: lava_glow_sw
+    tags: [light, lava]
+    components:
+      transform:
+        position: [-10, 1, 10]
+      point_light:
+        color: [1.0, 0.5, 0.05]
+        intensity: 8
+        range: 10
+      script:
+        source: logic/neon_pulse.lua
+
+  # ============================================================
+  # ACCENT OVERHEAD LIGHTS - 4 dramatic colors
+  # ============================================================
+  - id: accent_overhead_1
+    tags: [light, accent]
+    components:
+      transform:
+        position: [8, 8, -8]
+      point_light:
+        color: [0.8, 0.1, 0.05]
+        intensity: 7
+        range: 18
+
+  - id: accent_overhead_2
+    tags: [light, accent]
+    components:
+      transform:
+        position: [-8, 8, -8]
+      point_light:
+        color: [1.0, 0.35, 0.0]
+        intensity: 7
+        range: 18
+
+  - id: accent_overhead_3
+    tags: [light, accent]
+    components:
+      transform:
+        position: [8, 8, 8]
+      point_light:
+        color: [0.6, 0.05, 0.15]
+        intensity: 7
+        range: 18
+
+  - id: accent_overhead_4
+    tags: [light, accent]
+    components:
+      transform:
+        position: [-8, 8, 8]
+      point_light:
+        color: [1.0, 0.6, 0.1]
+        intensity: 7
+        range: 18
+
+  # ============================================================
+  # CENTRAL ARENA LIGHT - Bright overhead illumination
+  # ============================================================
+  - id: arena_light_central
+    tags: [light, central]
+    components:
+      transform:
+        position: [0, 12, 0]
+      point_light:
+        color: [1.0, 0.8, 0.5]
+        intensity: 15
+        range: 35

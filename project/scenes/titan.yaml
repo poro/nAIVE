@@ -1,0 +1,1458 @@
+name: "TITAN - Colosseum of Light"
+settings:
+  ambient_light: [0.02, 0.015, 0.03]
+  gravity: [0, 0, 0]
+
+entities:
+  # ================================================================
+  # CAMERA - Cinematic sweep through the titan colosseum
+  # ================================================================
+  - id: camera
+    tags: [camera]
+    components:
+      transform:
+        position: [0, 4, 24]
+      camera:
+        fov: 65
+        near: 0.1
+        far: 200
+        role: main
+      script:
+        source: logic/titan_camera.lua
+
+  # ================================================================
+  # DIRECTIONAL LIGHT (SUN) - High dramatic sun with shadow mapping
+  # ================================================================
+  - id: sun
+    tags: [light, directional, sun]
+    components:
+      directional_light:
+        direction: [0.25, -1.0, 0.4]
+        color: [1.0, 0.92, 0.85]
+        intensity: 2.5
+        shadow_extent: 40.0
+
+  # ================================================================
+  # GAUSSIAN SPLAT NEBULA - Cosmic backdrop
+  # ================================================================
+  - id: nebula
+    tags: [splat, nebula]
+    components:
+      transform:
+        position: [0, 8, 0]
+        scale: [2, 2, 2]
+      gaussian_splat:
+        source: procedural
+
+  # ================================================================
+  # ENVIRONMENT - Massive reflective floor
+  # ================================================================
+  - id: floor
+    tags: [environment]
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [60, 1, 60]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_floor.yaml
+
+  # ================================================================
+  # CENTRAL TITAN SPHERE - The heart of the colosseum
+  # ================================================================
+  - id: titan_core
+    tags: [central, titan]
+    components:
+      transform:
+        position: [0, 3.5, 0]
+        scale: [1.2, 1.2, 1.2]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_levitate.lua
+
+  # ================================================================
+  # PILLARS - 16 tall pillars in a circle at radius 18
+  # Arranged every 22.5 degrees for a grand colosseum effect
+  # ================================================================
+
+  # Pillar 1: 0 deg -> (18, 0)
+  - id: pillar_1
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [18.0, 6, 0.0]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 2: 22.5 deg -> (16.63, 6.88)
+  - id: pillar_2
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [16.63, 6, 6.88]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 3: 45 deg -> (12.73, 12.73)
+  - id: pillar_3
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [12.73, 6, 12.73]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 4: 67.5 deg -> (6.88, 16.63)
+  - id: pillar_4
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [6.88, 6, 16.63]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 5: 90 deg -> (0, 18)
+  - id: pillar_5
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [0.0, 6, 18.0]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 6: 112.5 deg -> (-6.88, 16.63)
+  - id: pillar_6
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-6.88, 6, 16.63]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 7: 135 deg -> (-12.73, 12.73)
+  - id: pillar_7
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-12.73, 6, 12.73]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 8: 157.5 deg -> (-16.63, 6.88)
+  - id: pillar_8
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-16.63, 6, 6.88]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 9: 180 deg -> (-18, 0)
+  - id: pillar_9
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-18.0, 6, 0.0]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 10: 202.5 deg -> (-16.63, -6.88)
+  - id: pillar_10
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-16.63, 6, -6.88]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 11: 225 deg -> (-12.73, -12.73)
+  - id: pillar_11
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-12.73, 6, -12.73]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 12: 247.5 deg -> (-6.88, -16.63)
+  - id: pillar_12
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [-6.88, 6, -16.63]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 13: 270 deg -> (0, -18)
+  - id: pillar_13
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [0.0, 6, -18.0]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 14: 292.5 deg -> (6.88, -16.63)
+  - id: pillar_14
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [6.88, 6, -16.63]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 15: 315 deg -> (12.73, -12.73)
+  - id: pillar_15
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [12.73, 6, -12.73]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # Pillar 16: 337.5 deg -> (16.63, -6.88)
+  - id: pillar_16
+    tags: [pillar, environment]
+    components:
+      transform:
+        position: [16.63, 6, -6.88]
+        scale: [0.8, 12, 0.8]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_pillar.yaml
+
+  # ================================================================
+  # GOLD RING - 12 gold spheres orbiting at radius 14
+  # Arranged every 30 degrees, y=2.5
+  # ================================================================
+
+  # Gold 1: 0 deg
+  - id: gold_orb_1
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [14.0, 2.5, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 2: 30 deg
+  - id: gold_orb_2
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [12.12, 2.5, 7.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 3: 60 deg
+  - id: gold_orb_3
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [7.0, 2.5, 12.12]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 4: 90 deg
+  - id: gold_orb_4
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [0.0, 2.5, 14.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 5: 120 deg
+  - id: gold_orb_5
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [-7.0, 2.5, 12.12]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 6: 150 deg
+  - id: gold_orb_6
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [-12.12, 2.5, 7.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 7: 180 deg
+  - id: gold_orb_7
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [-14.0, 2.5, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 8: 210 deg
+  - id: gold_orb_8
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [-12.12, 2.5, -7.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 9: 240 deg
+  - id: gold_orb_9
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [-7.0, 2.5, -12.12]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 10: 270 deg
+  - id: gold_orb_10
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [0.0, 2.5, -14.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 11: 300 deg
+  - id: gold_orb_11
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [7.0, 2.5, -12.12]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Gold 12: 330 deg
+  - id: gold_orb_12
+    tags: [gold_ring, orbit]
+    components:
+      transform:
+        position: [12.12, 2.5, -7.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_gold.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # ================================================================
+  # PLATINUM RING - 8 platinum spheres orbiting at radius 10
+  # Arranged every 45 degrees, y=4.0
+  # ================================================================
+
+  # Platinum 1: 0 deg
+  - id: platinum_orb_1
+    tags: [platinum_ring, orbit]
+    components:
+      transform:
+        position: [10.0, 4.0, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_platinum.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Platinum 2: 45 deg
+  - id: platinum_orb_2
+    tags: [platinum_ring, orbit]
+    components:
+      transform:
+        position: [7.07, 4.0, 7.07]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_platinum.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Platinum 3: 90 deg
+  - id: platinum_orb_3
+    tags: [platinum_ring, orbit]
+    components:
+      transform:
+        position: [0.0, 4.0, 10.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_platinum.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Platinum 4: 135 deg
+  - id: platinum_orb_4
+    tags: [platinum_ring, orbit]
+    components:
+      transform:
+        position: [-7.07, 4.0, 7.07]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_platinum.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Platinum 5: 180 deg
+  - id: platinum_orb_5
+    tags: [platinum_ring, orbit]
+    components:
+      transform:
+        position: [-10.0, 4.0, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_platinum.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Platinum 6: 225 deg
+  - id: platinum_orb_6
+    tags: [platinum_ring, orbit]
+    components:
+      transform:
+        position: [-7.07, 4.0, -7.07]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_platinum.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Platinum 7: 270 deg
+  - id: platinum_orb_7
+    tags: [platinum_ring, orbit]
+    components:
+      transform:
+        position: [0.0, 4.0, -10.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_platinum.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # Platinum 8: 315 deg
+  - id: platinum_orb_8
+    tags: [platinum_ring, orbit]
+    components:
+      transform:
+        position: [7.07, 4.0, -7.07]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_platinum.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  # ================================================================
+  # GEMSTONE PEDESTALS - 4 precious gems at cardinal directions
+  # Radius 8, each with a unique gemstone material and levitation
+  # ================================================================
+
+  # Ruby pedestal: North (+Z)
+  - id: gem_ruby
+    tags: [gemstone, pedestal]
+    components:
+      transform:
+        position: [0.0, 2.0, 8.0]
+        scale: [0.7, 0.7, 0.7]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_ruby.yaml
+      script:
+        source: logic/titan_levitate.lua
+
+  # Sapphire pedestal: East (+X)
+  - id: gem_sapphire
+    tags: [gemstone, pedestal]
+    components:
+      transform:
+        position: [8.0, 2.0, 0.0]
+        scale: [0.7, 0.7, 0.7]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_sapphire.yaml
+      script:
+        source: logic/titan_levitate.lua
+
+  # Emerald pedestal: South (-Z)
+  - id: gem_emerald
+    tags: [gemstone, pedestal]
+    components:
+      transform:
+        position: [0.0, 2.0, -8.0]
+        scale: [0.7, 0.7, 0.7]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_emerald.yaml
+      script:
+        source: logic/titan_levitate.lua
+
+  # Ice pedestal: West (-X)
+  - id: gem_ice
+    tags: [gemstone, pedestal]
+    components:
+      transform:
+        position: [-8.0, 2.0, 0.0]
+        scale: [0.7, 0.7, 0.7]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/titan_ice.yaml
+      script:
+        source: logic/titan_levitate.lua
+
+  # ================================================================
+  # EMBER CUBES - 8 cubes in a rising clockwise spiral
+  # Ascending from y=1.5 to y=8, radius shrinking 6->3
+  # ================================================================
+
+  - id: ember_cube_1
+    tags: [ember, spiral]
+    components:
+      transform:
+        position: [6.0, 1.5, 0.0]
+        scale: [0.4, 0.4, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_ember.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: ember_cube_2
+    tags: [ember, spiral]
+    components:
+      transform:
+        position: [3.89, 2.4, 3.89]
+        scale: [0.45, 0.45, 0.45]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_ember.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: ember_cube_3
+    tags: [ember, spiral]
+    components:
+      transform:
+        position: [0.0, 3.3, 5.14]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_ember.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: ember_cube_4
+    tags: [ember, spiral]
+    components:
+      transform:
+        position: [-3.18, 4.2, 3.18]
+        scale: [0.55, 0.55, 0.55]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_ember.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: ember_cube_5
+    tags: [ember, spiral]
+    components:
+      transform:
+        position: [-4.29, 5.1, 0.0]
+        scale: [0.55, 0.55, 0.55]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_ember.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: ember_cube_6
+    tags: [ember, spiral]
+    components:
+      transform:
+        position: [-2.47, 6.0, -2.47]
+        scale: [0.6, 0.6, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_ember.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: ember_cube_7
+    tags: [ember, spiral]
+    components:
+      transform:
+        position: [0.0, 6.9, -3.43]
+        scale: [0.65, 0.65, 0.65]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_ember.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: ember_cube_8
+    tags: [ember, spiral]
+    components:
+      transform:
+        position: [2.12, 7.8, -2.12]
+        scale: [0.7, 0.7, 0.7]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_ember.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  # ================================================================
+  # VOID CUBES - 8 cubes in a descending counter-clockwise spiral
+  # Descending from y=8 to y=1.5, radius shrinking 6->3
+  # ================================================================
+
+  - id: void_cube_1
+    tags: [void, spiral]
+    components:
+      transform:
+        position: [-6.0, 8.0, 0.0]
+        scale: [0.3, 0.3, 0.3]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_void.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: void_cube_2
+    tags: [void, spiral]
+    components:
+      transform:
+        position: [-3.89, 7.1, -3.89]
+        scale: [0.35, 0.35, 0.35]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_void.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: void_cube_3
+    tags: [void, spiral]
+    components:
+      transform:
+        position: [0.0, 6.2, -5.14]
+        scale: [0.35, 0.35, 0.35]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_void.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: void_cube_4
+    tags: [void, spiral]
+    components:
+      transform:
+        position: [3.18, 5.3, -3.18]
+        scale: [0.4, 0.4, 0.4]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_void.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: void_cube_5
+    tags: [void, spiral]
+    components:
+      transform:
+        position: [4.29, 4.4, 0.0]
+        scale: [0.45, 0.45, 0.45]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_void.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: void_cube_6
+    tags: [void, spiral]
+    components:
+      transform:
+        position: [2.47, 3.5, 2.47]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_void.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: void_cube_7
+    tags: [void, spiral]
+    components:
+      transform:
+        position: [0.0, 2.6, 3.43]
+        scale: [0.55, 0.55, 0.55]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_void.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  - id: void_cube_8
+    tags: [void, spiral]
+    components:
+      transform:
+        position: [-2.12, 1.7, 2.12]
+        scale: [0.6, 0.6, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/titan_void.yaml
+      script:
+        source: logic/titan_emission_wave.lua
+
+  # ================================================================
+  # CHROME ORBS - 4 close to center, tight orbit
+  # ================================================================
+
+  - id: chrome_orb_1
+    tags: [chrome, inner_orbit]
+    components:
+      transform:
+        position: [2.5, 3.0, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/chrome.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: chrome_orb_2
+    tags: [chrome, inner_orbit]
+    components:
+      transform:
+        position: [0.0, 3.0, 2.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/chrome.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: chrome_orb_3
+    tags: [chrome, inner_orbit]
+    components:
+      transform:
+        position: [-2.5, 3.0, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/chrome.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  - id: chrome_orb_4
+    tags: [chrome, inner_orbit]
+    components:
+      transform:
+        position: [0.0, 3.0, -2.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/chrome.yaml
+      script:
+        source: logic/genesis_orbit.lua
+
+  # ================================================================
+  # LIGHTING ARRAY - 32 lights total
+  # 8 pillar lights, 4 core glow, 4 accent spots, 4 rim lights,
+  # 8 gem lights, 2 key+fill, 2 dramatic spots
+  # ================================================================
+
+  # --- Key Light: warm high overhead ---
+  - id: key_light
+    tags: [light, dramatic]
+    components:
+      transform:
+        position: [0, 14, 8]
+      point_light:
+        color: [1.0, 0.9, 0.7]
+        intensity: 5
+        range: 40
+      script:
+        source: logic/titan_pulse_light.lua
+
+  # --- Fill Light: cool counter from behind ---
+  - id: fill_light
+    tags: [light, dramatic]
+    components:
+      transform:
+        position: [0, 10, -8]
+      point_light:
+        color: [0.35, 0.45, 0.7]
+        intensity: 3
+        range: 35
+      script:
+        source: logic/titan_pulse_light.lua
+
+  # --- Pillar Lights: 8 alternating warm/cool at pillar tops ---
+
+  # Pillar light 1 (warm) at pillar_1 position
+  - id: pillar_light_1
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [18.0, 10, 0.0]
+      point_light:
+        color: [1.0, 0.6, 0.2]
+        intensity: 7
+        range: 14
+      script:
+        source: logic/neon_pulse.lua
+
+  # Pillar light 2 (cool) at pillar_3 position
+  - id: pillar_light_2
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [12.73, 10, 12.73]
+      point_light:
+        color: [0.25, 0.5, 1.0]
+        intensity: 7
+        range: 14
+      script:
+        source: logic/neon_pulse.lua
+
+  # Pillar light 3 (warm) at pillar_5 position
+  - id: pillar_light_3
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [0.0, 10, 18.0]
+      point_light:
+        color: [1.0, 0.6, 0.2]
+        intensity: 7
+        range: 14
+      script:
+        source: logic/neon_pulse.lua
+
+  # Pillar light 4 (cool) at pillar_7 position
+  - id: pillar_light_4
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [-12.73, 10, 12.73]
+      point_light:
+        color: [0.25, 0.5, 1.0]
+        intensity: 7
+        range: 14
+      script:
+        source: logic/neon_pulse.lua
+
+  # Pillar light 5 (warm) at pillar_9 position
+  - id: pillar_light_5
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [-18.0, 10, 0.0]
+      point_light:
+        color: [1.0, 0.6, 0.2]
+        intensity: 7
+        range: 14
+      script:
+        source: logic/neon_pulse.lua
+
+  # Pillar light 6 (cool) at pillar_11 position
+  - id: pillar_light_6
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [-12.73, 10, -12.73]
+      point_light:
+        color: [0.25, 0.5, 1.0]
+        intensity: 7
+        range: 14
+      script:
+        source: logic/neon_pulse.lua
+
+  # Pillar light 7 (warm) at pillar_13 position
+  - id: pillar_light_7
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [0.0, 10, -18.0]
+      point_light:
+        color: [1.0, 0.6, 0.2]
+        intensity: 7
+        range: 14
+      script:
+        source: logic/neon_pulse.lua
+
+  # Pillar light 8 (cool) at pillar_15 position
+  - id: pillar_light_8
+    tags: [light, pillar]
+    components:
+      transform:
+        position: [12.73, 10, -12.73]
+      point_light:
+        color: [0.25, 0.5, 1.0]
+        intensity: 7
+        range: 14
+      script:
+        source: logic/neon_pulse.lua
+
+  # --- Core Glow: 4 lights intimately surrounding the titan core ---
+
+  - id: core_glow_1
+    tags: [light, core]
+    components:
+      transform:
+        position: [1.5, 3.5, 0.0]
+      point_light:
+        color: [1.0, 0.85, 0.4]
+        intensity: 14
+        range: 10
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: core_glow_2
+    tags: [light, core]
+    components:
+      transform:
+        position: [0.0, 3.5, 1.5]
+      point_light:
+        color: [0.5, 0.85, 1.0]
+        intensity: 12
+        range: 10
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: core_glow_3
+    tags: [light, core]
+    components:
+      transform:
+        position: [-1.5, 3.5, 0.0]
+      point_light:
+        color: [1.0, 0.35, 0.65]
+        intensity: 12
+        range: 10
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: core_glow_4
+    tags: [light, core]
+    components:
+      transform:
+        position: [0.0, 3.5, -1.5]
+      point_light:
+        color: [0.35, 1.0, 0.55]
+        intensity: 12
+        range: 10
+      script:
+        source: logic/titan_pulse_light.lua
+
+  # --- Accent Spots: 4 high dramatic color washes ---
+
+  - id: accent_spot_1
+    tags: [light, accent]
+    components:
+      transform:
+        position: [10, 12, 10]
+      point_light:
+        color: [0.7, 0.1, 1.0]
+        intensity: 9
+        range: 20
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: accent_spot_2
+    tags: [light, accent]
+    components:
+      transform:
+        position: [-10, 12, 10]
+      point_light:
+        color: [0.1, 0.95, 0.85]
+        intensity: 9
+        range: 20
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: accent_spot_3
+    tags: [light, accent]
+    components:
+      transform:
+        position: [10, 12, -10]
+      point_light:
+        color: [1.0, 0.75, 0.1]
+        intensity: 9
+        range: 20
+      script:
+        source: logic/neon_pulse.lua
+
+  - id: accent_spot_4
+    tags: [light, accent]
+    components:
+      transform:
+        position: [-10, 12, -10]
+      point_light:
+        color: [1.0, 0.15, 0.15]
+        intensity: 9
+        range: 20
+      script:
+        source: logic/neon_pulse.lua
+
+  # --- Rim Lights: 4 far low lights painting the floor edges ---
+
+  - id: rim_light_1
+    tags: [light, rim]
+    components:
+      transform:
+        position: [22, 1, 0]
+      point_light:
+        color: [0.4, 0.2, 0.85]
+        intensity: 5
+        range: 25
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: rim_light_2
+    tags: [light, rim]
+    components:
+      transform:
+        position: [-22, 1, 0]
+      point_light:
+        color: [0.85, 0.4, 0.1]
+        intensity: 5
+        range: 25
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: rim_light_3
+    tags: [light, rim]
+    components:
+      transform:
+        position: [0, 1, 22]
+      point_light:
+        color: [0.1, 0.65, 0.95]
+        intensity: 5
+        range: 25
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: rim_light_4
+    tags: [light, rim]
+    components:
+      transform:
+        position: [0, 1, -22]
+      point_light:
+        color: [0.95, 0.65, 0.3]
+        intensity: 5
+        range: 25
+      script:
+        source: logic/titan_pulse_light.lua
+
+  # --- Gem Lights: 8 lights near the gemstone pedestals (2 per gem) ---
+
+  # Ruby gem lights (warm red)
+  - id: gem_light_ruby_1
+    tags: [light, gem]
+    components:
+      transform:
+        position: [0.8, 2.5, 8.0]
+      point_light:
+        color: [1.0, 0.15, 0.1]
+        intensity: 10
+        range: 8
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: gem_light_ruby_2
+    tags: [light, gem]
+    components:
+      transform:
+        position: [-0.8, 1.5, 8.0]
+      point_light:
+        color: [1.0, 0.3, 0.15]
+        intensity: 8
+        range: 6
+      script:
+        source: logic/neon_pulse.lua
+
+  # Sapphire gem lights (deep blue)
+  - id: gem_light_sapphire_1
+    tags: [light, gem]
+    components:
+      transform:
+        position: [8.0, 2.5, 0.8]
+      point_light:
+        color: [0.1, 0.2, 1.0]
+        intensity: 10
+        range: 8
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: gem_light_sapphire_2
+    tags: [light, gem]
+    components:
+      transform:
+        position: [8.0, 1.5, -0.8]
+      point_light:
+        color: [0.15, 0.35, 1.0]
+        intensity: 8
+        range: 6
+      script:
+        source: logic/neon_pulse.lua
+
+  # Emerald gem lights (vivid green)
+  - id: gem_light_emerald_1
+    tags: [light, gem]
+    components:
+      transform:
+        position: [0.8, 2.5, -8.0]
+      point_light:
+        color: [0.1, 1.0, 0.25]
+        intensity: 10
+        range: 8
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: gem_light_emerald_2
+    tags: [light, gem]
+    components:
+      transform:
+        position: [-0.8, 1.5, -8.0]
+      point_light:
+        color: [0.15, 1.0, 0.4]
+        intensity: 8
+        range: 6
+      script:
+        source: logic/neon_pulse.lua
+
+  # Ice gem lights (cyan-white)
+  - id: gem_light_ice_1
+    tags: [light, gem]
+    components:
+      transform:
+        position: [-8.0, 2.5, 0.8]
+      point_light:
+        color: [0.6, 0.9, 1.0]
+        intensity: 10
+        range: 8
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: gem_light_ice_2
+    tags: [light, gem]
+    components:
+      transform:
+        position: [-8.0, 1.5, -0.8]
+      point_light:
+        color: [0.7, 0.95, 1.0]
+        intensity: 8
+        range: 6
+      script:
+        source: logic/neon_pulse.lua
+
+  # --- Dramatic Spots: 2 additional high-intensity focused lights ---
+
+  - id: dramatic_spot_1
+    tags: [light, dramatic]
+    components:
+      transform:
+        position: [5, 15, 0]
+      point_light:
+        color: [1.0, 0.95, 0.9]
+        intensity: 6
+        range: 30
+      script:
+        source: logic/titan_pulse_light.lua
+
+  - id: dramatic_spot_2
+    tags: [light, dramatic]
+    components:
+      transform:
+        position: [-5, 15, 0]
+      point_light:
+        color: [0.9, 0.8, 1.0]
+        intensity: 6
+        range: 30
+      script:
+        source: logic/titan_pulse_light.lua
+
+  # ================================================================
+  # OBSIDIAN SENTINELS - 8 inner pillars at radius 12
+  # Shorter than the outer ring, creating depth layers
+  # Arranged every 45 degrees, offset 22.5 deg from outer pillars
+  # ================================================================
+
+  # Sentinel 1: 22.5 deg
+  - id: sentinel_1
+    tags: [sentinel, environment]
+    components:
+      transform:
+        position: [11.09, 4, 4.59]
+        scale: [0.6, 8, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+
+  # Sentinel 2: 67.5 deg
+  - id: sentinel_2
+    tags: [sentinel, environment]
+    components:
+      transform:
+        position: [4.59, 4, 11.09]
+        scale: [0.6, 8, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+
+  # Sentinel 3: 112.5 deg
+  - id: sentinel_3
+    tags: [sentinel, environment]
+    components:
+      transform:
+        position: [-4.59, 4, 11.09]
+        scale: [0.6, 8, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+
+  # Sentinel 4: 157.5 deg
+  - id: sentinel_4
+    tags: [sentinel, environment]
+    components:
+      transform:
+        position: [-11.09, 4, 4.59]
+        scale: [0.6, 8, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+
+  # Sentinel 5: 202.5 deg
+  - id: sentinel_5
+    tags: [sentinel, environment]
+    components:
+      transform:
+        position: [-11.09, 4, -4.59]
+        scale: [0.6, 8, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+
+  # Sentinel 6: 247.5 deg
+  - id: sentinel_6
+    tags: [sentinel, environment]
+    components:
+      transform:
+        position: [-4.59, 4, -11.09]
+        scale: [0.6, 8, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+
+  # Sentinel 7: 292.5 deg
+  - id: sentinel_7
+    tags: [sentinel, environment]
+    components:
+      transform:
+        position: [4.59, 4, -11.09]
+        scale: [0.6, 8, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+
+  # Sentinel 8: 337.5 deg
+  - id: sentinel_8
+    tags: [sentinel, environment]
+    components:
+      transform:
+        position: [11.09, 4, -4.59]
+        scale: [0.6, 8, 0.6]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/obsidian.yaml
+
+  # ================================================================
+  # GEM PEDESTALS - 4 dark mirror bases beneath each gemstone
+  # ================================================================
+
+  - id: pedestal_ruby
+    tags: [pedestal, environment]
+    components:
+      transform:
+        position: [0.0, 0.0, 8.0]
+        scale: [1.2, 0.5, 1.2]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_mirror.yaml
+
+  - id: pedestal_sapphire
+    tags: [pedestal, environment]
+    components:
+      transform:
+        position: [8.0, 0.0, 0.0]
+        scale: [1.2, 0.5, 1.2]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_mirror.yaml
+
+  - id: pedestal_emerald
+    tags: [pedestal, environment]
+    components:
+      transform:
+        position: [0.0, 0.0, -8.0]
+        scale: [1.2, 0.5, 1.2]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_mirror.yaml
+
+  - id: pedestal_ice
+    tags: [pedestal, environment]
+    components:
+      transform:
+        position: [-8.0, 0.0, 0.0]
+        scale: [1.2, 0.5, 1.2]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_mirror.yaml
+
+  # ================================================================
+  # OUTER ORBIT RINGS - Copper and steel spheres at radius 16 & 6
+  # Additional orbital layers for visual density
+  # ================================================================
+
+  - id: copper_orbit_1
+    tags: [copper_ring, orbit]
+    components:
+      transform:
+        position: [16.0, 1.5, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  - id: copper_orbit_2
+    tags: [copper_ring, orbit]
+    components:
+      transform:
+        position: [0.0, 1.5, 16.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  - id: copper_orbit_3
+    tags: [copper_ring, orbit]
+    components:
+      transform:
+        position: [-16.0, 1.5, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  - id: copper_orbit_4
+    tags: [copper_ring, orbit]
+    components:
+      transform:
+        position: [0.0, 1.5, -16.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/copper_ring.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  - id: steel_orbit_1
+    tags: [steel_ring, orbit]
+    components:
+      transform:
+        position: [6.0, 5.5, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  - id: steel_orbit_2
+    tags: [steel_ring, orbit]
+    components:
+      transform:
+        position: [0.0, 5.5, 6.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  - id: steel_orbit_3
+    tags: [steel_ring, orbit]
+    components:
+      transform:
+        position: [-6.0, 5.5, 0.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
+
+  - id: steel_orbit_4
+    tags: [steel_ring, orbit]
+    components:
+      transform:
+        position: [0.0, 5.5, -6.0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/steel_ring.yaml
+      script:
+        source: logic/titan_ring_orbit.lua
