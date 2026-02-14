@@ -1,4 +1,5 @@
 mod audio;
+mod audio_gen;
 mod camera;
 mod cli;
 mod command;

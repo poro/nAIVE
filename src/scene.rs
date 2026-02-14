@@ -212,6 +212,14 @@ pub struct ColliderDef {
     pub half_height: Option<f32>,
     #[serde(default)]
     pub is_trigger: bool,
+    #[serde(default)]
+    pub restitution: f32,
+    #[serde(default = "default_friction")]
+    pub friction: f32,
+}
+
+fn default_friction() -> f32 {
+    0.5
 }
 
 fn default_collider_shape() -> String {

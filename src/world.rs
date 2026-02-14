@@ -250,6 +250,9 @@ fn spawn_entity(
                 .map(|rb| rb.body_type.as_str())
                 .unwrap_or("static");
 
+            let restitution = col_def.restitution;
+            let friction = col_def.friction;
+
             match body_type {
                 "dynamic" => {
                     let mass = entity_def
@@ -259,7 +262,7 @@ fn spawn_entity(
                         .map(|rb| rb.mass)
                         .unwrap_or(1.0);
                     let (rb_handle, col_handle) =
-                        pw.add_dynamic_body(entity, pos, rot, shape.clone(), mass);
+                        pw.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction);
                     let rb_comp = physics::RigidBody {
                         handle: rb_handle,
                         body_type: physics::PhysicsBodyType::Dynamic,
@@ -273,7 +276,7 @@ fn spawn_entity(
                 }
                 _ => {
                     let (rb_handle, col_handle) =
-                        pw.add_static_body(entity, pos, rot, shape.clone(), is_trigger);
+                        pw.add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
                     let rb_comp = physics::RigidBody {
                         handle: rb_handle,
                         body_type: physics::PhysicsBodyType::Static,
@@ -454,6 +457,8 @@ fn spawn_entity_headless(
     } else if let Some(col_def) = &entity_def.components.collider {
         let shape = parse_collider_shape(col_def);
         let is_trigger = col_def.is_trigger;
+        let restitution = col_def.restitution;
+        let friction = col_def.friction;
         let body_type = entity_def
             .components
             .rigid_body
@@ -470,7 +475,7 @@ fn spawn_entity_headless(
                     .map(|rb| rb.mass)
                     .unwrap_or(1.0);
                 let (rb_handle, col_handle) =
-                    physics_world.add_dynamic_body(entity, pos, rot, shape.clone(), mass);
+                    physics_world.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction);
                 let rb_comp = physics::RigidBody {
                     handle: rb_handle,
                     body_type: physics::PhysicsBodyType::Dynamic,
@@ -484,7 +489,7 @@ fn spawn_entity_headless(
             }
             _ => {
                 let (rb_handle, col_handle) =
-                    physics_world.add_static_body(entity, pos, rot, shape.clone(), is_trigger);
+                    physics_world.add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
                 let rb_comp = physics::RigidBody {
                     handle: rb_handle,
                     body_type: physics::PhysicsBodyType::Static,

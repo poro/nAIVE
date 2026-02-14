@@ -1,227 +1,538 @@
 name: "PBR Material Gallery"
 settings:
   ambient_light: [0.02, 0.02, 0.03]
-  gravity: [0, 0, 0]
+  gravity: [0, -9.81, 0]
 
 entities:
-  # === Camera ===
-  - id: camera
+  # === Player (FPS Camera) ===
+  - id: player
     components:
       transform:
-        position: [0, 2, 8]
+        position: [0, 1.0, 8]
       camera:
         fov: 60
         near: 0.1
         far: 100
         role: main
-      script:
-        source: logic/gallery_camera.lua
+      character_controller:
+        move_speed: 5.0
+        sprint_multiplier: 1.8
+        jump_impulse: 7.0
+        step_height: 0.3
+        height: 1.8
+        radius: 0.4
+
+  # === Floor ===
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.8, 0]
+        scale: [12, 0.2, 12]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [6, 0.1, 6]
+        restitution: 0.3
+        friction: 0.6
+
+  # === Walls (invisible colliders) ===
+  - id: wall_north
+    components:
+      transform:
+        position: [0, 0.5, -6]
+      collider:
+        shape: box
+        half_extents: [6, 2, 0.1]
+        restitution: 0.5
+        friction: 0.3
+
+  - id: wall_south
+    components:
+      transform:
+        position: [0, 0.5, 6]
+      collider:
+        shape: box
+        half_extents: [6, 2, 0.1]
+        restitution: 0.5
+        friction: 0.3
+
+  - id: wall_east
+    components:
+      transform:
+        position: [6, 0.5, 0]
+      collider:
+        shape: box
+        half_extents: [0.1, 2, 6]
+        restitution: 0.5
+        friction: 0.3
+
+  - id: wall_west
+    components:
+      transform:
+        position: [-6, 0.5, 0]
+      collider:
+        shape: box
+        half_extents: [0.1, 2, 6]
+        restitution: 0.5
+        friction: 0.3
 
   # === Sphere Grid (5x5): rows = metallic, cols = roughness ===
   # Row 0: metallic 0.0
   - id: sphere_m0_r0
     components:
       transform:
-        position: [-3, 0, -3]
+        position: [-3, 0.5, -3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M0_R0.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m0_r1
     components:
       transform:
-        position: [-1.5, 0, -3]
+        position: [-1.5, 0.5, -3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M0_R1.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m0_r2
     components:
       transform:
-        position: [0, 0, -3]
+        position: [0, 0.5, -3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M0_R2.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m0_r3
     components:
       transform:
-        position: [1.5, 0, -3]
+        position: [1.5, 0.5, -3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M0_R3.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m0_r4
     components:
       transform:
-        position: [3, 0, -3]
+        position: [3, 0.5, -3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M0_R4.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   # Row 1: metallic 0.25
   - id: sphere_m1_r0
     components:
       transform:
-        position: [-3, 0, -1.5]
+        position: [-3, 0.5, -1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M1_R0.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m1_r1
     components:
       transform:
-        position: [-1.5, 0, -1.5]
+        position: [-1.5, 0.5, -1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M1_R1.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m1_r2
     components:
       transform:
-        position: [0, 0, -1.5]
+        position: [0, 0.5, -1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M1_R2.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m1_r3
     components:
       transform:
-        position: [1.5, 0, -1.5]
+        position: [1.5, 0.5, -1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M1_R3.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m1_r4
     components:
       transform:
-        position: [3, 0, -1.5]
+        position: [3, 0.5, -1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M1_R4.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   # Row 2: metallic 0.5
   - id: sphere_m2_r0
     components:
       transform:
-        position: [-3, 0, 0]
+        position: [-3, 0.5, 0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M2_R0.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m2_r1
     components:
       transform:
-        position: [-1.5, 0, 0]
+        position: [-1.5, 0.5, 0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M2_R1.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m2_r2
     components:
       transform:
-        position: [0, 0, 0]
+        position: [0, 0.5, 0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M2_R2.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m2_r3
     components:
       transform:
-        position: [1.5, 0, 0]
+        position: [1.5, 0.5, 0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M2_R3.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m2_r4
     components:
       transform:
-        position: [3, 0, 0]
+        position: [3, 0.5, 0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M2_R4.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   # Row 3: metallic 0.75
   - id: sphere_m3_r0
     components:
       transform:
-        position: [-3, 0, 1.5]
+        position: [-3, 0.5, 1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M3_R0.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m3_r1
     components:
       transform:
-        position: [-1.5, 0, 1.5]
+        position: [-1.5, 0.5, 1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M3_R1.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m3_r2
     components:
       transform:
-        position: [0, 0, 1.5]
+        position: [0, 0.5, 1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M3_R2.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m3_r3
     components:
       transform:
-        position: [1.5, 0, 1.5]
+        position: [1.5, 0.5, 1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M3_R3.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m3_r4
     components:
       transform:
-        position: [3, 0, 1.5]
+        position: [3, 0.5, 1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M3_R4.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   # Row 4: metallic 1.0
   - id: sphere_m4_r0
     components:
       transform:
-        position: [-3, 0, 3]
+        position: [-3, 0.5, 3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M4_R0.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m4_r1
     components:
       transform:
-        position: [-1.5, 0, 3]
+        position: [-1.5, 0.5, 3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M4_R1.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m4_r2
     components:
       transform:
-        position: [0, 0, 3]
+        position: [0, 0.5, 3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M4_R2.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m4_r3
     components:
       transform:
-        position: [1.5, 0, 3]
+        position: [1.5, 0.5, 3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M4_R3.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   - id: sphere_m4_r4
     components:
       transform:
-        position: [3, 0, 3]
+        position: [3, 0.5, 3]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/pbr_M4_R4.yaml
+      rigid_body:
+        body_type: dynamic
+        mass: 1.0
+      collider:
+        shape: sphere
+        radius: 0.5
+        restitution: 0.7
+        friction: 0.3
+      script:
+        source: logic/ball_collision.lua
 
   # === Lights ===
   - id: light_warm
@@ -259,13 +570,3 @@ entities:
         color: [0.8, 1.0, 0.8]
         intensity: 8
         range: 15
-
-  # === Floor ===
-  - id: floor
-    components:
-      transform:
-        position: [0, -0.8, 0]
-        scale: [12, 0.2, 12]
-      mesh_renderer:
-        mesh: assets/meshes/cube.gltf
-        material: assets/materials/stone.yaml

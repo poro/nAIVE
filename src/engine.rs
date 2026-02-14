@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -120,6 +121,9 @@ impl Engine {
             Some(gpu) => gpu,
             None => return,
         };
+
+        // Generate default audio files if they don't exist
+        crate::audio_gen::generate_default_sounds(&self.project_root);
 
         let scene_arg = match &self.args.scene {
             Some(s) => s.clone(),
@@ -256,6 +260,8 @@ impl Engine {
                         } else if let Some(col_def) = &entity_def.components.collider {
                             let shape = crate::world::parse_collider_shape(col_def);
                             let is_trigger = col_def.is_trigger;
+                            let restitution = col_def.restitution;
+                            let friction = col_def.friction;
                             let body_type = entity_def
                                 .components
                                 .rigid_body
@@ -272,7 +278,7 @@ impl Engine {
                                         .map(|rb| rb.mass)
                                         .unwrap_or(1.0);
                                     let (rb_handle, col_handle) = physics_world
-                                        .add_dynamic_body(entity, pos, rot, shape.clone(), mass);
+                                        .add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction);
                                     let rb_comp = crate::physics::RigidBody {
                                         handle: rb_handle,
                                         body_type: crate::physics::PhysicsBodyType::Dynamic,
@@ -286,7 +292,7 @@ impl Engine {
                                 }
                                 _ => {
                                     let (rb_handle, col_handle) = physics_world
-                                        .add_static_body(entity, pos, rot, shape.clone(), is_trigger);
+                                        .add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
                                     let rb_comp = crate::physics::RigidBody {
                                         handle: rb_handle,
                                         body_type: crate::physics::PhysicsBodyType::Static,
@@ -343,6 +349,14 @@ impl Engine {
             let bus_ptr = &mut self.event_bus as *mut crate::events::EventBus;
             if let Err(e) = script_runtime.register_event_api(bus_ptr) {
                 tracing::error!("Failed to register event API: {}", e);
+            }
+        }
+
+        // Register audio API
+        {
+            let audio_ptr = &mut self.audio_system as *mut AudioSystem;
+            if let Err(e) = script_runtime.register_audio_api(audio_ptr, self.project_root.clone()) {
+                tracing::error!("Failed to register audio API: {}", e);
             }
         }
 
@@ -1046,6 +1060,26 @@ impl ApplicationHandler for Engine {
                         // Phase 5: FPS controller update (physics + input)
                         if self.input_state.as_ref().map(|i| i.cursor_captured).unwrap_or(false) {
                             self.update_fps_controller();
+                        }
+
+                        // Dispatch collision events to scripts
+                        if let (Some(scene_world), Some(physics_world), Some(script_runtime)) =
+                            (&self.scene_world, &self.physics_world, &self.script_runtime)
+                        {
+                            // Build reverse lookup: entity -> string id
+                            let entity_to_id: HashMap<hecs::Entity, &str> = scene_world
+                                .entity_registry
+                                .iter()
+                                .map(|(id, &e)| (e, id.as_str()))
+                                .collect();
+
+                            for event in &physics_world.collision_events {
+                                let id_a = entity_to_id.get(&event.entity_a).copied().unwrap_or("unknown");
+                                let id_b = entity_to_id.get(&event.entity_b).copied().unwrap_or("unknown");
+                                // Dispatch both directions
+                                script_runtime.call_on_collision(event.entity_a, id_b);
+                                script_runtime.call_on_collision(event.entity_b, id_a);
+                            }
                         }
 
                         // Phase 6: Update scripts

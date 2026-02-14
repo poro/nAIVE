@@ -146,6 +146,8 @@ impl PhysicsWorld {
         rotation: Quat,
         shape: PhysicsShape,
         is_trigger: bool,
+        restitution: f32,
+        friction: f32,
     ) -> (RigidBodyHandle, ColliderHandle) {
         let rb = RigidBodyBuilder::fixed()
             .translation(vector![position.x, position.y, position.z])
@@ -153,7 +155,9 @@ impl PhysicsWorld {
             .build();
         let rb_handle = self.rigid_body_set.insert(rb);
 
-        let collider_builder = shape_to_collider(&shape);
+        let collider_builder = shape_to_collider(&shape)
+            .restitution(restitution)
+            .friction(friction);
         let collider = if is_trigger {
             collider_builder.sensor(true).build()
         } else {
@@ -177,6 +181,8 @@ impl PhysicsWorld {
         rotation: Quat,
         shape: PhysicsShape,
         mass: f32,
+        restitution: f32,
+        friction: f32,
     ) -> (RigidBodyHandle, ColliderHandle) {
         let rb = RigidBodyBuilder::dynamic()
             .translation(vector![position.x, position.y, position.z])
@@ -186,6 +192,8 @@ impl PhysicsWorld {
 
         let collider = shape_to_collider(&shape)
             .mass(mass)
+            .restitution(restitution)
+            .friction(friction)
             .build();
         let col_handle =
             self.collider_set
@@ -246,6 +254,20 @@ impl PhysicsWorld {
         // Collect collision events from narrow phase
         self.collision_events.clear();
         self.trigger_events.clear();
+
+        for pair in self.narrow_phase.contact_pairs() {
+            if pair.has_any_active_contact {
+                let entity_a = self.collider_to_entity.get(&pair.collider1).copied();
+                let entity_b = self.collider_to_entity.get(&pair.collider2).copied();
+                if let (Some(a), Some(b)) = (entity_a, entity_b) {
+                    self.collision_events.push(CollisionEvent {
+                        entity_a: a,
+                        entity_b: b,
+                        started: true,
+                    });
+                }
+            }
+        }
     }
 
     /// Move a character controller and return the effective movement.
@@ -403,6 +425,8 @@ mod tests {
                 half_extents: Vec3::new(10.0, 0.1, 10.0),
             },
             false,
+            0.0,
+            0.5,
         );
 
         assert_eq!(pw.rigid_body_set.len(), 1);
@@ -426,6 +450,8 @@ mod tests {
                 half_extents: Vec3::new(10.0, 0.5, 10.0),
             },
             false,
+            0.0,
+            0.5,
         );
 
         // Update query pipeline

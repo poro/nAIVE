@@ -3,6 +3,8 @@ function init()
     self.radius = 6
     self.height = 2
     self.speed = 0.12
+    -- Start ambient music with 3-second fade-in
+    audio.play_music("assets/audio/cosmic_ambient.wav", 0.4, 3.0)
 end
 
 function update(dt)
