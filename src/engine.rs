@@ -840,9 +840,6 @@ impl Engine {
             }
         }
 
-        // Step physics for non-character bodies
-        physics_world.step(dt);
-        physics_world.sync_to_ecs(&mut scene_world.world);
     }
 
     /// Update the camera uniform from the main camera entity.
@@ -1057,9 +1054,17 @@ impl ApplicationHandler for Engine {
 
                 if self.scene_world.is_some() {
                     if !self.paused {
-                        // Phase 5: FPS controller update (physics + input)
+                        // Phase 5: FPS controller update (player input only when cursor captured)
                         if self.input_state.as_ref().map(|i| i.cursor_captured).unwrap_or(false) {
                             self.update_fps_controller();
+                        }
+
+                        // Always step physics (gravity, collisions, etc.)
+                        if let (Some(scene_world), Some(physics_world)) =
+                            (&mut self.scene_world, &mut self.physics_world)
+                        {
+                            physics_world.step(self.delta_time);
+                            physics_world.sync_to_ecs(&mut scene_world.world);
                         }
 
                         // Dispatch collision events to scripts
