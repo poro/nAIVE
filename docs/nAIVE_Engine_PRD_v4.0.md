@@ -58,6 +58,149 @@ A message sent from Telegram. Within one second, every player connected to that 
 
 **For AI:** You're not a tool — you're a collaborator, an inhabitant, a director. You live inside the world. You remember. You adapt. You create alongside humans in real-time.
 
+### 2.3 Design Philosophy
+
+Six founding principles, established in the v1.0 PRD, remain the philosophical bedrock of v4.0:
+
+**The AI agent IS the editor.** Unlike Unity and Unreal, which invest 80% of their engineering in graphical editors, nAIVE has no visual editor. The AI agent — Claude Code, or any MCP-capable LLM — is the editor. This is not a limitation; it's a bet. With modern coding agents, AI asset generators, and AI vision models, the entire game development workflow can happen through text files, CLI commands, and pipes. The graphical editor is dead weight. This thesis was validated at a Supercell AI Hackathon where a complete game was built using Claude Code as the sole development interface.
+
+**Everything is a file.** Scenes, entities, materials, render pipelines, input bindings, event schemas — all human-readable YAML files that an AI agent can read, understand, diff, and modify. No proprietary binary formats. No opaque editor state. Every aspect of a world is inspectable, version-controllable, and AI-editable.
+
+**Unix pipes connect everything.** AI services are accessed via standardized CLI pipes — tools that read from stdin and write to stdout or files:
+- **Meshy** for AI-generated 3D geometry (text → mesh/splat)
+- **ElevenLabs** for AI-generated voice and audio (text → speech)
+- **Flux / Stable Diffusion** for AI-generated textures (text → image)
+- **Claude API** for scene generation, NPC dialogue, world commands (text → YAML/Lua)
+
+These external services are first-class rendering primitives. A world creator doesn't need to be an artist — they describe what they want, and the AI pipeline generates it. The engine's YAML-based format means generated assets slot into scenes without any manual integration.
+
+**SLANG shaders from day one.** NVIDIA's SLANG shading language compiles to Metal (macOS), SPIR-V (Vulkan), WGSL (WebGPU), and CUDA. It supports automatic differentiation for neural rendering, modules for composable shader code, and a reflection API that auto-generates GPU resource bindings. SLANG is the bridge between today's handcoded shaders and tomorrow's learned neural shaders — the same language, the same pipeline YAML, the same toolchain.
+
+**Gaussian Splatting as first-class primitive.** 3D Gaussian Splats are not a plugin. They are a native renderable type alongside traditional meshes, with hybrid depth compositing built into the deferred render pipeline. Splats receive the same PBR lighting, cast the same shadows, and coexist in the same ECS world as mesh entities. This decision is forward-looking: as AI-generated 3D content increasingly uses splat representations (via Gen-3DGS, NeRF-to-splat conversion, photogrammetry), the engine is ready to render it natively.
+
+**AI observability built in.** The engine can stream frames for AI vision analysis, expose game state via a command socket, log all events for AI consumption, and accept simulated input for automated playtesting. Every system emits structured data that an AI agent can observe, reason about, and act upon. This isn't an afterthought — it's a core architectural requirement. The MCP server, event bus, and headless mode all exist to make the engine legible to AI.
+
+### 2.4 The Future of Rendering
+
+nAIVE is built on a conviction about where real-time rendering is going. This section describes that trajectory and how every technical decision in the engine aligns with it.
+
+#### The Rendering Revolution
+
+Real-time 3D rendering has followed a clear arc:
+
+```
+1990s  Fixed-function pipeline     Hardwired vertex/pixel ops, no shaders
+2000s  Programmable shaders        HLSL/GLSL — artists write lighting math by hand
+2010s  Physically-based rendering  Cook-Torrance, metallic/roughness, HDR, IBL
+2020s  Neural rendering begins     NeRF, 3D Gaussian splatting, differentiable rendering
+2025+  AI-native rendering         Learned shaders, generated assets, prompted visual style
+```
+
+Most engines are stuck at PBR (2010s). They added ray tracing as an incremental upgrade to the same paradigm — rays instead of rasters, but still handcoded shaders, still artist-modeled geometry, still static visual styles.
+
+**nAIVE skips ahead.** It implements PBR as a foundation (Cook-Torrance GGX, shadow mapping, bloom, FXAA — all working today), but the architecture is designed for the next three leaps:
+
+#### Leap 1: Gaussian Splats Replace Polygons for AI-Generated Content
+
+Traditional 3D content requires: concept art → modeling (Maya/Blender) → UV unwrapping → texturing → rigging → export. This takes days to months per asset.
+
+Gaussian splat content requires: text prompt → Gen-3DGS → .ply file → scene entity. This takes seconds to minutes.
+
+The geometric representation of 3D content is shifting from polygonal meshes (optimized for human artists using modeling tools) to Gaussian splats (optimized for AI generation from images and text). nAIVE renders both natively because the transition won't be instant — mesh and splat content will coexist for years. But the direction is clear: **AI-generated 3D content will be the norm, not the exception, within five years.**
+
+nAIVE's Gaussian splatting renderer is already integrated into the deferred pipeline. Generated splats receive the same PBR lighting as handcrafted meshes. When Gen-3DGS is implemented, the path from imagination to rendered 3D object is:
+
+```
+"a crystal dragon perched on obsidian rocks"
+  → CLIP text encoding
+  → Multi-view diffusion (Zero123++ / MVDream)
+  → 3DGS reconstruction
+  → Differentiable splat optimization
+  → LOD generation
+  → .ply asset → scene entity → rendered with PBR shadows and bloom
+```
+
+No artist. No modeling tool. No UV unwrapping. No texture painting.
+
+#### Leap 2: Neural Shaders Replace Handcoded Shaders
+
+Today's render pipeline has handcoded SLANG passes: geometry, lighting, bloom, tone mapping, FXAA. Each stage implements a specific mathematical function written by a programmer.
+
+Tomorrow's render pipeline has **learned** passes: a neural network trained to produce the visual output, using gradient descent instead of hand-tuned math. SLANG's built-in auto-differentiation makes this transition smooth — a traditional shader stage and a neural shader stage live in the same YAML pipeline definition, consume the same texture inputs, produce the same texture outputs.
+
+Use cases already proven in research:
+- **Style transfer:** Learn "Studio Ghibli watercolor" or "pixel art" or "dark souls gothic" as a post-processing pass. Change the entire visual style of a world by swapping one weight file — no asset changes, no shader rewrites.
+- **Super-resolution:** Render at half resolution, upscale with a learned neural pass. 2x performance for free.
+- **Ambient occlusion:** Replace screen-space AO (SSAO) with a neural estimator trained on path-traced ground truth. Better quality, similar cost.
+- **Denoising:** Real-time denoising of noisy ray-traced frames using learned temporal filtering.
+
+The revolutionary implication: **visual style becomes data, not code.** A world's aesthetic is a weight file, downloadable, swappable, sharable. "I like how that game looks" → download its style weights → apply to your world. Visual styles become a marketplace, not a months-long art direction effort.
+
+```yaml
+# Swap visual style by changing one line
+passes:
+  - name: style_transfer
+    type: neural
+    weights: assets/neural/ghibli.weights      # ← change this line
+    # weights: assets/neural/pixel_art.weights  # or this
+    # weights: assets/neural/noir.weights       # or this
+    inputs: [bloomed_color, depth]
+    output: styled_color
+```
+
+#### Leap 3: Prompt-to-Render — The Endgame
+
+The logical conclusion of AI-native rendering:
+
+```
+"A moonlit forest with fireflies, Studio Ghibli style, gentle fog"
+```
+
+This single sentence contains everything needed to render a scene:
+- **Geometry:** "forest" → Gen-3DGS produces tree splats, ground plane mesh
+- **Lighting:** "moonlit" → directional light (blue-white, low angle), point lights for fireflies
+- **Particles:** "fireflies" → spawned emissive particle entities with random float behavior
+- **Atmosphere:** "gentle fog" → volumetric fog pass in the render pipeline
+- **Style:** "Studio Ghibli" → neural style transfer weights loaded as a render pass
+- **Audio:** "forest" context → ambient cricket/owl audio generated via AI
+
+The engine doesn't need an artist. It doesn't need a programmer. It needs a **vision** — expressed in natural language — and AI systems that can compile that vision into the engine's existing YAML + Lua + SLANG format.
+
+This is not science fiction. Every component exists today in some form:
+- Gen-3DGS (text → splats) is demonstrated in research papers (DreamGaussian, GaussianDreamer)
+- Neural style transfer runs in real-time on consumer GPUs (Neural Style Transfer, AdaIN)
+- Text-to-scene generation works (Claude generating nAIVE YAML scenes today)
+- Text-to-audio is production-ready (ElevenLabs, Bark, MusicGen)
+- Text-to-texture is production-ready (Flux, Stable Diffusion)
+
+nAIVE's contribution is the **integration architecture** — the YAML pipeline DAG, the SLANG differentiable shader toolchain, the first-class splat renderer, the MCP server for AI control, the event bus for AI observability — that makes all of these components composable into a single runtime.
+
+#### The AI Observability Loop
+
+Rendering is not just output — it's also input for AI:
+
+```
+Engine renders frame
+  → Frame streamed via command socket to AI vision model
+  → AI analyzes: "the lighting is too flat, the fog is obscuring the path"
+  → AI modifies render pipeline YAML: increase directional light intensity, reduce fog density
+  → Engine hot-reloads pipeline
+  → Next frame looks better
+  → AI observes improvement, records the adjustment
+
+This is a closed-loop rendering system where AI both generates and evaluates visuals.
+```
+
+The MCP server already supports `naive/render/pipeline` for querying and modifying the render pipeline. Combined with frame streaming (via the command socket) and the event bus, the engine is fully observable by AI. An Art Director agent can watch the game run, evaluate visual quality, and make real-time adjustments — the same feedback loop a human art director uses, but automated and continuous.
+
+#### Why This Matters
+
+Every other engine treats rendering as a solved problem — implement PBR, add ray tracing, ship. The renderer is static infrastructure, not a creative surface.
+
+nAIVE treats rendering as the **primary creative interface between AI and the visual world.** The render pipeline is data (YAML), shaders are differentiable (SLANG), geometry is AI-generated (Gaussian splats), visual style is learned (neural passes), and the entire system is observable and controllable by AI agents (MCP + event bus + frame streaming).
+
+This is not an incremental improvement to game engine rendering. It is a fundamentally different relationship between intelligence and visual output. The question nAIVE answers is not "how do we render faster?" but **"what happens when AI can see, understand, and modify the rendering pipeline itself?"**
+
 ---
 
 ## 3. Core Technical Differentiators
@@ -1455,6 +1598,10 @@ For reference, competitive FPS games need <20ms round-trip at 128Hz tick. Snake 
 | Implementation status tracking | Not included | Complete feature matrix with DONE/PROTOTYPE/PLANNED status (Section 13.0) |
 | New ECS components | Listed in v2.0 | Integrated with dependencies and purpose (Section 13.0.1) |
 | Relic v2.0 demo game | Described in v2.0 | Integrated as second world after Snake Sweeper (Section 9.4) |
+| v1.0 design philosophy | Stated as principles in v1.0 Executive Summary | Formalized as Section 2.3: "AI agent IS the editor", "Everything is a file", "Unix pipes connect everything", "AI observability built in", "SLANG from day one", "Gaussian splats as first-class primitive" |
+| Rendering revolution vision | v1.0 implied via tech choices; v2.0 described neural shaders and Gen-3DGS | Full rendering manifesto in Section 2.4: trajectory from rasterization → PBR → splats → neural rendering → prompt-to-render, AI asset generation via pipes (Meshy, ElevenLabs, Flux), closed-loop AI observability, visual style as swappable data |
+| AI asset generation services | v1.0 mentioned "Meshy for 3D, ElevenLabs for audio, Flux for textures" | Integrated into design philosophy (Section 2.3) and rendering vision (Section 2.4) as external AI services via Unix pipes |
+| Prompt-to-render endgame | Implied but never stated | Section 2.4 defines the full pipeline: natural language → geometry (Gen-3DGS) + lighting + particles + atmosphere + style (neural pass) + audio — all from a single sentence |
 
 ### 18.2 Version History
 
@@ -1463,7 +1610,7 @@ For reference, competitive FPS games need <20ms round-trip at 128Hz tick. Snake 
 | v1.0 | Jan 2026 | Core engine specification: 20-week plan, Rust + wgpu + SLANG + hecs + Lua + YAML | Complete (16 phases shipped) |
 | v2.0 | Feb 2026 | AI runtime layer: LLM NPCs, NL compiler, AI Director, Gen-3DGS, neural shaders, web platform | Specification complete, subsumed into v4.0 |
 | v3.0 | Feb 2026 | Network layer: server authority, four-word addresses, thin client, Telegram bridge | Specification complete, subsumed into v4.0 |
-| **v4.0** | **Feb 2026** | **Unified platform PRD: all layers integrated, cross-platform targets (Desktop/Mobile/Browser), architectural decisions resolved, SLANG/3DGS/neural rendering formalized, implementation status tracked, Snake Sweeper + Relic as proof-of-concept worlds** | **Current document** |
+| **v4.0** | **Feb 2026** | **Unified platform PRD: all layers integrated, rendering revolution vision (prompt-to-render, neural shaders, AI-generated geometry), v1.0 design philosophy formalized, cross-platform targets (Desktop/Mobile/Browser), architectural decisions resolved, SLANG/3DGS/neural rendering as core differentiators, implementation status tracked, Snake Sweeper + Relic as proof-of-concept worlds** | **Current document** |
 
 ---
 
