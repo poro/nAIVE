@@ -11,7 +11,7 @@ entities:
     tags: [camera]
     components:
       transform:
-        position: [0, 4, 24]
+        position: [0, 4, 14]
       camera:
         fov: 65
         near: 0.1
@@ -39,20 +39,20 @@ entities:
     tags: [splat, nebula]
     components:
       transform:
-        position: [0, 8, 0]
+        position: [0, 5, 0]
         scale: [2, 2, 2]
       gaussian_splat:
         source: procedural
 
   # ================================================================
-  # ENVIRONMENT - Massive reflective floor
+  # ENVIRONMENT - Dark reflective floor
   # ================================================================
   - id: floor
     tags: [environment]
     components:
       transform:
         position: [0, -0.5, 0]
-        scale: [60, 1, 60]
+        scale: [30, 1, 30]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_floor.yaml
@@ -73,188 +73,188 @@ entities:
         source: logic/titan_levitate.lua
 
   # ================================================================
-  # PILLARS - 16 tall pillars in a circle at radius 18
+  # PILLARS - 16 tall pillars in a circle at radius 8
   # Arranged every 22.5 degrees for a grand colosseum effect
   # ================================================================
 
-  # Pillar 1: 0 deg -> (18, 0)
+  # Pillar 1: 0 deg -> (8, 0)
   - id: pillar_1
     tags: [pillar, environment]
     components:
       transform:
-        position: [18.0, 6, 0.0]
-        scale: [0.8, 12, 0.8]
+        position: [8.0, 3.5, 0.0]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 2: 22.5 deg -> (16.63, 6.88)
+  # Pillar 2: 22.5 deg -> (7.39, 3.06)
   - id: pillar_2
     tags: [pillar, environment]
     components:
       transform:
-        position: [16.63, 6, 6.88]
-        scale: [0.8, 12, 0.8]
+        position: [7.39, 3.5, 3.06]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 3: 45 deg -> (12.73, 12.73)
+  # Pillar 3: 45 deg -> (5.66, 5.66)
   - id: pillar_3
     tags: [pillar, environment]
     components:
       transform:
-        position: [12.73, 6, 12.73]
-        scale: [0.8, 12, 0.8]
+        position: [5.66, 3.5, 5.66]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 4: 67.5 deg -> (6.88, 16.63)
+  # Pillar 4: 67.5 deg -> (3.06, 7.39)
   - id: pillar_4
     tags: [pillar, environment]
     components:
       transform:
-        position: [6.88, 6, 16.63]
-        scale: [0.8, 12, 0.8]
+        position: [3.06, 3.5, 7.39]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 5: 90 deg -> (0, 18)
+  # Pillar 5: 90 deg -> (0, 8)
   - id: pillar_5
     tags: [pillar, environment]
     components:
       transform:
-        position: [0.0, 6, 18.0]
-        scale: [0.8, 12, 0.8]
+        position: [0.0, 3.5, 8.0]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 6: 112.5 deg -> (-6.88, 16.63)
+  # Pillar 6: 112.5 deg -> (-3.06, 7.39)
   - id: pillar_6
     tags: [pillar, environment]
     components:
       transform:
-        position: [-6.88, 6, 16.63]
-        scale: [0.8, 12, 0.8]
+        position: [-3.06, 3.5, 7.39]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 7: 135 deg -> (-12.73, 12.73)
+  # Pillar 7: 135 deg -> (-5.66, 5.66)
   - id: pillar_7
     tags: [pillar, environment]
     components:
       transform:
-        position: [-12.73, 6, 12.73]
-        scale: [0.8, 12, 0.8]
+        position: [-5.66, 3.5, 5.66]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 8: 157.5 deg -> (-16.63, 6.88)
+  # Pillar 8: 157.5 deg -> (-7.39, 3.06)
   - id: pillar_8
     tags: [pillar, environment]
     components:
       transform:
-        position: [-16.63, 6, 6.88]
-        scale: [0.8, 12, 0.8]
+        position: [-7.39, 3.5, 3.06]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 9: 180 deg -> (-18, 0)
+  # Pillar 9: 180 deg -> (-8, 0)
   - id: pillar_9
     tags: [pillar, environment]
     components:
       transform:
-        position: [-18.0, 6, 0.0]
-        scale: [0.8, 12, 0.8]
+        position: [-8.0, 3.5, 0.0]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 10: 202.5 deg -> (-16.63, -6.88)
+  # Pillar 10: 202.5 deg -> (-7.39, -3.06)
   - id: pillar_10
     tags: [pillar, environment]
     components:
       transform:
-        position: [-16.63, 6, -6.88]
-        scale: [0.8, 12, 0.8]
+        position: [-7.39, 3.5, -3.06]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 11: 225 deg -> (-12.73, -12.73)
+  # Pillar 11: 225 deg -> (-5.66, -5.66)
   - id: pillar_11
     tags: [pillar, environment]
     components:
       transform:
-        position: [-12.73, 6, -12.73]
-        scale: [0.8, 12, 0.8]
+        position: [-5.66, 3.5, -5.66]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 12: 247.5 deg -> (-6.88, -16.63)
+  # Pillar 12: 247.5 deg -> (-3.06, -7.39)
   - id: pillar_12
     tags: [pillar, environment]
     components:
       transform:
-        position: [-6.88, 6, -16.63]
-        scale: [0.8, 12, 0.8]
+        position: [-3.06, 3.5, -7.39]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 13: 270 deg -> (0, -18)
+  # Pillar 13: 270 deg -> (0, -8)
   - id: pillar_13
     tags: [pillar, environment]
     components:
       transform:
-        position: [0.0, 6, -18.0]
-        scale: [0.8, 12, 0.8]
+        position: [0.0, 3.5, -8.0]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 14: 292.5 deg -> (6.88, -16.63)
+  # Pillar 14: 292.5 deg -> (3.06, -7.39)
   - id: pillar_14
     tags: [pillar, environment]
     components:
       transform:
-        position: [6.88, 6, -16.63]
-        scale: [0.8, 12, 0.8]
+        position: [3.06, 3.5, -7.39]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 15: 315 deg -> (12.73, -12.73)
+  # Pillar 15: 315 deg -> (5.66, -5.66)
   - id: pillar_15
     tags: [pillar, environment]
     components:
       transform:
-        position: [12.73, 6, -12.73]
-        scale: [0.8, 12, 0.8]
+        position: [5.66, 3.5, -5.66]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
-  # Pillar 16: 337.5 deg -> (16.63, -6.88)
+  # Pillar 16: 337.5 deg -> (7.39, -3.06)
   - id: pillar_16
     tags: [pillar, environment]
     components:
       transform:
-        position: [16.63, 6, -6.88]
-        scale: [0.8, 12, 0.8]
+        position: [7.39, 3.5, -3.06]
+        scale: [0.5, 6, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/titan_pillar.yaml
 
   # ================================================================
-  # GOLD RING - 12 gold spheres orbiting at radius 14
+  # GOLD RING - 12 gold spheres orbiting at radius 6.5
   # Arranged every 30 degrees, y=2.5
   # ================================================================
 
@@ -263,7 +263,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [14.0, 2.5, 0.0]
+        position: [6.5, 2.5, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -275,7 +275,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [12.12, 2.5, 7.0]
+        position: [5.63, 2.5, 3.25]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -287,7 +287,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [7.0, 2.5, 12.12]
+        position: [3.25, 2.5, 5.63]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -299,7 +299,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [0.0, 2.5, 14.0]
+        position: [0.0, 2.5, 6.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -311,7 +311,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [-7.0, 2.5, 12.12]
+        position: [-3.25, 2.5, 5.63]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -323,7 +323,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [-12.12, 2.5, 7.0]
+        position: [-5.63, 2.5, 3.25]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -335,7 +335,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [-14.0, 2.5, 0.0]
+        position: [-6.5, 2.5, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -347,7 +347,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [-12.12, 2.5, -7.0]
+        position: [-5.63, 2.5, -3.25]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -359,7 +359,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [-7.0, 2.5, -12.12]
+        position: [-3.25, 2.5, -5.63]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -371,7 +371,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [0.0, 2.5, -14.0]
+        position: [0.0, 2.5, -6.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -383,7 +383,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [7.0, 2.5, -12.12]
+        position: [3.25, 2.5, -5.63]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -395,7 +395,7 @@ entities:
     tags: [gold_ring, orbit]
     components:
       transform:
-        position: [12.12, 2.5, -7.0]
+        position: [5.63, 2.5, -3.25]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_gold.yaml
@@ -403,8 +403,8 @@ entities:
         source: logic/titan_ring_orbit.lua
 
   # ================================================================
-  # PLATINUM RING - 8 platinum spheres orbiting at radius 10
-  # Arranged every 45 degrees, y=4.0
+  # PLATINUM RING - 8 platinum spheres orbiting at radius 4.5
+  # Arranged every 45 degrees, y=3.0
   # ================================================================
 
   # Platinum 1: 0 deg
@@ -412,7 +412,7 @@ entities:
     tags: [platinum_ring, orbit]
     components:
       transform:
-        position: [10.0, 4.0, 0.0]
+        position: [4.5, 3.0, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_platinum.yaml
@@ -424,7 +424,7 @@ entities:
     tags: [platinum_ring, orbit]
     components:
       transform:
-        position: [7.07, 4.0, 7.07]
+        position: [3.18, 3.0, 3.18]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_platinum.yaml
@@ -436,7 +436,7 @@ entities:
     tags: [platinum_ring, orbit]
     components:
       transform:
-        position: [0.0, 4.0, 10.0]
+        position: [0.0, 3.0, 4.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_platinum.yaml
@@ -448,7 +448,7 @@ entities:
     tags: [platinum_ring, orbit]
     components:
       transform:
-        position: [-7.07, 4.0, 7.07]
+        position: [-3.18, 3.0, 3.18]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_platinum.yaml
@@ -460,7 +460,7 @@ entities:
     tags: [platinum_ring, orbit]
     components:
       transform:
-        position: [-10.0, 4.0, 0.0]
+        position: [-4.5, 3.0, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_platinum.yaml
@@ -472,7 +472,7 @@ entities:
     tags: [platinum_ring, orbit]
     components:
       transform:
-        position: [-7.07, 4.0, -7.07]
+        position: [-3.18, 3.0, -3.18]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_platinum.yaml
@@ -484,7 +484,7 @@ entities:
     tags: [platinum_ring, orbit]
     components:
       transform:
-        position: [0.0, 4.0, -10.0]
+        position: [0.0, 3.0, -4.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_platinum.yaml
@@ -496,7 +496,7 @@ entities:
     tags: [platinum_ring, orbit]
     components:
       transform:
-        position: [7.07, 4.0, -7.07]
+        position: [3.18, 3.0, -3.18]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/titan_platinum.yaml
@@ -505,7 +505,7 @@ entities:
 
   # ================================================================
   # GEMSTONE PEDESTALS - 4 precious gems at cardinal directions
-  # Radius 8, each with a unique gemstone material and levitation
+  # Radius 3.5, each with a unique gemstone material and levitation
   # ================================================================
 
   # Ruby pedestal: North (+Z)
@@ -513,7 +513,7 @@ entities:
     tags: [gemstone, pedestal]
     components:
       transform:
-        position: [0.0, 2.0, 8.0]
+        position: [0.0, 2.0, 3.5]
         scale: [0.7, 0.7, 0.7]
       mesh_renderer:
         mesh: procedural:sphere
@@ -526,7 +526,7 @@ entities:
     tags: [gemstone, pedestal]
     components:
       transform:
-        position: [8.0, 2.0, 0.0]
+        position: [3.5, 2.0, 0.0]
         scale: [0.7, 0.7, 0.7]
       mesh_renderer:
         mesh: procedural:sphere
@@ -539,7 +539,7 @@ entities:
     tags: [gemstone, pedestal]
     components:
       transform:
-        position: [0.0, 2.0, -8.0]
+        position: [0.0, 2.0, -3.5]
         scale: [0.7, 0.7, 0.7]
       mesh_renderer:
         mesh: procedural:sphere
@@ -552,7 +552,7 @@ entities:
     tags: [gemstone, pedestal]
     components:
       transform:
-        position: [-8.0, 2.0, 0.0]
+        position: [-3.5, 2.0, 0.0]
         scale: [0.7, 0.7, 0.7]
       mesh_renderer:
         mesh: procedural:sphere
@@ -562,14 +562,14 @@ entities:
 
   # ================================================================
   # EMBER CUBES - 8 cubes in a rising clockwise spiral
-  # Ascending from y=1.5 to y=8, radius shrinking 6->3
+  # Ascending from y=1.5 to y=4.8, radius shrinking 2.7->0.95
   # ================================================================
 
   - id: ember_cube_1
     tags: [ember, spiral]
     components:
       transform:
-        position: [6.0, 1.5, 0.0]
+        position: [2.7, 1.5, 0.0]
         scale: [0.4, 0.4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -581,7 +581,7 @@ entities:
     tags: [ember, spiral]
     components:
       transform:
-        position: [3.89, 2.4, 3.89]
+        position: [1.75, 2.2, 1.75]
         scale: [0.45, 0.45, 0.45]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -593,7 +593,7 @@ entities:
     tags: [ember, spiral]
     components:
       transform:
-        position: [0.0, 3.3, 5.14]
+        position: [0.0, 2.7, 2.31]
         scale: [0.5, 0.5, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -605,7 +605,7 @@ entities:
     tags: [ember, spiral]
     components:
       transform:
-        position: [-3.18, 4.2, 3.18]
+        position: [-1.43, 3.0, 1.43]
         scale: [0.55, 0.55, 0.55]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -617,7 +617,7 @@ entities:
     tags: [ember, spiral]
     components:
       transform:
-        position: [-4.29, 5.1, 0.0]
+        position: [-1.93, 3.5, 0.0]
         scale: [0.55, 0.55, 0.55]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -629,7 +629,7 @@ entities:
     tags: [ember, spiral]
     components:
       transform:
-        position: [-2.47, 6.0, -2.47]
+        position: [-1.11, 3.8, -1.11]
         scale: [0.6, 0.6, 0.6]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -641,7 +641,7 @@ entities:
     tags: [ember, spiral]
     components:
       transform:
-        position: [0.0, 6.9, -3.43]
+        position: [0.0, 4.2, -1.54]
         scale: [0.65, 0.65, 0.65]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -653,7 +653,7 @@ entities:
     tags: [ember, spiral]
     components:
       transform:
-        position: [2.12, 7.8, -2.12]
+        position: [0.95, 4.8, -0.95]
         scale: [0.7, 0.7, 0.7]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -663,14 +663,14 @@ entities:
 
   # ================================================================
   # VOID CUBES - 8 cubes in a descending counter-clockwise spiral
-  # Descending from y=8 to y=1.5, radius shrinking 6->3
+  # Descending from y=5.0 to y=1.7, radius shrinking 2.7->0.95
   # ================================================================
 
   - id: void_cube_1
     tags: [void, spiral]
     components:
       transform:
-        position: [-6.0, 8.0, 0.0]
+        position: [-2.7, 5.0, 0.0]
         scale: [0.3, 0.3, 0.3]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -682,7 +682,7 @@ entities:
     tags: [void, spiral]
     components:
       transform:
-        position: [-3.89, 7.1, -3.89]
+        position: [-1.75, 4.5, -1.75]
         scale: [0.35, 0.35, 0.35]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -694,7 +694,7 @@ entities:
     tags: [void, spiral]
     components:
       transform:
-        position: [0.0, 6.2, -5.14]
+        position: [0.0, 3.9, -2.31]
         scale: [0.35, 0.35, 0.35]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -706,7 +706,7 @@ entities:
     tags: [void, spiral]
     components:
       transform:
-        position: [3.18, 5.3, -3.18]
+        position: [1.43, 3.6, -1.43]
         scale: [0.4, 0.4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -718,7 +718,7 @@ entities:
     tags: [void, spiral]
     components:
       transform:
-        position: [4.29, 4.4, 0.0]
+        position: [1.93, 3.2, 0.0]
         scale: [0.45, 0.45, 0.45]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -730,7 +730,7 @@ entities:
     tags: [void, spiral]
     components:
       transform:
-        position: [2.47, 3.5, 2.47]
+        position: [1.11, 2.8, 1.11]
         scale: [0.5, 0.5, 0.5]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -742,7 +742,7 @@ entities:
     tags: [void, spiral]
     components:
       transform:
-        position: [0.0, 2.6, 3.43]
+        position: [0.0, 2.4, 1.54]
         scale: [0.55, 0.55, 0.55]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -754,7 +754,7 @@ entities:
     tags: [void, spiral]
     components:
       transform:
-        position: [-2.12, 1.7, 2.12]
+        position: [-0.95, 1.7, 0.95]
         scale: [0.6, 0.6, 0.6]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
@@ -770,7 +770,7 @@ entities:
     tags: [chrome, inner_orbit]
     components:
       transform:
-        position: [2.5, 3.0, 0.0]
+        position: [1.2, 3.0, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/chrome.yaml
@@ -781,7 +781,7 @@ entities:
     tags: [chrome, inner_orbit]
     components:
       transform:
-        position: [0.0, 3.0, 2.5]
+        position: [0.0, 3.0, 1.2]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/chrome.yaml
@@ -792,7 +792,7 @@ entities:
     tags: [chrome, inner_orbit]
     components:
       transform:
-        position: [-2.5, 3.0, 0.0]
+        position: [-1.2, 3.0, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/chrome.yaml
@@ -803,7 +803,7 @@ entities:
     tags: [chrome, inner_orbit]
     components:
       transform:
-        position: [0.0, 3.0, -2.5]
+        position: [0.0, 3.0, -1.2]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/chrome.yaml
@@ -821,7 +821,7 @@ entities:
     tags: [light, dramatic]
     components:
       transform:
-        position: [0, 14, 8]
+        position: [0, 7.5, 3.6]
       point_light:
         color: [1.0, 0.9, 0.7]
         intensity: 5
@@ -834,7 +834,7 @@ entities:
     tags: [light, dramatic]
     components:
       transform:
-        position: [0, 10, -8]
+        position: [0, 6, -3.6]
       point_light:
         color: [0.35, 0.45, 0.7]
         intensity: 3
@@ -849,7 +849,7 @@ entities:
     tags: [light, pillar]
     components:
       transform:
-        position: [18.0, 10, 0.0]
+        position: [8.0, 6, 0.0]
       point_light:
         color: [1.0, 0.6, 0.2]
         intensity: 7
@@ -862,7 +862,7 @@ entities:
     tags: [light, pillar]
     components:
       transform:
-        position: [12.73, 10, 12.73]
+        position: [5.66, 6, 5.66]
       point_light:
         color: [0.25, 0.5, 1.0]
         intensity: 7
@@ -875,7 +875,7 @@ entities:
     tags: [light, pillar]
     components:
       transform:
-        position: [0.0, 10, 18.0]
+        position: [0.0, 6, 8.0]
       point_light:
         color: [1.0, 0.6, 0.2]
         intensity: 7
@@ -888,7 +888,7 @@ entities:
     tags: [light, pillar]
     components:
       transform:
-        position: [-12.73, 10, 12.73]
+        position: [-5.66, 6, 5.66]
       point_light:
         color: [0.25, 0.5, 1.0]
         intensity: 7
@@ -901,7 +901,7 @@ entities:
     tags: [light, pillar]
     components:
       transform:
-        position: [-18.0, 10, 0.0]
+        position: [-8.0, 6, 0.0]
       point_light:
         color: [1.0, 0.6, 0.2]
         intensity: 7
@@ -914,7 +914,7 @@ entities:
     tags: [light, pillar]
     components:
       transform:
-        position: [-12.73, 10, -12.73]
+        position: [-5.66, 6, -5.66]
       point_light:
         color: [0.25, 0.5, 1.0]
         intensity: 7
@@ -927,7 +927,7 @@ entities:
     tags: [light, pillar]
     components:
       transform:
-        position: [0.0, 10, -18.0]
+        position: [0.0, 6, -8.0]
       point_light:
         color: [1.0, 0.6, 0.2]
         intensity: 7
@@ -940,7 +940,7 @@ entities:
     tags: [light, pillar]
     components:
       transform:
-        position: [12.73, 10, -12.73]
+        position: [5.66, 6, -5.66]
       point_light:
         color: [0.25, 0.5, 1.0]
         intensity: 7
@@ -1004,7 +1004,7 @@ entities:
     tags: [light, accent]
     components:
       transform:
-        position: [10, 12, 10]
+        position: [4.5, 7, 4.5]
       point_light:
         color: [0.7, 0.1, 1.0]
         intensity: 9
@@ -1016,7 +1016,7 @@ entities:
     tags: [light, accent]
     components:
       transform:
-        position: [-10, 12, 10]
+        position: [-4.5, 7, 4.5]
       point_light:
         color: [0.1, 0.95, 0.85]
         intensity: 9
@@ -1028,7 +1028,7 @@ entities:
     tags: [light, accent]
     components:
       transform:
-        position: [10, 12, -10]
+        position: [4.5, 7, -4.5]
       point_light:
         color: [1.0, 0.75, 0.1]
         intensity: 9
@@ -1040,7 +1040,7 @@ entities:
     tags: [light, accent]
     components:
       transform:
-        position: [-10, 12, -10]
+        position: [-4.5, 7, -4.5]
       point_light:
         color: [1.0, 0.15, 0.15]
         intensity: 9
@@ -1054,7 +1054,7 @@ entities:
     tags: [light, rim]
     components:
       transform:
-        position: [22, 1, 0]
+        position: [10, 1, 0]
       point_light:
         color: [0.4, 0.2, 0.85]
         intensity: 5
@@ -1066,7 +1066,7 @@ entities:
     tags: [light, rim]
     components:
       transform:
-        position: [-22, 1, 0]
+        position: [-10, 1, 0]
       point_light:
         color: [0.85, 0.4, 0.1]
         intensity: 5
@@ -1078,7 +1078,7 @@ entities:
     tags: [light, rim]
     components:
       transform:
-        position: [0, 1, 22]
+        position: [0, 1, 10]
       point_light:
         color: [0.1, 0.65, 0.95]
         intensity: 5
@@ -1090,7 +1090,7 @@ entities:
     tags: [light, rim]
     components:
       transform:
-        position: [0, 1, -22]
+        position: [0, 1, -10]
       point_light:
         color: [0.95, 0.65, 0.3]
         intensity: 5
@@ -1105,7 +1105,7 @@ entities:
     tags: [light, gem]
     components:
       transform:
-        position: [0.8, 2.5, 8.0]
+        position: [0.36, 2.5, 3.5]
       point_light:
         color: [1.0, 0.15, 0.1]
         intensity: 10
@@ -1117,7 +1117,7 @@ entities:
     tags: [light, gem]
     components:
       transform:
-        position: [-0.8, 1.5, 8.0]
+        position: [-0.36, 1.5, 3.5]
       point_light:
         color: [1.0, 0.3, 0.15]
         intensity: 8
@@ -1130,7 +1130,7 @@ entities:
     tags: [light, gem]
     components:
       transform:
-        position: [8.0, 2.5, 0.8]
+        position: [3.5, 2.5, 0.36]
       point_light:
         color: [0.1, 0.2, 1.0]
         intensity: 10
@@ -1142,7 +1142,7 @@ entities:
     tags: [light, gem]
     components:
       transform:
-        position: [8.0, 1.5, -0.8]
+        position: [3.5, 1.5, -0.36]
       point_light:
         color: [0.15, 0.35, 1.0]
         intensity: 8
@@ -1155,7 +1155,7 @@ entities:
     tags: [light, gem]
     components:
       transform:
-        position: [0.8, 2.5, -8.0]
+        position: [0.36, 2.5, -3.5]
       point_light:
         color: [0.1, 1.0, 0.25]
         intensity: 10
@@ -1167,7 +1167,7 @@ entities:
     tags: [light, gem]
     components:
       transform:
-        position: [-0.8, 1.5, -8.0]
+        position: [-0.36, 1.5, -3.5]
       point_light:
         color: [0.15, 1.0, 0.4]
         intensity: 8
@@ -1180,7 +1180,7 @@ entities:
     tags: [light, gem]
     components:
       transform:
-        position: [-8.0, 2.5, 0.8]
+        position: [-3.5, 2.5, 0.36]
       point_light:
         color: [0.6, 0.9, 1.0]
         intensity: 10
@@ -1192,7 +1192,7 @@ entities:
     tags: [light, gem]
     components:
       transform:
-        position: [-8.0, 1.5, -0.8]
+        position: [-3.5, 1.5, -0.36]
       point_light:
         color: [0.7, 0.95, 1.0]
         intensity: 8
@@ -1206,7 +1206,7 @@ entities:
     tags: [light, dramatic]
     components:
       transform:
-        position: [5, 15, 0]
+        position: [2.3, 8, 0]
       point_light:
         color: [1.0, 0.95, 0.9]
         intensity: 6
@@ -1218,7 +1218,7 @@ entities:
     tags: [light, dramatic]
     components:
       transform:
-        position: [-5, 15, 0]
+        position: [-2.3, 8, 0]
       point_light:
         color: [0.9, 0.8, 1.0]
         intensity: 6
@@ -1227,7 +1227,7 @@ entities:
         source: logic/titan_pulse_light.lua
 
   # ================================================================
-  # OBSIDIAN SENTINELS - 8 inner pillars at radius 12
+  # OBSIDIAN SENTINELS - 8 inner pillars at radius 5.5
   # Shorter than the outer ring, creating depth layers
   # Arranged every 45 degrees, offset 22.5 deg from outer pillars
   # ================================================================
@@ -1237,8 +1237,8 @@ entities:
     tags: [sentinel, environment]
     components:
       transform:
-        position: [11.09, 4, 4.59]
-        scale: [0.6, 8, 0.6]
+        position: [5.08, 2.5, 2.1]
+        scale: [0.4, 4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/obsidian.yaml
@@ -1248,8 +1248,8 @@ entities:
     tags: [sentinel, environment]
     components:
       transform:
-        position: [4.59, 4, 11.09]
-        scale: [0.6, 8, 0.6]
+        position: [2.1, 2.5, 5.08]
+        scale: [0.4, 4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/obsidian.yaml
@@ -1259,8 +1259,8 @@ entities:
     tags: [sentinel, environment]
     components:
       transform:
-        position: [-4.59, 4, 11.09]
-        scale: [0.6, 8, 0.6]
+        position: [-2.1, 2.5, 5.08]
+        scale: [0.4, 4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/obsidian.yaml
@@ -1270,8 +1270,8 @@ entities:
     tags: [sentinel, environment]
     components:
       transform:
-        position: [-11.09, 4, 4.59]
-        scale: [0.6, 8, 0.6]
+        position: [-5.08, 2.5, 2.1]
+        scale: [0.4, 4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/obsidian.yaml
@@ -1281,8 +1281,8 @@ entities:
     tags: [sentinel, environment]
     components:
       transform:
-        position: [-11.09, 4, -4.59]
-        scale: [0.6, 8, 0.6]
+        position: [-5.08, 2.5, -2.1]
+        scale: [0.4, 4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/obsidian.yaml
@@ -1292,8 +1292,8 @@ entities:
     tags: [sentinel, environment]
     components:
       transform:
-        position: [-4.59, 4, -11.09]
-        scale: [0.6, 8, 0.6]
+        position: [-2.1, 2.5, -5.08]
+        scale: [0.4, 4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/obsidian.yaml
@@ -1303,8 +1303,8 @@ entities:
     tags: [sentinel, environment]
     components:
       transform:
-        position: [4.59, 4, -11.09]
-        scale: [0.6, 8, 0.6]
+        position: [2.1, 2.5, -5.08]
+        scale: [0.4, 4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/obsidian.yaml
@@ -1314,8 +1314,8 @@ entities:
     tags: [sentinel, environment]
     components:
       transform:
-        position: [11.09, 4, -4.59]
-        scale: [0.6, 8, 0.6]
+        position: [5.08, 2.5, -2.1]
+        scale: [0.4, 4, 0.4]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/obsidian.yaml
@@ -1328,8 +1328,8 @@ entities:
     tags: [pedestal, environment]
     components:
       transform:
-        position: [0.0, 0.0, 8.0]
-        scale: [1.2, 0.5, 1.2]
+        position: [0.0, 0.0, 3.5]
+        scale: [0.8, 0.4, 0.8]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/dark_mirror.yaml
@@ -1338,8 +1338,8 @@ entities:
     tags: [pedestal, environment]
     components:
       transform:
-        position: [8.0, 0.0, 0.0]
-        scale: [1.2, 0.5, 1.2]
+        position: [3.5, 0.0, 0.0]
+        scale: [0.8, 0.4, 0.8]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/dark_mirror.yaml
@@ -1348,8 +1348,8 @@ entities:
     tags: [pedestal, environment]
     components:
       transform:
-        position: [0.0, 0.0, -8.0]
-        scale: [1.2, 0.5, 1.2]
+        position: [0.0, 0.0, -3.5]
+        scale: [0.8, 0.4, 0.8]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/dark_mirror.yaml
@@ -1358,14 +1358,14 @@ entities:
     tags: [pedestal, environment]
     components:
       transform:
-        position: [-8.0, 0.0, 0.0]
-        scale: [1.2, 0.5, 1.2]
+        position: [-3.5, 0.0, 0.0]
+        scale: [0.8, 0.4, 0.8]
       mesh_renderer:
         mesh: assets/meshes/cube.gltf
         material: assets/materials/dark_mirror.yaml
 
   # ================================================================
-  # OUTER ORBIT RINGS - Copper and steel spheres at radius 16 & 6
+  # OUTER ORBIT RINGS - Copper and steel spheres at radius 7 & 2.8
   # Additional orbital layers for visual density
   # ================================================================
 
@@ -1373,7 +1373,7 @@ entities:
     tags: [copper_ring, orbit]
     components:
       transform:
-        position: [16.0, 1.5, 0.0]
+        position: [7.0, 1.5, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/copper_ring.yaml
@@ -1384,7 +1384,7 @@ entities:
     tags: [copper_ring, orbit]
     components:
       transform:
-        position: [0.0, 1.5, 16.0]
+        position: [0.0, 1.5, 7.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/copper_ring.yaml
@@ -1395,7 +1395,7 @@ entities:
     tags: [copper_ring, orbit]
     components:
       transform:
-        position: [-16.0, 1.5, 0.0]
+        position: [-7.0, 1.5, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/copper_ring.yaml
@@ -1406,7 +1406,7 @@ entities:
     tags: [copper_ring, orbit]
     components:
       transform:
-        position: [0.0, 1.5, -16.0]
+        position: [0.0, 1.5, -7.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/copper_ring.yaml
@@ -1417,7 +1417,7 @@ entities:
     tags: [steel_ring, orbit]
     components:
       transform:
-        position: [6.0, 5.5, 0.0]
+        position: [2.8, 3.5, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/steel_ring.yaml
@@ -1428,7 +1428,7 @@ entities:
     tags: [steel_ring, orbit]
     components:
       transform:
-        position: [0.0, 5.5, 6.0]
+        position: [0.0, 3.5, 2.8]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/steel_ring.yaml
@@ -1439,7 +1439,7 @@ entities:
     tags: [steel_ring, orbit]
     components:
       transform:
-        position: [-6.0, 5.5, 0.0]
+        position: [-2.8, 3.5, 0.0]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/steel_ring.yaml
@@ -1450,7 +1450,7 @@ entities:
     tags: [steel_ring, orbit]
     components:
       transform:
-        position: [0.0, 5.5, -6.0]
+        position: [0.0, 3.5, -2.8]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/steel_ring.yaml

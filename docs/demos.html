@@ -62,7 +62,7 @@
 <body>
 
   <h1>nAIVE - Demos &amp; Showcases</h1>
-  <p class="subtitle">AI-Native Interactive Visual Engine &mdash; 10 Phases of Brilliance</p>
+  <p class="subtitle">AI-Native Interactive Visual Engine &mdash; 15 Phases of Brilliance</p>
 
   <!-- =========================================================== -->
   <h2>Flagship Demo</h2>
@@ -174,6 +174,165 @@ local f = sin(t)*0.5 + sin(t*2.3)*0.3 + sin(t*5.7)*0.2</div>
         <li>Warm color [1.0, 0.7, 0.3] with 10m range</li>
         <li>Intensity clamped to minimum 0.5 (never fully dark)</li>
         <li>Deferred pipeline: lights are free regardless of scene geometry</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>Visual Showcases</h2>
+  <p class="section-intro">Cinematic and interactive experiences that push every engine system to the limit.</p>
+
+  <div class="demo-grid">
+
+    <div class="demo-card hero-card">
+      <span class="title">GENESIS &mdash; The Birth of a World</span>
+      <span class="phase-tag">Phase 13</span>
+      <p class="tagline">"65 entities, 24 lights, a multi-act creation story told in PBR and light."</p>
+      <p class="desc">
+        A cinematic visual showcase that unfolds like a creation myth. A central spark core pulses with emission,
+        concentric rings of chrome and copper orbs orbit at different speeds, 8 obsidian pillars rise from
+        underground, and a Gaussian splat nebula swirls at the center &mdash; all choreographed by keyframe-driven
+        camera moves with smooth Hermite interpolation. Bloom, HDR tonemapping, and shadow mapping bring it to life.
+      </p>
+      <div class="cmd"><span class="comment"># Watch the birth of a world</span>
+cargo run -- --scene scenes/genesis.yaml</div>
+      <ul class="highlights">
+        <li>65 entities orchestrated by 8 Lua scripts</li>
+        <li>12 unique PBR materials (genesis_core, chrome, copper_ring, steel_ring, obsidian, 7 neons)</li>
+        <li>24 dynamic point lights (key, fill, pillar, core glow, accent, rim)</li>
+        <li>Pillar rise animation with easing, roughness sweep, emissive cycle</li>
+        <li>Cinematic camera with keyframe choreography (60s loop)</li>
+        <li>Directional sun with shadow mapping + Gaussian splat nebula</li>
+      </ul>
+    </div>
+
+    <div class="demo-card hero-card">
+      <span class="title">TITAN &mdash; Colosseum of Light</span>
+      <span class="phase-tag">Phase 15</span>
+      <p class="tagline">"100+ entities, 32 lights, the most ambitious scene in the engine."</p>
+      <p class="desc">
+        A grand colosseum showcasing the engine at full throttle. A levitating gold titan sphere sits at the heart,
+        surrounded by 16 outer pillars, 8 obsidian sentinels, dual orbital rings of gold and platinum spheres,
+        4 gemstone pedestals (ruby, sapphire, emerald, ice), spiraling ember and void cubes with rainbow emission
+        waves, and copper/steel outer orbits. 32 dynamic lights paint the scene with dramatic warm/cool contrasts.
+        FXAA anti-aliasing keeps every edge clean.
+      </p>
+      <div class="cmd"><span class="comment"># Enter the colosseum</span>
+cargo run -- --scene scenes/titan.yaml</div>
+      <ul class="highlights">
+        <li>100+ entities across 7 distinct visual layers</li>
+        <li>15+ unique materials (titan_gold, platinum, ruby, sapphire, emerald, ice, ember, void)</li>
+        <li>32 dynamic lights: pillar, core glow, accent, rim, gem, dramatic spots</li>
+        <li>Dual orbital rings: 12 gold spheres + 8 platinum spheres in opposing orbits</li>
+        <li>Spiraling ember/void cubes with rainbow emission wave animation</li>
+        <li>FXAA anti-aliasing + shadow mapping + bloom</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">A</span><span class="title">VOID &mdash; Cosmic Gaussian Splatting</span>
+      <span class="phase-tag">Phase 15</span>
+      <p class="tagline">"Minimalist void. Floating monoliths. Procedural splats. Pure atmosphere."</p>
+      <p class="desc">
+        A dark, atmospheric showcase focused on Gaussian splatting compositing. Floating void monolith pillars
+        drift around a procedural splat nebula, joined by void crystals, ice shards, obsidian fragments, and
+        neon accent orbs. Ultra-low ambient lighting (0.005) creates a deeply immersive cosmic void. 16 dynamic
+        lights add subtle color washes that breathe and pulse.
+      </p>
+      <div class="cmd"><span class="comment"># Drift through the void</span>
+cargo run -- --scene scenes/void.yaml</div>
+      <ul class="highlights">
+        <li>40+ entities: monoliths, crystals, stars, orbs, ice shards, debris</li>
+        <li>Procedural Gaussian splat nebula at center</li>
+        <li>Ultra-dark ambient (0.005) with cold blue directional light</li>
+        <li>16 dynamic lights with slow breathing pulse</li>
+        <li>Void drift animation: slow cosmic movement on all axes</li>
+        <li>10+ unique materials (void_monolith, void_crystal, void_star, chrome, ice)</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">B</span><span class="title">INFERNO &mdash; Combat Arena</span>
+      <span class="phase-tag">Phase 15</span>
+      <p class="tagline">"FPS combat meets hellfire lighting. Fight 6 demons in a lava-lit arena."</p>
+      <p class="desc">
+        A playable first-person combat arena that combines the physics and scripting systems with intense visual
+        design. Navigate a 32&times;32 arena with 4 lava pits at the corners, 4 iron pillars for cover, and
+        6 demon enemies with AI combat logic. Health pickups float and bob, torches flicker with layered sine
+        waves, and orange-red hellfire sunlight casts dramatic shadows across everything.
+      </p>
+      <div class="cmd"><span class="comment"># Enter the inferno (WASD + mouse, left-click attack)</span>
+cargo run -- --scene scenes/inferno.yaml</div>
+      <ul class="highlights">
+        <li>FPS player: 4.5 m/s move, 1.6&times; sprint, 6.0 jump impulse</li>
+        <li>6 demon enemies with AI combat (patrol, chase, attack)</li>
+        <li>4 lava pit hazards with animated glow effects</li>
+        <li>2 floating health pickups with bob animation</li>
+        <li>16 dynamic lights: torches, lava glow, accent overhead, central arena</li>
+        <li>Physics-enabled gravity combat with character controller</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">C</span><span class="title">Neon Dreamscape</span>
+      <span class="phase-tag">Phase 12</span>
+      <p class="tagline">"A dark club with 6 neon pillars and floating emissive cubes."</p>
+      <p class="desc">
+        A moody neon-lit environment with 6 pillars arranged in a hexagonal pattern, each in a different
+        neon color (pink, cyan, purple, gold, blue, green). 3 floating emissive cubes bob gently overhead
+        while 6 pulsing neon point lights wash the dark floor with shifting color. The cinematic camera
+        sweeps through the space in a smooth orbit.
+      </p>
+      <div class="cmd"><span class="comment"># Enter the dreamscape</span>
+cargo run -- --scene scenes/neon_dreamscape.yaml</div>
+      <ul class="highlights">
+        <li>15 entities: 6 neon pillars, 3 emissive cubes, 6 neon lights</li>
+        <li>6 neon colors: pink, cyan, purple, gold, blue, green</li>
+        <li>Floating cubes with smooth vertical bob animation</li>
+        <li>Ultra-low ambient (0.01) for dramatic neon contrast</li>
+        <li>Pulsing point lights with intensity modulation</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">D</span><span class="title">PBR Material Gallery</span>
+      <span class="phase-tag">Phase 12</span>
+      <p class="tagline">"25 spheres, every combination of metallic and roughness."</p>
+      <p class="desc">
+        A material science showcase presenting a 5&times;5 grid of PBR spheres. Rows sweep metallic
+        from 0.0 (dielectric) to 1.0 (full metal). Columns sweep roughness from 0.0 (mirror) to 1.0
+        (fully diffuse). Four colored key lights illuminate the grid from different angles, revealing how
+        Cook-Torrance GGX lighting responds to each material parameter combination.
+      </p>
+      <div class="cmd"><span class="comment"># Explore the PBR parameter space</span>
+cargo run -- --scene scenes/pbr_gallery.yaml</div>
+      <ul class="highlights">
+        <li>25 unique PBR materials (5&times; metallic &times; 5&times; roughness)</li>
+        <li>Cook-Torrance GGX shading with Fresnel and geometry terms</li>
+        <li>4 key lights: warm, cool, accent (pink), fill (green)</li>
+        <li>Circular orbit camera for all-angle viewing</li>
+        <li>Stone floor provides grounding reference surface</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">E</span><span class="title">Cosmic Splats</span>
+      <span class="phase-tag">Phase 4</span>
+      <p class="tagline">"A procedural galaxy, a floating crystal, and 4 colored lights."</p>
+      <p class="desc">
+        The original Gaussian splatting demo. A procedural splat galaxy rotates at the origin while a
+        cyan neon crystal bobs gently above a dark pedestal. Four colored point lights (purple, blue,
+        red-orange) create a cosmic atmosphere. Simple but foundational &mdash; the scene that proved
+        splat-mesh depth compositing works.
+      </p>
+      <div class="cmd"><span class="comment"># The original splat showcase</span>
+cargo run -- --scene scenes/cosmic_splats.yaml</div>
+      <ul class="highlights">
+        <li>Procedural Gaussian splat galaxy at origin</li>
+        <li>Cyan neon crystal with 45&deg; rotation and bob animation</li>
+        <li>4 colored point lights for cosmic atmosphere</li>
+        <li>Splat-mesh depth compositing proof-of-concept</li>
       </ul>
     </div>
 
@@ -403,7 +562,49 @@ cargo run -- --scene scenes/physics_test.yaml</div>
         <td>1-9</td>
       </tr>
       <tr>
-        <td>Splat Compositing</td>
+        <td>TITAN &mdash; Colosseum of Light</td>
+        <td><code>cargo run -- --scene scenes/titan.yaml</code></td>
+        <td>Yes</td>
+        <td>1-15</td>
+      </tr>
+      <tr>
+        <td>GENESIS &mdash; Birth of a World</td>
+        <td><code>cargo run -- --scene scenes/genesis.yaml</code></td>
+        <td>Yes</td>
+        <td>1-13</td>
+      </tr>
+      <tr>
+        <td>VOID &mdash; Cosmic Splatting</td>
+        <td><code>cargo run -- --scene scenes/void.yaml</code></td>
+        <td>Yes</td>
+        <td>1-4, 6-7, 15</td>
+      </tr>
+      <tr>
+        <td>INFERNO &mdash; Combat Arena</td>
+        <td><code>cargo run -- --scene scenes/inferno.yaml</code></td>
+        <td>Yes</td>
+        <td>1-9, 15</td>
+      </tr>
+      <tr>
+        <td>Neon Dreamscape</td>
+        <td><code>cargo run -- --scene scenes/neon_dreamscape.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 6-7, 12</td>
+      </tr>
+      <tr>
+        <td>PBR Material Gallery</td>
+        <td><code>cargo run -- --scene scenes/pbr_gallery.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 11-12</td>
+      </tr>
+      <tr>
+        <td>Cosmic Splats</td>
+        <td><code>cargo run -- --scene scenes/cosmic_splats.yaml</code></td>
+        <td>Yes</td>
+        <td>1-4</td>
+      </tr>
+      <tr>
+        <td>Splat Compositing Test</td>
         <td><code>cargo run -- --scene scenes/splat_test.yaml</code></td>
         <td>Yes</td>
         <td>1-4</td>
@@ -436,14 +637,16 @@ cargo run -- --scene scenes/physics_test.yaml</div>
   </table>
 
   <!-- =========================================================== -->
-  <h2>Suggested Live Demo Script (5 minutes)</h2>
+  <h2>Suggested Live Demo Script (10 minutes)</h2>
 
   <div class="demo-card" style="max-width: 800px; margin: 16px auto;">
     <ol style="padding-left: 20px; color: #b0b0c8; font-size: 0.93em;">
-      <li style="margin: 8px 0;"><strong style="color: #fff;">Launch The Relic</strong> &mdash; <code>cargo run -- --scene scenes/relic.yaml</code>. Walk around the dungeon, show the flickering torchlight and deferred rendering.</li>
-      <li style="margin: 8px 0;"><strong style="color: #fff;">Open the gate</strong> &mdash; Walk up and press E. The door swings open with physics animation.</li>
-      <li style="margin: 8px 0;"><strong style="color: #fff;">Fight the guardian</strong> &mdash; Enter the inner chamber. The goblin detects you, chases, and attacks. Left-click to fight back. Show the event log.</li>
-      <li style="margin: 8px 0;"><strong style="color: #fff;">Collect the relic</strong> &mdash; After defeating the guardian, pick up the golden relic. Level complete.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Launch TITAN</strong> &mdash; <code>cargo run -- --scene scenes/titan.yaml</code>. Let the cinematic camera sweep through the colosseum. Point out the 100+ entities, dual orbital rings, gemstone pedestals, and 32 dynamic lights.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Switch to GENESIS</strong> &mdash; <code>cargo run -- --scene scenes/genesis.yaml</code>. Show the multi-act creation story: spark core, rising pillars, orbiting rings, and Gaussian splat nebula.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Enter the VOID</strong> &mdash; <code>cargo run -- --scene scenes/void.yaml</code>. Demonstrate Gaussian splatting composited with mesh objects in a dark cosmic environment.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">PBR Gallery</strong> &mdash; <code>cargo run -- --scene scenes/pbr_gallery.yaml</code>. Show the 25-sphere metallic/roughness grid proving Cook-Torrance GGX correctness.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Play The Relic</strong> &mdash; <code>cargo run -- --scene scenes/relic.yaml</code>. Walk around the dungeon, open the physics-driven gate (press E), fight the guardian goblin, collect the golden relic.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Fight in INFERNO</strong> &mdash; <code>cargo run -- --scene scenes/inferno.yaml</code>. Show FPS combat with 6 demon enemies, lava pits, health pickups, and hellfire lighting.</li>
       <li style="margin: 8px 0;"><strong style="color: #fff;">Hot-reload a shader</strong> &mdash; While the game runs, edit <code>deferred_light.slang</code> (change light color or attenuation). Save. Watch the lighting change in real time.</li>
       <li style="margin: 8px 0;"><strong style="color: #fff;">Hot-reload a script</strong> &mdash; Edit <code>guardian.lua</code>, double the detect range. Save. The goblin immediately becomes more aggressive.</li>
       <li style="margin: 8px 0;"><strong style="color: #fff;">Socket control</strong> &mdash; In a second terminal, use <code>socat</code> to teleport the player, spawn a new light, or list all entities via JSON commands.</li>
@@ -458,15 +661,15 @@ cargo run -- --scene scenes/physics_test.yaml</div>
     <table>
       <tr><td style="color: #e94560; font-weight: 700; width: 200px;">Zero-compile iteration</td><td>Scenes, materials, pipelines, shaders, scripts, input bindings, and event schemas are all hot-reloadable data files.</td></tr>
       <tr><td style="color: #e94560; font-weight: 700;">AI-first architecture</td><td>MCP server + command socket + headless mode = an AI agent can design, play, and QA-test a game without human intervention.</td></tr>
-      <tr><td style="color: #e94560; font-weight: 700;">Cutting-edge rendering</td><td>Gaussian splatting composited with mesh-based deferred rendering in a single data-driven pipeline.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">Cutting-edge rendering</td><td>Cook-Torrance GGX PBR, Gaussian splatting compositing, FXAA anti-aliasing, shadow mapping, bloom, and HDR tonemapping &mdash; all in a single data-driven pipeline.</td></tr>
       <tr><td style="color: #e94560; font-weight: 700;">From-scratch in Rust</td><td>No Unity, no Unreal, no Bevy. Custom ECS, custom renderer, custom physics integration &mdash; all type-safe Rust.</td></tr>
-      <tr><td style="color: #e94560; font-weight: 700;">10-phase engineering</td><td>Each phase builds cleanly on the last: window &rarr; scene &rarr; deferred &rarr; splats &rarr; physics &rarr; scripting &rarr; events &rarr; sockets &rarr; game &rarr; testing.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">15-phase engineering</td><td>Each phase builds cleanly on the last: window &rarr; scene &rarr; deferred &rarr; splats &rarr; physics &rarr; scripting &rarr; events &rarr; sockets &rarr; game &rarr; testing &rarr; PBR &rarr; bloom &rarr; genesis &rarr; rendering overhaul &rarr; advanced demos.</td></tr>
     </table>
   </div>
 
   <div class="footer">
     nAIVE Engine &mdash; AI-Native Interactive Visual Engine<br>
-    Rust + wgpu + Rapier + Lua + SLANG &mdash; Built in 10 phases
+    Rust + wgpu + Rapier + Lua + SLANG &mdash; Built in 15 phases &mdash; 11 runnable demos
   </div>
 
 </body>
