@@ -62,7 +62,7 @@
 <body>
 
   <h1>nAIVE - Demos &amp; Showcases</h1>
-  <p class="subtitle">AI-Native Interactive Visual Engine &mdash; 15 Phases of Brilliance</p>
+  <p class="subtitle">AI-Native Interactive Visual Engine &mdash; 16 Phases of Brilliance</p>
 
   <!-- =========================================================== -->
   <h2>Flagship Demo</h2>
@@ -333,6 +333,48 @@ cargo run -- --scene scenes/cosmic_splats.yaml</div>
         <li>Cyan neon crystal with 45&deg; rotation and bob animation</li>
         <li>4 colored point lights for cosmic atmosphere</li>
         <li>Splat-mesh depth compositing proof-of-concept</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">F</span><span class="title">UI &amp; Text Rendering Demo</span>
+      <span class="phase-tag">Phase 16</span>
+      <p class="tagline">"Immediate-mode 2D overlay: text, rects, animations, and screen flash."</p>
+      <p class="desc">
+        A comprehensive showcase of the Phase 16 UI system. Title bar, stats HUD panel with live FPS
+        and score, text size &amp; color palettes, animated pulsing and rainbow text, a moving progress
+        bar, auto-spawning entities with screen flash effects, and visibility toggling &mdash; all rendered
+        as a 2D overlay on top of the 3D scene using a 6&times;8 bitmap font atlas.
+      </p>
+      <div class="cmd"><span class="comment"># Run the UI showcase</span>
+cargo run --bin naive-runtime -- --scene scenes/ui_demo.yaml</div>
+      <ul class="highlights">
+        <li>Bitmap font atlas: 95 ASCII glyphs, arbitrary text size scaling</li>
+        <li>Colored rectangles with alpha blending for panels and bars</li>
+        <li>Screen flash effect with auto-fade</li>
+        <li>Runtime entity spawning and visibility toggling from Lua</li>
+        <li>Animated text: pulsing alpha, rainbow color cycling, progress bar</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">G</span><span class="title">Grid UI Demo &mdash; Snake Sweeper</span>
+      <span class="phase-tag">Phase 16</span>
+      <p class="tagline">"Snake meets Minesweeper on a dynamic 7&times;7 grid with numbered tiles."</p>
+      <p class="desc">
+        A playable prototype combining Snake and Minesweeper mechanics. A 7&times;7 grid of tiles is spawned
+        at runtime via <code>entity.spawn()</code>. An auto-walking snake reveals tiles, showing Minesweeper-style
+        numbers (1-4) as UI text overlays. Hitting a mine triggers a screen flash and game-over state. Tile
+        emission colors change dynamically based on revealed content. Top-down camera with full HUD overlay.
+      </p>
+      <div class="cmd"><span class="comment"># Play Snake Sweeper</span>
+cargo run --bin naive-runtime -- --scene scenes/grid_ui_demo.yaml</div>
+      <ul class="highlights">
+        <li>49 tiles + snake head spawned at runtime from Lua</li>
+        <li>Minesweeper number overlay using screen-space ui.text()</li>
+        <li>Dynamic tile emission: green (safe), colored (numbered), red (mine)</li>
+        <li>Game state machine: playing &rarr; lost with score tracking</li>
+        <li>Auto-walking snake with wall-bounce direction changes</li>
       </ul>
     </div>
 
@@ -616,6 +658,24 @@ cargo run -- --scene scenes/physics_test.yaml</div>
         <td>1-5</td>
       </tr>
       <tr>
+        <td>UI &amp; Text Rendering Demo</td>
+        <td><code>cargo run --bin naive-runtime -- --scene scenes/ui_demo.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 6, 16</td>
+      </tr>
+      <tr>
+        <td>Grid UI Demo (Snake Sweeper)</td>
+        <td><code>cargo run --bin naive-runtime -- --scene scenes/grid_ui_demo.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 6, 16</td>
+      </tr>
+      <tr>
+        <td>Audio Test (Snake Sweeper SFX)</td>
+        <td><code>cargo run --bin naive-runtime -- --scene scenes/audio_test.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 6, 11, 16</td>
+      </tr>
+      <tr>
         <td>Headless Test Suite</td>
         <td><code>cargo run -- test tests/test_relic.lua</code></td>
         <td>No</td>
@@ -663,13 +723,13 @@ cargo run -- --scene scenes/physics_test.yaml</div>
       <tr><td style="color: #e94560; font-weight: 700;">AI-first architecture</td><td>MCP server + command socket + headless mode = an AI agent can design, play, and QA-test a game without human intervention.</td></tr>
       <tr><td style="color: #e94560; font-weight: 700;">Cutting-edge rendering</td><td>Cook-Torrance GGX PBR, Gaussian splatting compositing, FXAA anti-aliasing, shadow mapping, bloom, and HDR tonemapping &mdash; all in a single data-driven pipeline.</td></tr>
       <tr><td style="color: #e94560; font-weight: 700;">From-scratch in Rust</td><td>No Unity, no Unreal, no Bevy. Custom ECS, custom renderer, custom physics integration &mdash; all type-safe Rust.</td></tr>
-      <tr><td style="color: #e94560; font-weight: 700;">15-phase engineering</td><td>Each phase builds cleanly on the last: window &rarr; scene &rarr; deferred &rarr; splats &rarr; physics &rarr; scripting &rarr; events &rarr; sockets &rarr; game &rarr; testing &rarr; PBR &rarr; bloom &rarr; genesis &rarr; rendering overhaul &rarr; advanced demos.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">16-phase engineering</td><td>Each phase builds cleanly on the last: window &rarr; scene &rarr; deferred &rarr; splats &rarr; physics &rarr; scripting &rarr; events &rarr; sockets &rarr; game &rarr; testing &rarr; PBR &rarr; bloom &rarr; genesis &rarr; rendering overhaul &rarr; advanced demos &rarr; UI overlay.</td></tr>
     </table>
   </div>
 
   <div class="footer">
     nAIVE Engine &mdash; AI-Native Interactive Visual Engine<br>
-    Rust + wgpu + Rapier + Lua + SLANG &mdash; Built in 15 phases &mdash; 11 runnable demos
+    Rust + wgpu + Rapier + Lua + SLANG &mdash; Built in 16 phases &mdash; 14 runnable demos
   </div>
 
 </body>

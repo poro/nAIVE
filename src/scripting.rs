@@ -7,9 +7,11 @@ use mlua::prelude::*;
 use crate::audio::AudioSystem;
 use crate::components::{MaterialOverride, PointLight, Transform};
 use crate::events::EventBus;
+use crate::font::BitmapFont;
 use crate::input::InputState;
 use crate::physics::PhysicsWorld;
-use crate::world::SceneWorld;
+use crate::ui::UiRenderer;
+use crate::world::{EntityCommandQueue, SceneWorld};
 
 /// Script component attached to entities.
 #[derive(Debug, Clone)]
@@ -429,6 +431,125 @@ impl ScriptRuntime {
         audio_table.set("stop_music", stop_music_fn).map_err(|e| e.to_string())?;
 
         globals.set("audio", audio_table).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Register entity lifecycle commands (spawn, destroy, visibility)
+    /// that are deferred via the EntityCommandQueue.
+    pub fn register_entity_command_api(
+        &self,
+        scene_world_ptr: *mut SceneWorld,
+        cmd_ptr: *mut EntityCommandQueue,
+    ) -> Result<(), String> {
+        let globals = self.lua.globals();
+        let entity_table: LuaTable = globals.get("entity").map_err(|e| e.to_string())?;
+
+        // entity.spawn(id, mesh, material, x, y, z, sx, sy, sz)
+        let spawn_fn = self.lua.create_function(move |_, (id, mesh, mat, x, y, z, sx, sy, sz): (String, String, String, f32, f32, f32, f32, f32, f32)| {
+            let cmd = unsafe { &mut *cmd_ptr };
+            cmd.spawns.push(crate::world::SpawnCommand {
+                id, mesh, material: mat,
+                position: [x, y, z],
+                scale: [sx, sy, sz],
+            });
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("spawn", spawn_fn).map_err(|e| e.to_string())?;
+
+        // entity.destroy(id)
+        let destroy_fn = self.lua.create_function(move |_, id: String| {
+            let cmd = unsafe { &mut *cmd_ptr };
+            cmd.destroys.push(id);
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("destroy", destroy_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_scale(id, sx, sy, sz)
+        let set_scale_fn = self.lua.create_function(move |_, (id, sx, sy, sz): (String, f32, f32, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut transform) = sw.world.get::<&mut Transform>(entity) {
+                    transform.scale = glam::Vec3::new(sx, sy, sz);
+                    transform.dirty = true;
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_scale", set_scale_fn).map_err(|e| e.to_string())?;
+
+        // entity.get_scale(id) -> sx, sy, sz
+        let get_scale_fn = self.lua.create_function(move |_, id: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(transform) = sw.world.get::<&Transform>(entity) {
+                    return Ok((transform.scale.x, transform.scale.y, transform.scale.z));
+                }
+            }
+            Ok((1.0f32, 1.0f32, 1.0f32))
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("get_scale", get_scale_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_visible(id, visible)
+        let set_vis_fn = self.lua.create_function(move |_, (id, visible): (String, bool)| {
+            let cmd = unsafe { &mut *cmd_ptr };
+            cmd.visibility_updates.push((id, visible));
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_visible", set_vis_fn).map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    /// Register UI overlay API (text, rect, flash, screen dimensions).
+    pub fn register_ui_api(
+        &self,
+        ui_ptr: *mut UiRenderer,
+        font_ptr: *const BitmapFont,
+        config_ptr: *const wgpu::SurfaceConfiguration,
+    ) -> Result<(), String> {
+        let globals = self.lua.globals();
+        let ui_table = self.lua.create_table().map_err(|e| e.to_string())?;
+
+        // ui.text(x, y, text, size, r, g, b, a)
+        let text_fn = self.lua.create_function(move |_, (x, y, text, size, r, g, b, a): (f32, f32, String, f32, f32, f32, f32, f32)| {
+            let ui = unsafe { &mut *ui_ptr };
+            let font = unsafe { &*font_ptr };
+            ui.draw_text(x, y, &text, size, [r, g, b, a], font);
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        ui_table.set("text", text_fn).map_err(|e| e.to_string())?;
+
+        // ui.rect(x, y, w, h, r, g, b, a)
+        let rect_fn = self.lua.create_function(move |_, (x, y, w, h, r, g, b, a): (f32, f32, f32, f32, f32, f32, f32, f32)| {
+            let ui = unsafe { &mut *ui_ptr };
+            ui.draw_rect(x, y, w, h, [r, g, b, a]);
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        ui_table.set("rect", rect_fn).map_err(|e| e.to_string())?;
+
+        // ui.flash(r, g, b, a, duration)
+        let flash_fn = self.lua.create_function(move |_, (r, g, b, a, dur): (f32, f32, f32, f32, f32)| {
+            let ui = unsafe { &mut *ui_ptr };
+            ui.set_flash([r, g, b, a], dur);
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        ui_table.set("flash", flash_fn).map_err(|e| e.to_string())?;
+
+        // ui.screen_width() -> number
+        let width_fn = self.lua.create_function(move |_, ()| {
+            let config = unsafe { &*config_ptr };
+            Ok(config.width as f32)
+        }).map_err(|e| e.to_string())?;
+        ui_table.set("screen_width", width_fn).map_err(|e| e.to_string())?;
+
+        // ui.screen_height() -> number
+        let height_fn = self.lua.create_function(move |_, ()| {
+            let config = unsafe { &*config_ptr };
+            Ok(config.height as f32)
+        }).map_err(|e| e.to_string())?;
+        ui_table.set("screen_height", height_fn).map_err(|e| e.to_string())?;
+
+        globals.set("ui", ui_table).map_err(|e| e.to_string())?;
         Ok(())
     }
 

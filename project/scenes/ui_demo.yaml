@@ -1,0 +1,81 @@
+name: "UI & Text Rendering Demo"
+settings:
+  ambient_light: [0.05, 0.05, 0.08]
+  gravity: [0, 0, 0]
+
+entities:
+  # Camera - slow orbit
+  - id: camera
+    tags: [camera]
+    components:
+      transform:
+        position: [0, 3, 10]
+      camera:
+        fov: 65
+        near: 0.1
+        far: 100
+        role: main
+      script:
+        source: logic/ui_demo_camera.lua
+
+  # Directional light
+  - id: sun
+    tags: [light]
+    components:
+      directional_light:
+        direction: [0.3, -1.0, 0.5]
+        color: [1.0, 0.95, 0.9]
+        intensity: 2.0
+        shadow_extent: 30.0
+
+  # Central showcase sphere
+  - id: center_sphere
+    tags: [object]
+    components:
+      transform:
+        position: [0, 1.5, 0]
+        scale: [2, 2, 2]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/gold.yaml
+
+  # Floor
+  - id: floor
+    tags: [object]
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [20, 0.2, 20]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_floor.yaml
+
+  # Orbiting accent spheres
+  - id: orb_r
+    tags: [object]
+    components:
+      transform:
+        position: [3, 2, 0]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/red.yaml
+
+  - id: orb_b
+    tags: [object]
+    components:
+      transform:
+        position: [-3, 2, 0]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/blue.yaml
+
+  # UI controller entity (no mesh, just script for HUD)
+  - id: ui_controller
+    tags: [ui]
+    components:
+      transform:
+        position: [0, 0, 0]
+      script:
+        source: logic/ui_demo.lua

@@ -141,3 +141,6 @@ pub struct MaterialOverride {
     pub roughness: Option<f32>,
     pub metallic: Option<f32>,
 }
+
+/// Marker component: entity is hidden from rendering.
+pub struct Hidden;

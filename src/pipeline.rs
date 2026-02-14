@@ -5,7 +5,7 @@ use serde::Deserialize;
 use wgpu::util::DeviceExt;
 
 use crate::camera::CameraState;
-use crate::components::{DirectionalLight, GaussianSplat, MaterialOverride, MeshRenderer, PointLight, Transform};
+use crate::components::{DirectionalLight, GaussianSplat, Hidden, MaterialOverride, MeshRenderer, PointLight, Transform};
 use crate::material::MaterialCache;
 use crate::mesh::{MeshCache, Vertex3D};
 use crate::renderer::{DrawUniformPool, DrawUniforms, GpuState, DRAW_UNIFORM_SIZE};
@@ -1908,10 +1908,66 @@ pub fn execute_pipeline(
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
+    let mut encoder = execute_pipeline_to_view(
+        gpu, compiled, scene_world, camera_state, draw_pool,
+        mesh_cache, material_cache, splat_cache, &swapchain_view,
+    );
+
+    gpu.queue.submit(std::iter::once(encoder.finish()));
+    output.present();
+}
+
+/// Execute the compiled multi-pass pipeline, returning the encoder for further passes.
+pub fn execute_pipeline_to_view(
+    gpu: &GpuState,
+    compiled: &CompiledPipeline,
+    scene_world: &SceneWorld,
+    camera_state: &CameraState,
+    draw_pool: &DrawUniformPool,
+    mesh_cache: &MeshCache,
+    material_cache: &MaterialCache,
+    splat_cache: &SplatCache,
+    swapchain_view: &wgpu::TextureView,
+) -> wgpu::CommandEncoder {
+
+    // DEBUG: dump camera VP matrix and first entities' transforms (frame 0 only)
+    {
+        static DEBUG_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !DEBUG_ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let cam = &camera_state.uniform;
+            let vp = cam.view_projection;
+            tracing::warn!(
+                "Camera pos=({:.2},{:.2},{:.2}) near={} far={}",
+                cam.position[0], cam.position[1], cam.position[2],
+                cam.near_plane, cam.far_plane,
+            );
+            tracing::warn!("VP col0=[{:.4},{:.4},{:.4},{:.4}]", vp[0][0], vp[0][1], vp[0][2], vp[0][3]);
+            tracing::warn!("VP col1=[{:.4},{:.4},{:.4},{:.4}]", vp[1][0], vp[1][1], vp[1][2], vp[1][3]);
+            tracing::warn!("VP col2=[{:.4},{:.4},{:.4},{:.4}]", vp[2][0], vp[2][1], vp[2][2], vp[2][3]);
+            tracing::warn!("VP col3=[{:.4},{:.4},{:.4},{:.4}]", vp[3][0], vp[3][1], vp[3][2], vp[3][3]);
+            let entity_count = scene_world.world.query::<(&Transform, &MeshRenderer)>().iter().count();
+            tracing::warn!("Entities with MeshRenderer: {}", entity_count);
+            for (i, (_e, (t, _mr))) in (0u32..).zip(
+                scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
+            ) {
+                if i < 3 {
+                    tracing::warn!(
+                        "  Entity {}: pos=({:.2},{:.2},{:.2}) scale=({:.2},{:.2},{:.2})",
+                        i, t.position.x, t.position.y, t.position.z,
+                        t.scale.x, t.scale.y, t.scale.z,
+                    );
+                }
+            }
+        }
+    }
+
     // Upload per-entity draw uniforms
     for (draw_index, (entity, (transform, mesh_renderer))) in
         (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
     {
+        if scene_world.world.get::<&Hidden>(entity).is_ok() {
+            continue;
+        }
         let material = material_cache.get(mesh_renderer.material_handle);
         let model_matrix = transform.world_matrix;
         let normal_matrix = model_matrix.inverse().transpose();
@@ -2066,8 +2122,7 @@ pub fn execute_pipeline(
         }
     }
 
-    gpu.queue.submit(std::iter::once(encoder.finish()));
-    output.present();
+    encoder
 }
 
 /// Execute a shadow depth pass (renders all geometry from light's perspective).
@@ -2110,9 +2165,12 @@ fn execute_shadow_pass(
         }
 
         // Draw all mesh entities
-        for (draw_index, (_entity, (_, mesh_renderer))) in
+        for (draw_index, (entity, (_, mesh_renderer))) in
             (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
         {
+            if scene_world.world.get::<&Hidden>(entity).is_ok() {
+                continue;
+            }
             let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
             let dynamic_offset = draw_index * DRAW_UNIFORM_SIZE as u32;
 
@@ -2191,9 +2249,12 @@ fn execute_rasterize_pass(
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
         let mut draw_count = 0u32;
-        for (draw_index, (_entity, (_, mesh_renderer))) in
+        for (draw_index, (entity, (_, mesh_renderer))) in
             (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
         {
+            if scene_world.world.get::<&Hidden>(entity).is_ok() {
+                continue;
+            }
             let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
             let dynamic_offset = draw_index * DRAW_UNIFORM_SIZE as u32;
 

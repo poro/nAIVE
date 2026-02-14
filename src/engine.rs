@@ -15,7 +15,9 @@ use crate::cli::CliArgs;
 use crate::command::CommandServer;
 use crate::components::{Camera, CameraRole, GaussianSplat, Player, Transform};
 use crate::events::EventBus;
+use crate::font::BitmapFont;
 use crate::tween::TweenSystem;
+use crate::ui::UiRenderer;
 use crate::input::InputState;
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
@@ -69,6 +71,13 @@ pub struct Engine {
     // Phase 8: command socket
     pub command_server: Option<CommandServer>,
     pub paused: bool,
+
+    // UI overlay
+    pub bitmap_font: Option<BitmapFont>,
+    pub ui_renderer: Option<UiRenderer>,
+
+    // Entity command queue (deferred Lua commands)
+    pub entity_commands: crate::world::EntityCommandQueue,
 }
 
 impl Engine {
@@ -100,6 +109,9 @@ impl Engine {
             tween_system: TweenSystem::new(),
             command_server: None,
             paused: false,
+            bitmap_font: None,
+            ui_renderer: None,
+            entity_commands: crate::world::EntityCommandQueue::new(),
         }
     }
 
@@ -190,6 +202,12 @@ impl Engine {
         self.scene_path = Some(scene_path);
 
         tracing::info!("Scene loaded and forward pipeline created");
+
+        // UI overlay: bitmap font atlas + 2D renderer
+        let font = crate::font::create_bitmap_font(&gpu.device, &gpu.queue);
+        let ui = UiRenderer::new(&gpu.device, gpu.config.format, &font);
+        self.bitmap_font = Some(font);
+        self.ui_renderer = Some(ui);
 
         // Phase 5: Initialize input system
         let bindings = crate::input::load_bindings(&self.project_root);
@@ -341,6 +359,25 @@ impl Engine {
             let sw_ptr = sw as *mut SceneWorld;
             if let Err(e) = script_runtime.register_entity_api(sw_ptr) {
                 tracing::error!("Failed to register entity API: {}", e);
+            }
+            // Entity command API (spawn, destroy, scale, visibility)
+            let cmd_ptr = &mut self.entity_commands as *mut crate::world::EntityCommandQueue;
+            if let Err(e) = script_runtime.register_entity_command_api(sw_ptr, cmd_ptr) {
+                tracing::error!("Failed to register entity command API: {}", e);
+            }
+        }
+
+        // Register UI overlay API
+        if let (Some(ui), Some(font), Some(gpu)) = (
+            &mut self.ui_renderer,
+            &self.bitmap_font,
+            &self.gpu,
+        ) {
+            let ui_ptr = ui as *mut UiRenderer;
+            let font_ptr = font as *const BitmapFont;
+            let config_ptr = &gpu.config as *const wgpu::SurfaceConfiguration;
+            if let Err(e) = script_runtime.register_ui_api(ui_ptr, font_ptr, config_ptr) {
+                tracing::error!("Failed to register UI API: {}", e);
             }
         }
 
@@ -842,6 +879,74 @@ impl Engine {
 
     }
 
+    /// Process deferred entity commands (spawn/destroy/scale/visibility).
+    fn process_entity_commands(&mut self) {
+        let gpu = match &self.gpu {
+            Some(gpu) => gpu,
+            None => return,
+        };
+
+        // Process spawns
+        let spawns: Vec<_> = self.entity_commands.spawns.drain(..).collect();
+        for cmd in spawns {
+            if let Some(scene_world) = &mut self.scene_world {
+                crate::world::spawn_runtime_entity(
+                    scene_world,
+                    &cmd.id,
+                    &cmd.mesh,
+                    &cmd.material,
+                    cmd.position,
+                    cmd.scale,
+                    &gpu.device,
+                    &self.project_root,
+                    &mut self.mesh_cache,
+                    &mut self.material_cache,
+                );
+            }
+        }
+
+        // Process destroys
+        let destroys: Vec<_> = self.entity_commands.destroys.drain(..).collect();
+        for id in destroys {
+            if let Some(scene_world) = &mut self.scene_world {
+                // Call on_destroy hook before despawning
+                if let Some(&entity) = scene_world.entity_registry.get(&id) {
+                    if let Some(script_runtime) = &self.script_runtime {
+                        script_runtime.call_on_destroy(entity);
+                    }
+                }
+                crate::world::destroy_runtime_entity(scene_world, &id);
+            }
+        }
+
+        // Process scale updates
+        let scale_updates: Vec<_> = self.entity_commands.scale_updates.drain(..).collect();
+        for (id, scale) in scale_updates {
+            if let Some(scene_world) = &mut self.scene_world {
+                if let Some(&entity) = scene_world.entity_registry.get(&id) {
+                    if let Ok(mut transform) = scene_world.world.get::<&mut Transform>(entity) {
+                        transform.scale = glam::Vec3::from(scale);
+                        transform.dirty = true;
+                    }
+                }
+            }
+        }
+
+        // Process visibility updates
+        let vis_updates: Vec<_> = self.entity_commands.visibility_updates.drain(..).collect();
+        for (id, visible) in vis_updates {
+            if let Some(scene_world) = &mut self.scene_world {
+                if let Some(&entity) = scene_world.entity_registry.get(&id) {
+                    if visible {
+                        let _ = scene_world.world.remove_one::<crate::components::Hidden>(entity);
+                    } else {
+                        let _ = scene_world.world.insert_one(entity, crate::components::Hidden);
+                    }
+                }
+            }
+        }
+    }
+
     /// Update the camera uniform from the main camera entity.
     fn update_camera(&mut self) {
         let gpu = match &self.gpu {
@@ -1101,6 +1206,9 @@ impl ApplicationHandler for Engine {
                             }
                         }
 
+                        // Process deferred entity commands from Lua
+                        self.process_entity_commands();
+
                         // Phase 7: Tick event bus and tweens
                         self.event_bus.tick(dt as f64);
                         self.event_bus.flush();
@@ -1140,48 +1248,79 @@ impl ApplicationHandler for Engine {
                         }
                     }
 
-                    // Phase 3: use compiled pipeline if available
-                    if self.compiled_pipeline.is_some() {
-                        if let (
-                            Some(gpu),
-                            Some(scene_world),
-                            Some(camera_state),
-                            Some(draw_pool),
-                            Some(compiled),
-                        ) = (
-                            &self.gpu,
-                            &self.scene_world,
-                            &self.camera_state,
-                            &self.draw_pool,
-                            &self.compiled_pipeline,
-                        ) {
-                            crate::pipeline::execute_pipeline(
-                                gpu,
-                                compiled,
-                                scene_world,
-                                camera_state,
-                                draw_pool,
-                                &self.mesh_cache,
-                                &self.material_cache,
-                                &self.splat_cache,
-                            );
-                        }
-                    } else {
-                        // Phase 2 fallback: forward rendering
-                        if let (
-                            Some(gpu),
+                    // Acquire swapchain and render 3D scene + UI overlay
+                    if let Some(gpu) = &self.gpu {
+                        let output = match gpu.surface.get_current_texture() {
+                            Ok(t) => t,
+                            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                                gpu.surface.configure(&gpu.device, &gpu.config);
+                                if let Some(gpu) = &self.gpu {
+                                    gpu.window.request_redraw();
+                                }
+                                if let Some(input) = &mut self.input_state {
+                                    input.begin_frame();
+                                }
+                                return;
+                            }
+                            Err(e) => {
+                                tracing::error!("Surface error: {:?}", e);
+                                if let Some(gpu) = &self.gpu {
+                                    gpu.window.request_redraw();
+                                }
+                                if let Some(input) = &mut self.input_state {
+                                    input.begin_frame();
+                                }
+                                return;
+                            }
+                        };
+
+                        let swapchain_view = output
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
+
+                        // Render 3D scene
+                        if self.compiled_pipeline.is_some() {
+                            if let (
+                                Some(scene_world),
+                                Some(camera_state),
+                                Some(draw_pool),
+                                Some(compiled),
+                            ) = (
+                                &self.scene_world,
+                                &self.camera_state,
+                                &self.draw_pool,
+                                &self.compiled_pipeline,
+                            ) {
+                                let encoder = crate::pipeline::execute_pipeline_to_view(
+                                    gpu,
+                                    compiled,
+                                    scene_world,
+                                    camera_state,
+                                    draw_pool,
+                                    &self.mesh_cache,
+                                    &self.material_cache,
+                                    &self.splat_cache,
+                                    &swapchain_view,
+                                );
+                                gpu.queue.submit(std::iter::once(encoder.finish()));
+                            }
+                        } else if let (
                             Some(scene_world),
                             Some(camera_state),
                             Some(draw_pool),
                             Some(forward_pipeline),
                         ) = (
-                            &self.gpu,
                             &self.scene_world,
                             &self.camera_state,
                             &self.draw_pool,
                             &self.forward_pipeline,
                         ) {
-                            crate::renderer::render_scene(
+                            let mut encoder = gpu.device.create_command_encoder(
+                                &wgpu::CommandEncoderDescriptor {
+                                    label: Some("Forward Render Encoder"),
+                                },
+                            );
+                            crate::renderer::render_scene_to_view(
                                 gpu,
                                 scene_world,
                                 camera_state,
@@ -1189,8 +1328,36 @@ impl ApplicationHandler for Engine {
                                 &self.mesh_cache,
                                 &self.material_cache,
                                 forward_pipeline,
+                                &swapchain_view,
+                                &mut encoder,
                             );
+                            gpu.queue.submit(std::iter::once(encoder.finish()));
                         }
+
+                        // UI overlay pass (drawn on top of 3D scene)
+                        if let (Some(ui), Some(font)) = (
+                            &mut self.ui_renderer,
+                            &self.bitmap_font,
+                        ) {
+                            let mut ui_encoder = gpu.device.create_command_encoder(
+                                &wgpu::CommandEncoderDescriptor {
+                                    label: Some("UI Encoder"),
+                                },
+                            );
+                            ui.render(
+                                &gpu.device,
+                                &gpu.queue,
+                                &mut ui_encoder,
+                                &swapchain_view,
+                                font,
+                                gpu.config.width,
+                                gpu.config.height,
+                                self.delta_time,
+                            );
+                            gpu.queue.submit(std::iter::once(ui_encoder.finish()));
+                        }
+
+                        output.present();
                     }
 
                     if let Some(gpu) = &self.gpu {

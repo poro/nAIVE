@@ -1,0 +1,48 @@
+name: "Grid UI Demo - Snake Sweeper Prototype"
+settings:
+  ambient_light: [0.03, 0.03, 0.05]
+  gravity: [0, 0, 0]
+
+entities:
+  # Top-down camera looking at grid
+  - id: camera
+    tags: [camera]
+    components:
+      transform:
+        position: [0, 12, 0.1]
+        rotation: [-89, 0, 0]
+      camera:
+        fov: 60
+        near: 0.1
+        far: 100
+        role: main
+
+  # Directional light
+  - id: sun
+    tags: [light]
+    components:
+      directional_light:
+        direction: [0.2, -1.0, 0.3]
+        color: [1.0, 0.95, 0.9]
+        intensity: 2.5
+        shadow_extent: 20.0
+
+  # Grid floor
+  - id: floor
+    tags: [object]
+    components:
+      transform:
+        position: [0, -0.2, 0]
+        scale: [12, 0.1, 12]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_floor.yaml
+
+  # Grid controller — spawns tiles and renders numbers
+  - id: grid_controller
+    tags: [ui]
+    components:
+      transform:
+        position: [0, 0, 0]
+      script:
+        source: logic/grid_ui_demo.lua

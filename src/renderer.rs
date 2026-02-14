@@ -4,7 +4,7 @@ use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 use crate::camera::CameraState;
-use crate::components::{MeshRenderer, Transform};
+use crate::components::{Hidden, MeshRenderer, Transform};
 use crate::material::MaterialCache;
 use crate::mesh::{MeshCache, Vertex3D};
 use crate::world::SceneWorld;
@@ -416,7 +416,8 @@ pub fn render(gpu: &GpuState) {
 }
 
 /// Render one frame with 3D scene content.
-pub fn render_scene(
+/// Render the 3D scene to the provided view and encoder (does not acquire/present swapchain).
+pub fn render_scene_to_view(
     gpu: &GpuState,
     scene_world: &SceneWorld,
     camera_state: &CameraState,
@@ -424,27 +425,16 @@ pub fn render_scene(
     mesh_cache: &MeshCache,
     material_cache: &MaterialCache,
     forward_pipeline: &wgpu::RenderPipeline,
+    view: &wgpu::TextureView,
+    encoder: &mut wgpu::CommandEncoder,
 ) {
-    let output = match gpu.surface.get_current_texture() {
-        Ok(t) => t,
-        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-            gpu.surface.configure(&gpu.device, &gpu.config);
-            return;
-        }
-        Err(e) => {
-            tracing::error!("Surface error: {:?}", e);
-            return;
-        }
-    };
-
-    let view = output
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
-
     // Write per-draw uniforms
-    for (draw_index, (_entity, (transform, mesh_renderer))) in
+    for (draw_index, (entity, (transform, mesh_renderer))) in
         (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
     {
+        if scene_world.world.get::<&Hidden>(entity).is_ok() {
+            continue;
+        }
         let material = material_cache.get(mesh_renderer.material_handle);
         let model_matrix = transform.world_matrix;
         let normal_matrix = model_matrix.inverse().transpose();
@@ -467,17 +457,11 @@ pub fn render_scene(
         );
     }
 
-    let mut encoder = gpu
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Scene Render Encoder"),
-        });
-
     {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Forward Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
+                view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -504,9 +488,12 @@ pub fn render_scene(
         render_pass.set_pipeline(forward_pipeline);
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
-        for (draw_index, (_entity, (_, mesh_renderer))) in
+        for (draw_index, (entity, (_, mesh_renderer))) in
             (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
         {
+            if scene_world.world.get::<&Hidden>(entity).is_ok() {
+                continue;
+            }
             let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
             let dynamic_offset = draw_index * DRAW_UNIFORM_SIZE as u32;
 
@@ -519,7 +506,4 @@ pub fn render_scene(
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
         }
     }
-
-    gpu.queue.submit(std::iter::once(encoder.finish()));
-    output.present();
 }

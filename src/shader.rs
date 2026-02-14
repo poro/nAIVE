@@ -112,9 +112,13 @@ fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
         .format(slang::CompileTarget::Wgsl);
     let targets = [target_desc];
 
+    let options = slang::CompilerOptions::default()
+        .matrix_layout_column(true);
+
     let session_desc = slang::SessionDesc::default()
         .targets(&targets)
-        .search_paths(&search_paths_ptrs);
+        .search_paths(&search_paths_ptrs)
+        .options(&options);
 
     let session = global_session
         .create_session(&session_desc)
@@ -168,11 +172,117 @@ fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
         ShaderError::SlangCompilationFailed(format!("Failed to get compiled code: {:?}", e))
     })?;
 
-    code.as_str()
+    let wgsl = code.as_str()
         .map(|s| s.to_string())
         .map_err(|e| {
             ShaderError::SlangCompilationFailed(format!("Invalid UTF-8 in WGSL output: {:?}", e))
-        })
+        })?;
+
+    Ok(fixup_slang_wgsl(&wgsl))
+}
+
+/// Fix known SLANG WGSL backend issues:
+/// 1. Depth textures emitted as `texture_2d<f32>` instead of `texture_depth_2d`
+/// 2. `textureLoad(depth_tex, ...).x` should be `textureLoad(depth_tex, ...)` (returns f32)
+fn fixup_slang_wgsl(wgsl: &str) -> String {
+    let mut depth_texture_names: Vec<String> = Vec::new();
+
+    // Detect depth textures: used with textureSampleCompareLevel / textureSampleCompare
+    for line in wgsl.lines() {
+        for func in &["textureSampleCompareLevel(", "textureSampleCompare("] {
+            if let Some(pos) = line.find(func) {
+                let after = &line[pos + func.len()..];
+                // Pattern: ((texture_name), ...) — extract name between (( and ))
+                if after.starts_with('(') {
+                    if let Some(end) = after[1..].find(')') {
+                        let name = after[1..1 + end].trim().to_string();
+                        if !depth_texture_names.contains(&name) {
+                            depth_texture_names.push(name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Also detect by name: variables containing "depth" declared as texture_2d<f32>
+    for line in wgsl.lines() {
+        if line.contains("texture_2d<f32>") {
+            // Pattern: var NAME : texture_2d<f32>
+            if let Some(var_pos) = line.find("var ") {
+                let after_var = &line[var_pos + 4..];
+                if let Some(colon_pos) = after_var.find(" : ") {
+                    let name = after_var[..colon_pos].trim().to_string();
+                    if name.contains("depth")
+                        || name.contains("shadow")
+                    {
+                        if !depth_texture_names.contains(&name) {
+                            depth_texture_names.push(name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if depth_texture_names.is_empty() {
+        return wgsl.to_string();
+    }
+
+    let mut output = wgsl.to_string();
+
+    // Fix declarations: texture_2d<f32> → texture_depth_2d
+    for name in &depth_texture_names {
+        let old_decl = format!("var {} : texture_2d<f32>", name);
+        let new_decl = format!("var {} : texture_depth_2d", name);
+        output = output.replace(&old_decl, &new_decl);
+    }
+
+    // Fix textureLoad(...).x for depth textures → textureLoad(...)
+    // Depth textures return f32 directly, not vec4<f32>
+    for name in &depth_texture_names {
+        let search = format!("textureLoad(({})", name);
+        let mut start = 0;
+        loop {
+            let remaining = &output[start..];
+            let Some(found) = remaining.find(&search) else {
+                break;
+            };
+            let abs_pos = start + found;
+            // Find the matching ')' for the textureLoad( call
+            let call_open = abs_pos + "textureLoad".len();
+            let bytes = output.as_bytes();
+            let mut depth = 0i32;
+            let mut close_pos = None;
+            for i in call_open..bytes.len() {
+                match bytes[i] {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_pos = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(cp) = close_pos {
+                // Check if followed by ".x"
+                if cp + 2 < bytes.len() && bytes[cp + 1] == b'.' && bytes[cp + 2] == b'x' {
+                    // Remove ".x"
+                    output = format!("{}{}", &output[..cp + 1], &output[cp + 3..]);
+                    start = cp + 1;
+                } else {
+                    start = cp + 1;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    output
 }
 
 /// Fallback when SLANG feature is disabled.
@@ -305,9 +415,13 @@ pub fn compile_shader(
     let target_desc = slang::TargetDesc::default().format(slang::CompileTarget::Wgsl);
     let targets = [target_desc];
 
+    let options = slang::CompilerOptions::default()
+        .matrix_layout_column(true);
+
     let session_desc = slang::SessionDesc::default()
         .targets(&targets)
-        .search_paths(&search_paths_ptrs);
+        .search_paths(&search_paths_ptrs)
+        .options(&options);
 
     let session = global_session
         .create_session(&session_desc)
@@ -561,13 +675,13 @@ fn sample_shadow_pcf(world_pos: vec3<f32>) -> f32 {
     let texel_size = 1.0 / shadow_dim;
 
     var shadow = 0.0;
-    for (var y = -1i; y <= 1i; y = y + 1i) {
-        for (var x = -1i; x <= 1i; x = x + 1i) {
+    for (var y = -2i; y <= 2i; y = y + 1i) {
+        for (var x = -2i; x <= 2i; x = x + 1i) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
             shadow = shadow + textureSampleCompare(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - 0.005);
         }
     }
-    return shadow / 9.0;
+    return shadow / 25.0;
 }
 
 // Cook-Torrance BRDF helper functions
@@ -682,8 +796,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         color = color + (diff_d + spec_d) * lighting.dir_light_color * NdotL_d * lighting.dir_light_intensity * shadow;
     }
 
-    // Add emission (unlit, straight to output)
-    color = color + emission;
+    // Modulate emission by lighting to preserve 3D form (must survive ACES tone mapping)
+    let emit_lum = dot(emission, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let blend = emit_lum / (emit_lum + 0.5);
+    var emit_shade = 0.15;
+    if (lighting.has_directional != 0u) {
+        let emit_NdotL = max(dot(normal, normalize(-lighting.dir_light_direction)), 0.0);
+        emit_shade = 0.1 + 0.9 * emit_NdotL;
+    }
+    let rim = pow(1.0 - NdotV, 3.0);
+    emit_shade = emit_shade + 0.35 * rim;
+    color = color * (1.0 - blend) + emission * mix(1.0, emit_shade, blend);
 
     return vec4<f32>(color, 1.0);
 }
@@ -893,13 +1016,13 @@ fn sample_shadow_pcf(world_pos: vec3<f32>) -> f32 {
     let texel_size = 1.0 / shadow_dim;
 
     var shadow = 0.0;
-    for (var y = -1i; y <= 1i; y = y + 1i) {
-        for (var x = -1i; x <= 1i; x = x + 1i) {
+    for (var y = -2i; y <= 2i; y = y + 1i) {
+        for (var x = -2i; x <= 2i; x = x + 1i) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
             shadow = shadow + textureSampleCompare(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - 0.005);
         }
     }
-    return shadow / 9.0;
+    return shadow / 25.0;
 }
 
 // Cook-Torrance BRDF helper functions
@@ -1011,8 +1134,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         mesh_color = mesh_color + (diff_d + spec_d) * lighting.dir_light_color * NdotL_d * lighting.dir_light_intensity * shadow;
     }
 
-    // Add emission
-    mesh_color = mesh_color + emission;
+    // Modulate emission by lighting to preserve 3D form (must survive ACES tone mapping)
+    let emit_lum = dot(emission, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let blend = emit_lum / (emit_lum + 0.5);
+    var emit_shade = 0.15;
+    if (lighting.has_directional != 0u) {
+        let emit_NdotL = max(dot(normal, normalize(-lighting.dir_light_direction)), 0.0);
+        emit_shade = 0.1 + 0.9 * emit_NdotL;
+    }
+    let rim = pow(1.0 - NdotV, 3.0);
+    emit_shade = emit_shade + 0.35 * rim;
+    mesh_color = mesh_color * (1.0 - blend) + emission * mix(1.0, emit_shade, blend);
 
     let mesh_valid = mesh_depth < 1.0;
     let splat_valid = splat_color.a > 0.004;
@@ -1166,9 +1298,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 pub fn get_fxaa_wgsl() -> String {
     r#"
 // FXAA 3.11 — Fast Approximate Anti-Aliasing (Timothy Lottes / NVIDIA)
+// Full implementation with edge endpoint search
 
 @group(0) @binding(0) var ldr_texture: texture_2d<f32>;
 @group(0) @binding(1) var ldr_sampler: sampler;
+
+const FXAA_EDGE_THRESHOLD: f32 = 0.063;
+const FXAA_EDGE_THRESHOLD_MIN: f32 = 0.0312;
+const FXAA_SEARCH_STEPS: i32 = 8;
+const FXAA_SEARCH_THRESHOLD: f32 = 0.25;
+const FXAA_SUBPIX_QUALITY: f32 = 0.75;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -1211,10 +1350,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let lumaMax = max(lumaM, max(max(lumaN, lumaS), max(lumaW, lumaE)));
     let lumaRange = lumaMax - lumaMin;
 
-    // FXAA quality thresholds
-    let FXAA_EDGE_THRESHOLD = 0.125;
-    let FXAA_EDGE_THRESHOLD_MIN = 0.0625;
-
     if lumaRange < max(FXAA_EDGE_THRESHOLD_MIN, lumaMax * FXAA_EDGE_THRESHOLD) {
         return vec4<f32>(rgbM, 1.0);
     }
@@ -1230,39 +1365,122 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let lumaSW = fxaa_luma(rgbSW);
     let lumaSE = fxaa_luma(rgbSE);
 
+    let lumaNS = lumaN + lumaS;
+    let lumaWE = lumaW + lumaE;
+
+    // Subpixel aliasing detection
+    let lumaL = (lumaNS + lumaWE) * 0.25;
+    let rangeL = abs(lumaL - lumaM);
+    var subpixBlend = max(0.0, (rangeL / lumaRange) - FXAA_SEARCH_THRESHOLD);
+    subpixBlend = min(FXAA_SUBPIX_QUALITY, subpixBlend * subpixBlend * (3.0 - 2.0 * subpixBlend));
+
     // Edge direction detection
-    let edgeH = abs(-2.0 * lumaW + lumaNW + lumaSW) +
-                abs(-2.0 * lumaM + lumaN + lumaS) * 2.0 +
-                abs(-2.0 * lumaE + lumaNE + lumaSE);
-    let edgeV = abs(-2.0 * lumaN + lumaNW + lumaNE) +
-                abs(-2.0 * lumaM + lumaW + lumaE) * 2.0 +
-                abs(-2.0 * lumaS + lumaSW + lumaSE);
+    let lumaNWSW = lumaNW + lumaSW;
+    let lumaNESE = lumaNE + lumaSE;
+    let lumaNWNE = lumaNW + lumaNE;
+    let lumaSWSE = lumaSW + lumaSE;
+
+    let edgeH = abs(lumaNWSW - 2.0 * lumaW) +
+                abs(lumaNS - 2.0 * lumaM) * 2.0 +
+                abs(lumaNESE - 2.0 * lumaE);
+    let edgeV = abs(lumaNWNE - 2.0 * lumaN) +
+                abs(lumaWE - 2.0 * lumaM) * 2.0 +
+                abs(lumaSWSE - 2.0 * lumaS);
 
     let isHorizontal = edgeH >= edgeV;
 
-    // Compute subpixel blend factor
-    let lumaL = (lumaN + lumaS + lumaW + lumaE) * 0.25;
-    let rangeL = abs(lumaL - lumaM);
-    var blendL = max(0.0, (rangeL / lumaRange) - 0.25);
-    blendL = min(0.75, blendL * 1.3333);
+    // Select edge normal direction (perpendicular to edge)
+    let luma1 = select(lumaW, lumaN, isHorizontal);
+    let luma2 = select(lumaE, lumaS, isHorizontal);
+    let grad1 = luma1 - lumaM;
+    let grad2 = luma2 - lumaM;
+    let is1Steepest = abs(grad1) >= abs(grad2);
 
-    // Blend along edge perpendicular
-    var blend_dir: vec2<f32>;
-    if isHorizontal {
-        if abs(lumaN - lumaM) >= abs(lumaS - lumaM) {
-            blend_dir = vec2<f32>(0.0, -texel.y);
-        } else {
-            blend_dir = vec2<f32>(0.0, texel.y);
-        }
+    let gradScaled = 0.25 * max(abs(grad1), abs(grad2));
+
+    // Step size along the edge (tangent direction)
+    var stepLength = select(texel.x, texel.y, isHorizontal);
+    var lumaLocalAvg: f32;
+
+    if is1Steepest {
+        stepLength = -stepLength;
+        lumaLocalAvg = 0.5 * (luma1 + lumaM);
     } else {
-        if abs(lumaW - lumaM) >= abs(lumaE - lumaM) {
-            blend_dir = vec2<f32>(-texel.x, 0.0);
-        } else {
-            blend_dir = vec2<f32>(texel.x, 0.0);
-        }
+        lumaLocalAvg = 0.5 * (luma2 + lumaM);
     }
 
-    let result = textureSample(ldr_texture, ldr_sampler, uv + blend_dir * blendL).rgb;
+    // Shift UV to the edge boundary (half a texel perpendicular)
+    var edgeUV = uv;
+    if isHorizontal {
+        edgeUV.y = edgeUV.y + stepLength * 0.5;
+    } else {
+        edgeUV.x = edgeUV.x + stepLength * 0.5;
+    }
+
+    // Edge tangent direction (along the edge)
+    let edgeStep = select(vec2<f32>(0.0, texel.y), vec2<f32>(texel.x, 0.0), isHorizontal);
+
+    // Search along edge in positive direction
+    var uvP = edgeUV + edgeStep;
+    var lumaEndP = fxaa_luma(textureSample(ldr_texture, ldr_sampler, uvP).rgb) - lumaLocalAvg;
+    var doneP = abs(lumaEndP) >= gradScaled;
+
+    for (var i = 1i; i < FXAA_SEARCH_STEPS && !doneP; i = i + 1i) {
+        uvP = uvP + edgeStep;
+        lumaEndP = fxaa_luma(textureSample(ldr_texture, ldr_sampler, uvP).rgb) - lumaLocalAvg;
+        doneP = abs(lumaEndP) >= gradScaled;
+    }
+
+    // Search along edge in negative direction
+    var uvN = edgeUV - edgeStep;
+    var lumaEndN = fxaa_luma(textureSample(ldr_texture, ldr_sampler, uvN).rgb) - lumaLocalAvg;
+    var doneN = abs(lumaEndN) >= gradScaled;
+
+    for (var i = 1i; i < FXAA_SEARCH_STEPS && !doneN; i = i + 1i) {
+        uvN = uvN - edgeStep;
+        lumaEndN = fxaa_luma(textureSample(ldr_texture, ldr_sampler, uvN).rgb) - lumaLocalAvg;
+        doneN = abs(lumaEndN) >= gradScaled;
+    }
+
+    // Compute distances to edge endpoints
+    var distP: f32;
+    var distN: f32;
+    if isHorizontal {
+        distP = uvP.x - uv.x;
+        distN = uv.x - uvN.x;
+    } else {
+        distP = uvP.y - uv.y;
+        distN = uv.y - uvN.y;
+    }
+
+    let isCloserToP = distP < distN;
+    let distClosest = min(distP, distN);
+    let edgeLength = distP + distN;
+
+    // Is the closer endpoint's luma delta in the same direction as the local gradient?
+    let lumaEndClosest = select(lumaEndN, lumaEndP, isCloserToP);
+    let goodSpan = (lumaEndClosest < 0.0) != (lumaM - lumaLocalAvg < 0.0);
+
+    // Edge blend factor: closer to edge endpoint = stronger blend
+    var edgeBlend: f32;
+    if goodSpan {
+        edgeBlend = 0.5 - distClosest / edgeLength;
+    } else {
+        edgeBlend = 0.0;
+    }
+
+    // Use the maximum of edge blend and subpixel blend
+    let finalBlend = max(edgeBlend, subpixBlend);
+
+    // Final sample: blend perpendicular to the edge
+    var finalUV = uv;
+    if isHorizontal {
+        finalUV.y = finalUV.y + stepLength * finalBlend;
+    } else {
+        finalUV.x = finalUV.x + stepLength * finalBlend;
+    }
+
+    let result = textureSample(ldr_texture, ldr_sampler, finalUV).rgb;
     return vec4<f32>(result, 1.0);
 }
 "#

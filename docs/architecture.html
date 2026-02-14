@@ -39,6 +39,8 @@ graph TB
         TAGS["Tags / EntityId"]
         CC["CharacterController"]
         GS["GaussianSplat"]
+        HIDDEN["Hidden<br/>visibility marker"]
+        MAT_OVR["MaterialOverride<br/>runtime emission/roughness"]
     end
 
     subgraph SCENE["Scene System"]
@@ -52,11 +54,23 @@ graph TB
         GPU["GpuState<br/>wgpu device/queue/surface"]
         PIPE_YAML["Pipeline YAML<br/>DAG of passes"]
         COMPILED["CompiledPipeline<br/>resources + passes"]
+        SHADOW["Shadow Pass<br/>directional shadow map"]
         GBUF["G-Buffer Pass<br/>albedo + normal + depth"]
-        LIGHT["Lighting Pass<br/>point lights + ambient"]
+        LIGHT["Lighting Pass<br/>Cook-Torrance GGX + shadows"]
+        BLOOM_P["Bloom Pass<br/>HDR glow extraction"]
         TONE["Tonemap Pass<br/>HDR → SDR"]
+        FXAA_P["FXAA Pass<br/>anti-aliasing"]
         SPLAT_P["Splat Pass<br/>Gaussian billboards"]
         FWD["Forward Fallback"]
+    end
+
+    subgraph UI["UI Overlay (Phase 16)"]
+        FONT["BitmapFont<br/>6×8 pixel atlas, 95 glyphs"]
+        UI_R["UiRenderer<br/>immediate-mode 2D"]
+        UI_TEXT["ui.text()<br/>screen-space text"]
+        UI_RECT["ui.rect()<br/>colored rectangles"]
+        UI_FLASH["ui.flash()<br/>screen effects"]
+        ENT_CMD["EntityCommandQueue<br/>deferred spawn/destroy"]
     end
 
     subgraph SHADER["Shader System"]
@@ -76,9 +90,12 @@ graph TB
         ENV["Per-Entity Environments<br/>self table + metatable"]
         HOOKS["Lifecycle Hooks<br/>init / update / on_reload"]
         API_IN["input API<br/>pressed / just_pressed"]
-        API_ENT["entity API<br/>get/set position/rotation/light"]
+        API_ENT["entity API<br/>position/rotation/light/scale/visible"]
+        API_CMD["entity commands<br/>spawn / destroy"]
+        API_UI["ui API<br/>text / rect / flash / screen_size"]
         API_EVT["events API<br/>events.emit()"]
         API_PHY["physics API<br/>raycast / overlap"]
+        API_AUD["audio API<br/>play_sfx / play_music"]
         GAME_T["game table<br/>shared state"]
     end
 
@@ -154,8 +171,11 @@ graph TB
 
     IS -->|"raw ptr"| API_IN
     SW -->|"raw mut ptr"| API_ENT
+    ENT_CMD -->|"raw mut ptr"| API_CMD
+    UI_R -->|"raw mut ptr"| API_UI
     EB -->|"raw mut ptr"| API_EVT
     PW -->|"raw ptr"| API_PHY
+    AUDIO_S -->|"raw mut ptr"| API_AUD
 
     LUA --> ENV
     ENV --> HOOKS
@@ -165,12 +185,21 @@ graph TB
     STEP --> SW
 
     PIPE_YAML --> COMPILED
+    COMPILED --> SHADOW
     COMPILED --> GBUF
     COMPILED --> LIGHT
+    COMPILED --> BLOOM_P
     COMPILED --> TONE
+    COMPILED --> FXAA_P
     COMPILED --> SPLAT_P
     SLANG --> WGSL
     SLANG --> REFLECT
+
+    FONT --> UI_R
+    UI_R --> UI_TEXT
+    UI_R --> UI_RECT
+    UI_R --> UI_FLASH
+    ENT_CMD -->|"deferred"| SW
 
     WATCH --> W_SHADER
     WATCH --> W_SCENE
@@ -191,13 +220,15 @@ graph TB
     classDef script fill:#1a5276,stroke:#e94560,color:#fff
     classDef input fill:#1e8449,stroke:#fff,color:#fff
     classDef event fill:#b7950b,stroke:#fff,color:#000
+    classDef ui fill:#7b2d8e,stroke:#e94560,color:#fff
 
     class EL,DT,PAUSE core
-    class SW,TRANSFORM,MESH_R,PL,PLAYER,CAM,SCRIPT_C,CC,GS,TAGS ecs
-    class GPU,COMPILED,GBUF,LIGHT,TONE,SPLAT_P,FWD render
-    class LUA,ENV,HOOKS,API_IN,API_ENT,API_EVT,API_PHY,GAME_T script
+    class SW,TRANSFORM,MESH_R,PL,PLAYER,CAM,SCRIPT_C,CC,GS,TAGS,HIDDEN,MAT_OVR ecs
+    class GPU,COMPILED,SHADOW,GBUF,LIGHT,BLOOM_P,TONE,FXAA_P,SPLAT_P,FWD render
+    class LUA,ENV,HOOKS,API_IN,API_ENT,API_CMD,API_UI,API_EVT,API_PHY,API_AUD,GAME_T script
     class IS,BINDINGS,SYNTH,CURSOR input
     class EB,SCHEMA,EMIT event
+    class FONT,UI_R,UI_TEXT,UI_RECT,UI_FLASH,ENT_CMD ui
     </pre>
   </div>
 
@@ -210,8 +241,10 @@ sequenceDiagram
     participant I as InputState
     participant P as PhysicsWorld
     participant S as ScriptRuntime
+    participant Q as EntityCmdQueue
     participant EB as EventBus
     participant R as Renderer
+    participant U as UiRenderer
 
     W->>E: KeyboardInput / MouseInput
     E->>I: handle_window_event()
@@ -232,17 +265,30 @@ sequenceDiagram
         S->>I: input.just_pressed()
         S->>EB: events.emit()
         S->>E: entity.set_position()
+        S->>Q: entity.spawn() / destroy()
+        S->>U: ui.text() / ui.rect()
     end
+
+    E->>Q: process_entity_commands()
+    Q-->>E: spawn / destroy / scale / visible
 
     E->>EB: tick(dt) + flush()
     E->>E: update_transforms()
 
-    E->>R: execute_pipeline()
+    E->>R: execute_pipeline_to_view()
+    R->>R: Shadow Pass
     R->>R: G-Buffer Pass
     R->>R: Splat Pass
-    R->>R: Lighting Pass
+    R->>R: Lighting Pass (Cook-Torrance GGX)
+    R->>R: Bloom Pass
     R->>R: Tonemap Pass
+    R->>R: FXAA Pass
 
+    E->>U: ui.render() [LoadOp::Load]
+    U->>U: colored rects pipeline
+    U->>U: textured text pipeline
+
+    E->>E: present swapchain
     E->>I: begin_frame() [clear transient]
     E->>W: request_redraw()
     </pre>
@@ -279,10 +325,15 @@ flowchart LR
     </pre>
   </div>
 
-  <h2>Deferred Rendering Pipeline</h2>
+  <h2>Full Rendering Pipeline</h2>
   <div class="diagram">
     <pre class="mermaid">
 flowchart LR
+    subgraph Shadow["Shadow Pass"]
+        SH1["Directional Light View"]
+        SH2["Depth-only Render<br/>shadow_depth texture"]
+    end
+
     subgraph GBuf["G-Buffer Pass"]
         G1["Vertex Shader<br/>MVP transform"]
         G2["Fragment Shader<br/>output albedo, normal, depth"]
@@ -296,8 +347,15 @@ flowchart LR
     subgraph Light["Lighting Pass"]
         L1["Fullscreen Quad"]
         L2["Reconstruct world pos<br/>inv_view_projection × depth"]
-        L3["Point Light Loop<br/>attenuation = I / (1+d²) × range⁴"]
-        L4["Depth Composite<br/>mesh vs splat"]
+        L3["Cook-Torrance GGX<br/>D·F·G / (4·NdotL·NdotV)"]
+        L4["Shadow Sampling<br/>PCF soft shadows"]
+        L5["Depth Composite<br/>mesh vs splat"]
+    end
+
+    subgraph Bloom["Bloom Pass"]
+        BL1["HDR Threshold<br/>extract bright pixels"]
+        BL2["Gaussian Blur<br/>separable kernel"]
+        BL3["Additive Blend<br/>bloom + scene"]
     end
 
     subgraph Tone["Tonemap Pass"]
@@ -305,15 +363,34 @@ flowchart LR
         T2["Gamma Correction"]
     end
 
+    subgraph FXAA["FXAA Pass"]
+        FX1["Edge Detection<br/>luma contrast"]
+        FX2["Subpixel Blend<br/>anti-aliased output"]
+    end
+
+    subgraph UIPass["UI Overlay Pass"]
+        UI1["Colored Rects Pipeline<br/>solid quads, alpha blend"]
+        UI2["Textured Text Pipeline<br/>6×8 bitmap font atlas"]
+        UI3["Screen Flash<br/>fullscreen fade effect"]
+    end
+
+    Shadow -->|"shadow_depth"| Light
     GBuf -->|"albedo_rt<br/>normal_rt<br/>depth"| Light
     Splat -->|"splat_color<br/>splat_depth"| Light
-    Light -->|"hdr_rt"| Tone
-    Tone -->|"swapchain"| SCREEN["Display"]
+    Light -->|"hdr_rt"| Bloom
+    Bloom -->|"bloom_rt"| Tone
+    Tone -->|"ldr_rt"| FXAA
+    FXAA -->|"swapchain"| UIPass
+    UIPass -->|"LoadOp::Load"| SCREEN["Display"]
 
+    style Shadow fill:#2c3e50,color:#fff
     style GBuf fill:#0f3460,color:#fff
     style Splat fill:#533483,color:#fff
     style Light fill:#1a5276,color:#fff
+    style Bloom fill:#8e44ad,color:#fff
     style Tone fill:#e94560,color:#fff
+    style FXAA fill:#27ae60,color:#fff
+    style UIPass fill:#7b2d8e,color:#fff
     </pre>
   </div>
 

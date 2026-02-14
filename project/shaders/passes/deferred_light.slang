@@ -88,13 +88,13 @@ float sampleShadowPCF(float3 worldPos) {
     float2 texelSize = 1.0 / float2(w, h);
 
     float shadow = 0.0;
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
+    for (int y = -2; y <= 2; y++) {
+        for (int x = -2; x <= 2; x++) {
             float2 offset = float2(x, y) * texelSize;
             shadow += shadow_map.SampleCmpLevelZero(shadow_sampler, shadowUV + offset, shadowDepth - 0.005);
         }
     }
-    return shadow / 9.0;
+    return shadow / 25.0;
 }
 
 [shader("fragment")]
@@ -185,8 +185,17 @@ float4 fs_main(VertexOutput input) : SV_Target0 {
         color += (diffD + specD) * lighting.dir_light_color * NdotLD * lighting.dir_light_intensity * shadow;
     }
 
-    // Add emission (unlit, straight to output)
-    color += emission;
+    // Modulate emission by lighting to preserve 3D form (must survive ACES tone mapping)
+    float emit_lum = dot(emission, float3(0.2126, 0.7152, 0.0722));
+    float blendE = emit_lum / (emit_lum + 0.5);
+    float emit_shade = 0.15;
+    if (lighting.has_directional != 0) {
+        float emit_NdotL = max(dot(normal, normalize(-lighting.dir_light_direction)), 0.0);
+        emit_shade = 0.1 + 0.9 * emit_NdotL;
+    }
+    float rimE = pow(1.0 - NdotV, 3.0);
+    emit_shade = emit_shade + 0.35 * rimE;
+    color = color * (1.0 - blendE) + emission * lerp(1.0, emit_shade, blendE);
 
     return float4(color, 1.0);
 }

@@ -1,0 +1,59 @@
+name: "Audio Test - Snake Sweeper SFX"
+settings:
+  ambient_light: [0.05, 0.05, 0.08]
+  gravity: [0, 0, 0]
+
+entities:
+  # Orbiting camera
+  - id: camera
+    tags: [camera]
+    components:
+      transform:
+        position: [0, 8, 10]
+        rotation: [-30, 0, 0]
+      camera:
+        fov: 60
+        near: 0.1
+        far: 100
+        role: main
+
+  # Directional light
+  - id: sun
+    tags: [light]
+    components:
+      directional_light:
+        direction: [0.3, -1.0, 0.2]
+        color: [1.0, 0.95, 0.9]
+        intensity: 2.0
+        shadow_extent: 15.0
+
+  # Floor
+  - id: floor
+    tags: [object]
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [15, 0.1, 15]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_floor.yaml
+
+  # Central speaker object
+  - id: speaker
+    tags: [object]
+    components:
+      transform:
+        position: [0, 0.5, 0]
+        scale: [1.0, 1.0, 1.0]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/neon_cyan.yaml
+
+  # Audio controller
+  - id: audio_controller
+    tags: [ui]
+    components:
+      transform:
+        position: [0, 0, 0]
+      script:
+        source: logic/audio_test.lua

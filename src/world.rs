@@ -10,6 +10,100 @@ use crate::physics::{self, CharacterController, PhysicsShape, PhysicsWorld};
 use crate::scene::{EntityDef, SceneFile};
 use crate::splat::SplatCache;
 
+/// Deferred entity commands from Lua scripts, processed each frame.
+#[derive(Default)]
+pub struct EntityCommandQueue {
+    pub spawns: Vec<SpawnCommand>,
+    pub destroys: Vec<String>,
+    pub scale_updates: Vec<(String, [f32; 3])>,
+    pub visibility_updates: Vec<(String, bool)>,
+}
+
+pub struct SpawnCommand {
+    pub id: String,
+    pub mesh: String,
+    pub material: String,
+    pub position: [f32; 3],
+    pub scale: [f32; 3],
+}
+
+impl EntityCommandQueue {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.spawns.clear();
+        self.destroys.clear();
+        self.scale_updates.clear();
+        self.visibility_updates.clear();
+    }
+}
+
+/// Spawn a runtime entity (from Lua). Simpler than scene spawning: just Transform + MeshRenderer.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_runtime_entity(
+    scene_world: &mut SceneWorld,
+    id: &str,
+    mesh: &str,
+    material: &str,
+    position: [f32; 3],
+    scale: [f32; 3],
+    device: &wgpu::Device,
+    project_root: &Path,
+    mesh_cache: &mut MeshCache,
+    material_cache: &mut MaterialCache,
+) -> bool {
+    if scene_world.entity_registry.contains_key(id) {
+        tracing::warn!("spawn_runtime_entity: id '{}' already exists", id);
+        return false;
+    }
+
+    let mesh_handle = match mesh_cache.get_or_load(device, project_root, mesh) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("spawn_runtime_entity: mesh '{}' failed: {}", mesh, e);
+            return false;
+        }
+    };
+    let material_handle = match material_cache.get_or_load(device, project_root, material) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("spawn_runtime_entity: material '{}' failed: {}", material, e);
+            return false;
+        }
+    };
+
+    let transform = Transform {
+        position: glam::Vec3::from(position),
+        scale: glam::Vec3::from(scale),
+        dirty: true,
+        ..Default::default()
+    };
+    let mesh_renderer = MeshRenderer {
+        mesh_handle,
+        material_handle,
+    };
+    let entity_id = EntityId(id.to_string());
+    let tags = Tags(vec![]);
+
+    let entity = scene_world
+        .world
+        .spawn((entity_id, tags, transform, mesh_renderer));
+    scene_world.entity_registry.insert(id.to_string(), entity);
+    true
+}
+
+/// Destroy a runtime entity by its string ID.
+pub fn destroy_runtime_entity(scene_world: &mut SceneWorld, id: &str) -> bool {
+    if let Some(entity) = scene_world.entity_registry.remove(id) {
+        let _ = scene_world.world.despawn(entity);
+        true
+    } else {
+        false
+    }
+}
+
 /// Central scene state: the ECS world plus entity name registry.
 pub struct SceneWorld {
     pub world: World,

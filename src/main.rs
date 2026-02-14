@@ -6,6 +6,7 @@ mod command;
 mod components;
 mod events;
 mod engine;
+mod font;
 mod input;
 mod material;
 mod mesh;
@@ -20,6 +21,7 @@ mod splat;
 mod test_runner;
 mod transform;
 mod tween;
+mod ui;
 mod watcher;
 mod world;
 
