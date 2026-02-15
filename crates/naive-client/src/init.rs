@@ -66,30 +66,226 @@ build:
         &format!(
             r#"# {name} — nAIVE Game Project
 
+This is a game built with the nAIVE engine. Games are NOT Rust projects — they are
+YAML scenes + Lua scripts + assets, run by the `naive` binary.
+
 ## Project Structure
-- `naive.yaml` — Project configuration
-- `scenes/` — Scene definitions (YAML)
-- `logic/` — Game scripts (Lua)
-- `assets/` — Meshes, materials, textures, audio
-- `shaders/` — Custom SLANG shaders
-- `pipelines/` — Render pipeline definitions
-- `input/` — Input binding configurations
-- `events/` — Event schema definitions
-- `tests/` — Automated Lua test scripts
+- `naive.yaml` — Project configuration (name, version, default scene/pipeline)
+- `scenes/` — Scene definitions (YAML) — entities, components, world settings
+- `logic/` — Game scripts (Lua) — attached to entities via the `script` component
+- `assets/` — Meshes (.gltf, .glb, .ply), materials (.yaml), textures (.png, .jpg), audio (.ogg, .wav)
+- `shaders/` — Custom SLANG shaders (passes/ and modules/)
+- `pipelines/` — Render pipeline definitions (YAML)
+- `input/` — Input binding configurations (YAML)
+- `events/` — Event schema definitions (YAML)
+- `tests/` — Automated Lua test scripts (headless, no GPU needed)
 - `docs/` — PRD, game design documents, and project notes
 
 ## Commands
-- `naive run` — Run the game
+- `naive run` — Run the game (loads default_scene from naive.yaml)
 - `naive run --scene scenes/other.yaml` — Run a specific scene
-- `naive test` — Run all tests
-- `naive test tests/test_basic.lua` — Run a specific test
-- `naive build` — Bundle for distribution
+- `naive test` — Run all tests (discovers test_*.lua in tests/)
+- `naive test tests/test_basic.lua` — Run a specific test file
+- `naive build` — Bundle for standalone distribution
+- `naive build --target windows` — Cross-platform build
 
-## Development
+## Development Workflow
 - Edit YAML scenes to add/modify entities and components
 - Write Lua scripts for game logic (attached via `script` component)
-- The engine hot-reloads scenes, scripts, materials, and shaders on save
+- The engine hot-reloads scenes, scripts, materials, and shaders on file save
 - Use `naive test` to verify gameplay logic in headless mode
+- Each entity has a unique string `id` in the scene YAML — this is how Lua references entities
+
+## Scene Format (YAML)
+
+Scenes define entities with components:
+
+```yaml
+name: "Scene Name"
+settings:
+  ambient_light: [0.3, 0.3, 0.35]   # RGB
+  gravity: [0, -9.81, 0]             # physics gravity
+
+entities:
+  - id: my_entity                    # unique string ID
+    components:
+      transform:
+        position: [x, y, z]
+        rotation: [pitch, yaw, roll]  # degrees
+        scale: [sx, sy, sz]
+      mesh_renderer:
+        mesh: primitive://cube        # or assets/meshes/file.gltf
+        material: assets/materials/mat.yaml
+      rigid_body:
+        body_type: dynamic            # dynamic | fixed | kinematic
+      collider:
+        shape: cuboid                 # cuboid | sphere | capsule
+        half_extents: [x, y, z]       # for cuboid
+      point_light:
+        color: [r, g, b]
+        intensity: 15.0
+        range: 100.0
+      script:
+        path: logic/my_script.lua
+      player: {{}}                      # marks as FPS player
+      character_controller:
+        speed: 5.0
+        jump_force: 8.0
+```
+
+Available components: `transform`, `camera`, `mesh_renderer`, `point_light`,
+`directional_light`, `rigid_body`, `collider`, `character_controller`, `player`,
+`script`, `gaussian_splat`, `tags`.
+
+## Lua Scripting API — COMPLETE REFERENCE
+
+### Script Lifecycle
+
+Scripts are attached to entities. Each script runs in its own sandbox.
+The variable `_entity_string_id` contains this entity's YAML id.
+Use the `self` table for per-script persistent state.
+
+```lua
+function init()              -- called once on entity creation
+function update(dt)          -- called every frame (dt = seconds)
+function fixed_update(dt)    -- called at fixed physics timestep
+function on_destroy()        -- called when entity is destroyed
+function on_collision(other_entity_id)    -- physics collision
+function on_trigger_enter(other_entity_id) -- trigger volume enter
+function on_trigger_exit(other_entity_id)  -- trigger volume exit
+function on_reload()         -- called after hot-reload
+```
+
+### Entity API — `entity.*`
+
+All functions take an entity's string ID as the first argument:
+
+```lua
+-- Transform
+local x, y, z = entity.get_position(id)
+entity.set_position(id, x, y, z)
+entity.set_rotation(id, pitch_deg, yaw_deg, roll_deg)
+local sx, sy, sz = entity.get_scale(id)
+entity.set_scale(id, sx, sy, sz)
+
+-- Lighting
+entity.set_light(id, intensity)
+entity.set_light_color(id, r, g, b)
+
+-- Material overrides (runtime only)
+entity.set_emission(id, r, g, b)
+entity.set_roughness(id, value)
+entity.set_metallic(id, value)
+
+-- Spawn new entity: entity.spawn(id, mesh, material, x, y, z, sx, sy, sz)
+entity.spawn("bullet_1", "primitive://cube", "assets/materials/default.yaml", 0, 1, 0, 0.1, 0.1, 0.1)
+
+-- Destroy entity
+entity.destroy(id)
+
+-- Visibility
+entity.set_visible(id, true)  -- or false to hide
+```
+
+### Input API — `input.*`
+
+Actions are defined in `input/bindings.yaml`.
+
+```lua
+input.pressed("action_name")       -- true while held down
+input.just_pressed("action_name")  -- true only on the frame pressed
+local mx, my = input.mouse_delta() -- mouse movement since last frame
+```
+
+### UI API — `ui.*`
+
+Draw HUD elements (called every frame in update):
+
+```lua
+ui.text(x, y, "text string", font_size, r, g, b, a)
+ui.rect(x, y, width, height, r, g, b, a)   -- filled rectangle
+ui.flash(r, g, b, a, duration_seconds)      -- screen flash effect
+local w = ui.screen_width()
+local h = ui.screen_height()
+```
+
+### Audio API — `audio.*`
+
+```lua
+audio.play_sfx("sound_id", "assets/audio/file.ogg", volume)
+audio.play_music("assets/audio/music.ogg", volume, fade_in_secs)
+audio.stop_sound("sound_id", fade_out_secs)
+audio.stop_music(fade_out_secs)
+```
+
+### Physics API — `physics.*`
+
+```lua
+-- Raycast returns: hit(bool), distance, normal_x, normal_y, normal_z
+local hit, dist, nx, ny, nz = physics.raycast(ox, oy, oz, dx, dy, dz, max_dist)
+```
+
+### Events API — `events.*`
+
+Event types are defined in `events/schema.yaml`.
+
+```lua
+events.emit("event.type", {{ key1 = "value1", key2 = "value2" }})
+```
+
+### Game State — `game` table
+
+Shared across all scripts. Comes with defaults; add your own keys:
+
+```lua
+game.player_health   -- default: 100
+game.game_over       -- default: false
+game.level_complete  -- default: false
+game.score = (game.score or 0) + 10  -- add custom keys
+```
+
+### Logging
+
+```lua
+log("message")         -- appears in engine output as [Lua] message
+print("debug", value)  -- also logs to engine output
+```
+
+### Per-Script State — `self` table
+
+Persists across frames and survives hot-reload:
+
+```lua
+function init()
+    self.health = 100
+    self.timer = 0
+end
+function update(dt)
+    self.timer = self.timer + dt
+end
+```
+
+## Test API (for tests/ scripts)
+
+Tests run headless (no GPU). Each `test_*()` function gets a fresh runner.
+
+```lua
+scene.load("scenes/main.yaml")                -- load a scene
+scene.find("entity_id")                       -- returns table or nil
+  :get("transform")                           -- returns {{position={{x,y,z}}}}
+wait_for_event("lifecycle.scene_loaded", 10)  -- wait with timeout
+wait_seconds(1.0)                             -- advance game time
+wait_frames(5)                                -- advance N frames
+wait_until(function() return cond end, 10)    -- wait for condition
+get_position("entity_id")                     -- returns x, y, z
+get_game_value("key")                         -- read game table
+event_occurred("event.type", {{key="val"}})    -- check event log
+input.inject("action", "press", nil)          -- simulate input
+input.inject("action", "release", nil)
+input.inject("action", "axis", {{0, 1}})       -- axis: {{x, y}}
+log.info("test message")
+assert(condition, "error message")
+```
 "#
         ),
     )?;
