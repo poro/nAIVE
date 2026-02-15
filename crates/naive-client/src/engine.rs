@@ -381,6 +381,15 @@ impl Engine {
             }
         }
 
+        // Register camera API (world_to_screen)
+        if let (Some(cs), Some(gpu)) = (&self.camera_state, &self.gpu) {
+            let cs_ptr = cs as *const crate::camera::CameraState;
+            let config_ptr = &gpu.config as *const wgpu::SurfaceConfiguration;
+            if let Err(e) = script_runtime.register_camera_api(cs_ptr, config_ptr) {
+                tracing::error!("Failed to register camera API: {}", e);
+            }
+        }
+
         // Register event bus API
         {
             let bus_ptr = &mut self.event_bus as *mut crate::events::EventBus;

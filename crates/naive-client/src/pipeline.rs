@@ -1988,10 +1988,16 @@ pub fn execute_pipeline_to_view(
             .map(|e| [e[0], e[1], e[2], 0.0])
             .unwrap_or(material.uniform.emission);
 
+        let base_color = mat_override
+            .as_ref()
+            .and_then(|o| o.base_color)
+            .map(|c| [c[0], c[1], c[2], material.uniform.base_color[3]])
+            .unwrap_or(material.uniform.base_color);
+
         let draw_uniform = DrawUniforms {
             model_matrix: model_matrix.to_cols_array_2d(),
             normal_matrix: normal_matrix.to_cols_array_2d(),
-            base_color: material.uniform.base_color,
+            base_color,
             roughness,
             metallic,
             _pad: [0.0; 2],

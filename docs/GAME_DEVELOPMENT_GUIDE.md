@@ -289,29 +289,41 @@ The `entity` table is a global API where every function takes an entity's string
 local x, y, z = entity.get_position(_entity_string_id)
 entity.set_position(_entity_string_id, x, y + 1, z)
 
+local pitch, yaw, roll = entity.get_rotation(_entity_string_id) -- returns degrees
 entity.set_rotation(_entity_string_id, pitch_deg, yaw_deg, roll_deg)
 
 local sx, sy, sz = entity.get_scale(_entity_string_id)
 entity.set_scale(_entity_string_id, sx, sy, sz)
+
+-- Entity queries
+local alive = entity.exists("some_id") -- true if entity is in the world
 
 -- Lighting
 entity.set_light(_entity_string_id, intensity)
 entity.set_light_color(_entity_string_id, r, g, b)
 
 -- Material overrides (runtime only, does not modify YAML)
+entity.set_base_color(_entity_string_id, r, g, b) -- override base albedo color
 entity.set_emission(_entity_string_id, r, g, b)
 entity.set_roughness(_entity_string_id, value)
 entity.set_metallic(_entity_string_id, value)
 
 -- Spawn a new entity at runtime
-entity.spawn("new_id", "primitive://cube", "assets/materials/default.yaml", x, y, z, sx, sy, sz)
+entity.spawn("new_id", "procedural:cube", "assets/materials/default.yaml", x, y, z, sx, sy, sz)
 
--- Destroy an entity
+-- Destroy an entity (CAUTION: deferred to end-of-frame — see section below)
 entity.destroy("some_entity_id")
+entity.destroy_by_prefix("bullet_") -- bulk destroy all entities with matching prefix
 
 -- Show/hide an entity
 entity.set_visible("some_entity_id", false)
 ```
+
+> **Warning: `entity.destroy()` is deferred.** Destroy commands execute at end-of-frame.
+> If you call `entity.spawn(id)` with the same ID after `entity.destroy(id)` in the
+> same frame, the spawn is a no-op and the deferred destroy removes the entity.
+> **Safe pattern:** Never destroy entities you plan to re-use. Hide them with
+> `entity.set_visible(id, false)` and reposition instead.
 
 ### Input API
 
@@ -326,8 +338,22 @@ if input.just_pressed("jump") then
     -- Jump logic
 end
 
+-- Check if ANY action was pressed this frame (useful for "press any key" screens)
+if input.any_just_pressed() then
+    -- Start game
+end
+
 -- Get mouse movement since last frame
 local mx, my = input.mouse_delta()
+```
+
+### Camera API
+
+```lua
+-- Project world coordinates to screen pixels
+local sx, sy, visible = camera.world_to_screen(x, y, z)
+-- sx, sy = screen pixel coordinates
+-- visible = true if the point is in front of the camera and inside the viewport
 ```
 
 ### UI API
@@ -345,6 +371,9 @@ ui.flash(1.0, 0.0, 0.0, 0.3, 0.5)
 -- Get screen dimensions
 local w = ui.screen_width()
 local h = ui.screen_height()
+
+-- Measure text width in pixels at a given font size
+local tw = ui.text_width("hello", 24)
 ```
 
 ### Audio API
@@ -373,6 +402,15 @@ local hit, dist, nx, ny, nz = physics.raycast(0, 1, 0, 0, -1, 0, 100.0)
 if hit then
     log("Hit surface at distance " .. dist)
 end
+```
+
+### Math Utilities
+
+Added to the standard Lua `math` table:
+
+```lua
+math.lerp(a, b, t)           -- linear interpolation: a + (b - a) * t
+math.clamp(value, min, max)  -- clamp value to [min, max]
 ```
 
 ### Events API

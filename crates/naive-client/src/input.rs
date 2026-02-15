@@ -323,6 +323,16 @@ impl InputState {
         false
     }
 
+    /// Check if any mapped action was just pressed this frame.
+    pub fn any_just_pressed(&self) -> bool {
+        for action in self.bindings.actions.keys() {
+            if self.just_pressed(action) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Get a 2D movement axis from WASD-style bindings.
     pub fn axis_2d(&self, forward: &str, backward: &str, left: &str, right: &str) -> Vec2 {
         let mut axis = Vec2::ZERO;

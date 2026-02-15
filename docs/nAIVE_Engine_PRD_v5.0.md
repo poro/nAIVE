@@ -1073,6 +1073,25 @@ All v4.0 components remain. v5.0 adds:
 | 3 | Headless mode improvements for testing |
 | 4 | State delta encoding/decoding in naive-core |
 
+**Phase 1.5 (Informed by Snake Sweeper Devlog): Lua API Polish**
+
+Snake Sweeper was built by Claude Code (Opus 4.6) in a single session using only `naive init` + CLAUDE.md as documentation. The devlog identified concrete API gaps that blocked or complicated the build. These are small, focused additions that improve the game development experience without architectural changes.
+
+| API | Priority | Rationale |
+|-----|----------|-----------|
+| `entity.get_rotation(id) -> pitch, yaw, roll` | High | Complete the transform API. `set_rotation` exists but `get_rotation` doesn't. Any game with dynamic rotation needs manual tracking without this. |
+| `entity.exists(id) -> bool` | High | No way to check if an entity is alive. `entity.destroy()` is deferred to end-of-frame, creating a race condition with `entity.spawn()` in the same frame. `exists()` enables defensive programming. |
+| `entity.set_base_color(id, r, g, b)` | High | Only emission/roughness/metallic can be overridden at runtime. Base color requires pre-authored materials, limiting dynamic visual state changes. The devlog used emission-only tinting as a workaround, producing a glow-heavy aesthetic. |
+| `camera.world_to_screen(x, y, z) -> sx, sy, visible` | High | Essential for any game that overlays UI on 3D entities (damage numbers, name tags, Minesweeper numbers). The devlog manually calculated screen projection from camera FOV — 5 lines of fragile math that breaks with camera movement. |
+| `input.any_just_pressed() -> bool` | Medium | No "any key" query. Splash screens require checking every mapped action individually. |
+| `ui.text_width(text, font_size) -> pixels` | Medium | No text measurement. Centering text requires magic numbers tuned by eye. |
+| `entity.destroy_by_prefix(prefix)` | Medium | Bulk entity cleanup. Procedural games (grids, particles) track hundreds of entity IDs in arrays for cleanup. |
+| `math.lerp(a, b, t) -> number` | Low | Used constantly for animations, fades, easing. Currently written inline everywhere. |
+
+**Key Discovery: Deferred `entity.destroy()` Behavior**
+
+`entity.destroy(id)` is queued and executed at end-of-frame. If `entity.spawn(id)` is called in the same frame after `entity.destroy(id)`, the spawn is a no-op (entity still exists), and the deferred destroy then removes it. This caused invisible entities and immediate deaths on level transitions. The safe pattern is: **never destroy entities you might re-use; hide them with `set_visible(false)` and reposition.** This must be documented in CLAUDE.md, the Game Development Guide, and engine docstrings.
+
 **Phase 2 (Weeks 5-12): Intelligence Layer**
 
 | Weeks | Deliverable |

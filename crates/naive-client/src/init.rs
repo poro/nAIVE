@@ -189,15 +189,20 @@ All functions take an entity's string ID as the first argument:
 -- Transform
 local x, y, z = entity.get_position(id)
 entity.set_position(id, x, y, z)
+local pitch, yaw, roll = entity.get_rotation(id)   -- returns degrees
 entity.set_rotation(id, pitch_deg, yaw_deg, roll_deg)
 local sx, sy, sz = entity.get_scale(id)
 entity.set_scale(id, sx, sy, sz)
+
+-- Entity queries
+local alive = entity.exists(id)  -- true if entity is in the world
 
 -- Lighting
 entity.set_light(id, intensity)
 entity.set_light_color(id, r, g, b)
 
 -- Material overrides (runtime only)
+entity.set_base_color(id, r, g, b)   -- override base albedo color
 entity.set_emission(id, r, g, b)
 entity.set_roughness(id, value)
 entity.set_metallic(id, value)
@@ -205,8 +210,9 @@ entity.set_metallic(id, value)
 -- Spawn new entity: entity.spawn(id, mesh, material, x, y, z, sx, sy, sz)
 entity.spawn("bullet_1", "procedural:sphere", "assets/materials/default.yaml", 0, 1, 0, 0.1, 0.1, 0.1)
 
--- Destroy entity
+-- Destroy entity (CAUTION: deferred to end-of-frame — see Important Notes below)
 entity.destroy(id)
+entity.destroy_by_prefix("bullet_")  -- bulk destroy all entities with matching prefix
 
 -- Visibility
 entity.set_visible(id, true)  -- or false to hide
@@ -219,6 +225,7 @@ Actions are defined in `input/bindings.yaml`.
 ```lua
 input.pressed("action_name")       -- true while held down
 input.just_pressed("action_name")  -- true only on the frame pressed
+input.any_just_pressed()           -- true if ANY action pressed this frame
 local mx, my = input.mouse_delta() -- mouse movement since last frame
 ```
 
@@ -232,6 +239,7 @@ ui.rect(x, y, width, height, r, g, b, a)   -- filled rectangle
 ui.flash(r, g, b, a, duration_seconds)      -- screen flash effect
 local w = ui.screen_width()
 local h = ui.screen_height()
+local tw = ui.text_width("hello", 24)       -- pixel width of text at font size
 ```
 
 ### Audio API — `audio.*`
@@ -243,11 +251,29 @@ audio.stop_sound("sound_id", fade_out_secs)
 audio.stop_music(fade_out_secs)
 ```
 
+### Camera API — `camera.*`
+
+```lua
+-- Project world coordinates to screen pixels
+local sx, sy, visible = camera.world_to_screen(x, y, z)
+-- sx, sy = screen pixel coordinates
+-- visible = true if the point is in front of the camera and inside the viewport
+```
+
 ### Physics API — `physics.*`
 
 ```lua
 -- Raycast returns: hit(bool), distance, normal_x, normal_y, normal_z
 local hit, dist, nx, ny, nz = physics.raycast(ox, oy, oz, dx, dy, dz, max_dist)
+```
+
+### Math Utilities
+
+Added to the standard Lua `math` table:
+
+```lua
+math.lerp(a, b, t)           -- linear interpolation: a + (b - a) * t
+math.clamp(value, min, max)  -- clamp value to [min, max]
 ```
 
 ### Events API — `events.*`
@@ -290,12 +316,22 @@ function update(dt)
 end
 ```
 
-## Important Limitations
+## Important Notes
+
+### `entity.destroy()` Is Deferred
+
+`entity.destroy(id)` is queued and executes at END of frame. If you call
+`entity.spawn(id)` with the same ID in the same frame, the spawn is a no-op
+(entity still exists) and the deferred destroy then removes it — leaving no entity.
+
+**Safe pattern:** Never destroy entities you plan to re-use. Instead, hide them
+with `entity.set_visible(id, false)` and reposition. Use `entity.exists(id)` to
+check if an entity is alive before operating on it.
+
+## Known Limitations
 
 Know what the engine does NOT have so you don't waste time:
 
-- **No `entity.get_rotation()`** — you can set rotation but not read it back.
-  Track rotation yourself in `self` (e.g., `self.angle`).
 - **No `scene.find()` in runtime scripts** — only available in the test API.
   You must know entity IDs upfront from your YAML. Plan your entity IDs.
 - **No `scene.load()` in runtime scripts** — cannot switch scenes from Lua.
@@ -305,7 +341,7 @@ Know what the engine does NOT have so you don't waste time:
   is no way to listen for events in runtime scripts. Use the `game` table for
   cross-script communication instead.
 - **No tween/animation API** — animate manually in `update(dt)` using `self`
-  state, math, and `entity.set_position/set_rotation/set_scale`.
+  state, `math.lerp()`, and `entity.set_position/set_rotation/set_scale`.
 - **No particle system** — build particle effects by spawning/destroying
   entities with `entity.spawn()` and `entity.destroy()`.
 - **No camera shake API** — implement by moving the camera entity's position

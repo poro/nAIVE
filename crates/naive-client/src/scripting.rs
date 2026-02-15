@@ -164,6 +164,19 @@ impl ScriptRuntime {
         }).map_err(|e| e.to_string())?;
         globals.set("print", print_fn).map_err(|e| e.to_string())?;
 
+        // math.lerp(a, b, t) -> number
+        let math_table: LuaTable = globals.get("math").map_err(|e| e.to_string())?;
+        let lerp_fn = self.lua.create_function(|_, (a, b, t): (f64, f64, f64)| {
+            Ok(a + (b - a) * t)
+        }).map_err(|e| e.to_string())?;
+        math_table.set("lerp", lerp_fn).map_err(|e| e.to_string())?;
+
+        // math.clamp(value, min, max) -> number
+        let clamp_fn = self.lua.create_function(|_, (value, min, max): (f64, f64, f64)| {
+            Ok(value.max(min).min(max))
+        }).map_err(|e| e.to_string())?;
+        math_table.set("clamp", clamp_fn).map_err(|e| e.to_string())?;
+
         // Shared game state table (accessible from all script environments via globals metatable)
         let game_table = self.lua.create_table().map_err(|e| e.to_string())?;
         game_table.set("player_health", 100).map_err(|e| e.to_string())?;
@@ -199,6 +212,13 @@ impl ScriptRuntime {
             Ok((delta.x, delta.y))
         }).map_err(|e| e.to_string())?;
         input_table.set("mouse_delta", mouse_delta_fn).map_err(|e| e.to_string())?;
+
+        // input.any_just_pressed() -> bool
+        let any_pressed_fn = self.lua.create_function(move |_, ()| {
+            let input = unsafe { &*input_ptr };
+            Ok(input.any_just_pressed())
+        }).map_err(|e| e.to_string())?;
+        input_table.set("any_just_pressed", any_pressed_fn).map_err(|e| e.to_string())?;
 
         globals.set("input", input_table).map_err(|e| e.to_string())?;
         Ok(())
@@ -253,6 +273,27 @@ impl ScriptRuntime {
             Ok(())
         }).map_err(|e| e.to_string())?;
         entity_table.set("set_position", set_pos_fn).map_err(|e| e.to_string())?;
+
+        // entity.get_rotation(entity_string_id) -> pitch_deg, yaw_deg, roll_deg
+        let get_rot_fn = self.lua.create_function(move |_, id: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(transform) = sw.world.get::<&Transform>(entity) {
+                    let (yaw_rad, pitch_rad, roll_rad) =
+                        transform.rotation.to_euler(glam::EulerRot::YXZ);
+                    return Ok((pitch_rad.to_degrees(), yaw_rad.to_degrees(), roll_rad.to_degrees()));
+                }
+            }
+            Ok((0.0f32, 0.0f32, 0.0f32))
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("get_rotation", get_rot_fn).map_err(|e| e.to_string())?;
+
+        // entity.exists(entity_string_id) -> bool
+        let exists_fn = self.lua.create_function(move |_, id: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            Ok(sw.entity_registry.contains_key(&id))
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("exists", exists_fn).map_err(|e| e.to_string())?;
 
         // entity.set_rotation(entity_string_id, pitch_deg, yaw_deg, roll_deg)
         let set_rot_fn = self.lua.create_function(move |_, (id, pitch, yaw, roll): (String, f32, f32, f32)| {
@@ -350,6 +391,26 @@ impl ScriptRuntime {
             Ok(())
         }).map_err(|e| e.to_string())?;
         entity_table.set("set_metallic", set_metallic_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_base_color(entity_string_id, r, g, b)
+        let set_base_color_fn = self.lua.create_function(move |_, (id, r, g, b): (String, f32, f32, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                let has_override = sw.world.get::<&MaterialOverride>(entity).is_ok();
+                if has_override {
+                    if let Ok(mut mat_override) = sw.world.get::<&mut MaterialOverride>(entity) {
+                        mat_override.base_color = Some([r, g, b]);
+                    }
+                } else {
+                    let _ = sw.world.insert_one(entity, MaterialOverride {
+                        base_color: Some([r, g, b]),
+                        ..Default::default()
+                    });
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_base_color", set_base_color_fn).map_err(|e| e.to_string())?;
 
         globals.set("entity", entity_table).map_err(|e| e.to_string())?;
         Ok(())
@@ -497,6 +558,55 @@ impl ScriptRuntime {
         }).map_err(|e| e.to_string())?;
         entity_table.set("set_visible", set_vis_fn).map_err(|e| e.to_string())?;
 
+        // entity.destroy_by_prefix(prefix) - bulk destroy all entities whose ID starts with prefix
+        let destroy_prefix_fn = self.lua.create_function(move |_, prefix: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            let cmd = unsafe { &mut *cmd_ptr };
+            let ids: Vec<String> = sw.entity_registry.keys()
+                .filter(|id| id.starts_with(&prefix))
+                .cloned()
+                .collect();
+            for id in ids {
+                cmd.destroys.push(id);
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("destroy_by_prefix", destroy_prefix_fn).map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    /// Register camera API (world_to_screen projection).
+    pub fn register_camera_api(
+        &self,
+        camera_state_ptr: *const crate::camera::CameraState,
+        config_ptr: *const wgpu::SurfaceConfiguration,
+    ) -> Result<(), String> {
+        let globals = self.lua.globals();
+        let camera_table = self.lua.create_table().map_err(|e| e.to_string())?;
+
+        // camera.world_to_screen(x, y, z) -> sx, sy, visible
+        let w2s_fn = self.lua.create_function(move |_, (x, y, z): (f32, f32, f32)| {
+            let cs = unsafe { &*camera_state_ptr };
+            let config = unsafe { &*config_ptr };
+            let vp = glam::Mat4::from_cols_array_2d(&cs.uniform.view_projection);
+            let clip = vp * glam::Vec4::new(x, y, z, 1.0);
+            if clip.w <= 0.0 {
+                return Ok((0.0f32, 0.0f32, false));
+            }
+            let ndc_x = clip.x / clip.w;
+            let ndc_y = clip.y / clip.w;
+            let ndc_z = clip.z / clip.w;
+            let visible = ndc_x >= -1.0 && ndc_x <= 1.0
+                && ndc_y >= -1.0 && ndc_y <= 1.0
+                && ndc_z >= 0.0 && ndc_z <= 1.0;
+            let sx = (ndc_x * 0.5 + 0.5) * config.width as f32;
+            let sy = (1.0 - (ndc_y * 0.5 + 0.5)) * config.height as f32;
+            Ok((sx, sy, visible))
+        }).map_err(|e| e.to_string())?;
+        camera_table.set("world_to_screen", w2s_fn).map_err(|e| e.to_string())?;
+
+        globals.set("camera", camera_table).map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -534,6 +644,15 @@ impl ScriptRuntime {
             Ok(())
         }).map_err(|e| e.to_string())?;
         ui_table.set("flash", flash_fn).map_err(|e| e.to_string())?;
+
+        // ui.text_width(text, font_size) -> pixels
+        let text_width_fn = self.lua.create_function(move |_, (text, font_size): (String, f32)| {
+            let font = unsafe { &*font_ptr };
+            let scale = font_size / font.glyph_h;
+            let width = text.len() as f32 * font.glyph_w * scale;
+            Ok(width)
+        }).map_err(|e| e.to_string())?;
+        ui_table.set("text_width", text_width_fn).map_err(|e| e.to_string())?;
 
         // ui.screen_width() -> number
         let width_fn = self.lua.create_function(move |_, ()| {
