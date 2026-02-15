@@ -26,6 +26,8 @@ You do not need the platform to ship a game. `naive-core` + `naive-client` + `na
 
 v4.0's engine was a renderer with scripting and physics. v5.0 adds the systems needed to build action games — shooters, brawlers, horde survival, racing — not just Snake Sweeper:
 
+- **Gameplay primitives (DONE v0.1.2)** — health/damage, hitscan, projectiles, collision damage, third-person camera. Tier 1 complete.
+- **Production foundations** — dynamic GPU instance buffer (no more 256-entity ceiling), entity pooling, particle system, runtime entity queries, event subscription. Informed by HAVOC dev log feedback.
 - **GPU compute entity simulation** — 50,000+ physics-driven entities on the GPU. nAIVE's answer to Unreal's Niagara, but for gameplay entities, not just particles.
 - **Vertex Animation Textures (VAT)** — baked skeletal animation sampled on the GPU for massive instanced rendering
 - **Skeletal animation system** — glTF skinned meshes, animation state machines, blend trees
@@ -40,13 +42,15 @@ v4.0's engine was a renderer with scripting and physics. v5.0 adds the systems n
 
 HAVOC is a 3D Vampire Survivors-style horde survival game with vehicle combat. It can run as a single-player game using only MIT-licensed engine crates, or as 1-4 player co-op when combined with the platform.
 
-- **50,000+ GPU-simulated enemies** on screen simultaneously
-- **GPU neighbor-grid collisions** between horde entities
-- **Vertex Animation Textures** for GPU-instanced horde animation
-- **Third-person character controller** with skeletal animation
-- **Hitscan + projectile + AoE weapons**
-- **Driveable vehicles** with collision damage
-- **Pickups and loadouts**
+A HAVOC prototype was already built in a single session during Tier 1 development. It validated the full gameplay loop (driving, killing, leveling, upgrading) but exposed hard engine limits: 256-entity ceiling, deferred destroy crashes, no VFX. The Tier 2 production foundations directly address every wall the prototype hit.
+
+- **Health, hitscan, projectiles, collision damage** (Tier 1 — DONE)
+- **Dynamic entity buffer + pooling + particles** (Tier 2 — removes the hard walls)
+- **50,000+ GPU-simulated enemies** on screen simultaneously (Tier 3)
+- **GPU neighbor-grid collisions** between horde entities (Tier 3)
+- **Vertex Animation Textures** for GPU-instanced horde animation (Tier 4)
+- **Third-person character controller** with skeletal animation (Tier 4)
+- **Driveable vehicles** with collision damage (Tier 5)
 
 If nAIVE can render 50,000 physics-driven goblins while you drive a truck through them — it can handle anything.
 
@@ -426,6 +430,18 @@ The client renders one tick behind the server (configurable). Extrapolation fall
 | Procedural Meshes | Done | Sphere, cube, plane at runtime |
 
 16 demo scenes exercising all systems. 20 features DONE.
+
+### Tier 1 Gameplay Primitives (v0.1.2)
+
+Implemented in v0.1.2. These are engine-level systems, not game-specific code:
+
+| System | Status | Implementation |
+|--------|--------|---------------|
+| Health/Damage | Done | `Health` ECS component, `entity.damage()` / `entity.heal()` Lua API, `on_damage` / `on_death` callbacks |
+| Hitscan API | Done | `physics.hitscan()` returns entity ID + hit point + normal, self-exclusion |
+| Collision Damage | Done | `CollisionDamage` component, automatic damage on physics contact, owner-skip for projectiles |
+| Projectile System | Done | `entity.spawn_projectile()` spawns physics-driven projectiles with velocity, gravity, lifetime, auto-damage via collision |
+| Third-Person Camera | Done | `CameraMode::ThirdPerson` with configurable distance/height/pitch, wall collision via raycast |
 
 ---
 
@@ -926,16 +942,18 @@ HAVOC is a 3D Vampire Survivors-style horde survival game with vehicle combat. I
 
 The game "There Are Millions of Goblins" (Unreal Engine 5, Niagara GPU simulation) demonstrated 50,000 physics-driven enemies with Vampire Survivors-style gameplay fused with vehicle combat. HAVOC proves nAIVE can match this:
 
-| System | How HAVOC Proves It |
-|--------|-------------------|
-| GPU compute entities | 50,000+ goblins on GPU |
-| Neighbor-grid collisions | Goblins collide with each other and players |
-| VAT animation | 50,000 goblins animated via vertex textures |
-| Skeletal animation | Player character with full state machine |
-| Character controller | Third-person capsule movement |
-| Weapons | Assault rifle, rocket launcher, flamethrower, shotgun, sword |
-| Vehicles | War buggy, truck with collision damage |
-| Inventory/pickups | Health, ammo, weapon pickups |
+| System | How HAVOC Proves It | Engine Tier |
+|--------|-------------------|-------------|
+| Health/damage/hitscan | Weapon damage, enemy death, collision damage | **Tier 1 (DONE)** |
+| Projectiles | Physics-driven weapon projectiles | **Tier 1 (DONE)** |
+| Dynamic buffer + pooling | 200+ CPU entities without crashes, horde pooling | Tier 2 |
+| Particle system | Kill effects, weapon VFX, boost trails | Tier 2 |
+| Event subscription | Cross-script game events (kills, waves, pickups) | Tier 2 |
+| GPU compute entities | 50,000+ goblins on GPU | Tier 3 |
+| Neighbor-grid collisions | Goblins collide with each other and players | Tier 3 |
+| VAT animation | 50,000 goblins animated via vertex textures | Tier 4 |
+| Skeletal animation | Player character with full state machine | Tier 4 |
+| Vehicles | War buggy, truck with collision damage | Tier 5 |
 
 ### 14.2 Game Design
 
@@ -1046,13 +1064,30 @@ No GPL dependencies. All dependencies are MIT or Apache-2.0 compatible.
 
 All v4.0 components remain. v5.0 adds:
 
+**Tier 1 — Implemented (v0.1.2)**
+
 | Component | Purpose |
 |-----------|---------|
-| `character_controller` | Capsule movement: walk, sprint, crouch, jump |
+| `health` | Health points with current/max, dead flag. Engine fires `on_damage`/`on_death` callbacks. |
+| `collision_damage` | Auto-applies damage on physics contact. Configurable damage amount and destroy_on_hit. |
+| `projectile` | Runtime-spawned physics projectile with damage, lifetime, owner tracking. |
+| `camera_mode` | `FirstPerson` or `ThirdPerson { distance, height_offset, pitch_min, pitch_max }`. Wall collision via raycast. |
+| `character_controller` | Capsule movement: walk, sprint, jump, step height |
+
+**Tier 2 — Production Foundations (planned)**
+
+| Component | Purpose |
+|-----------|---------|
+| `particle_emitter` | Billboard particle source with rate, lifetime, velocity, color, size curves |
+| `pool_member` | Marks entity as belonging to a named pool for acquire/release lifecycle |
+
+**Tier 3+ — Future**
+
+| Component | Purpose |
+|-----------|---------|
 | `skeletal_mesh` | glTF skinned mesh with bone hierarchy |
 | `animation_state` | Current clip, blend weight, state machine ref |
 | `weapon_holder` | Equipped weapons, current weapon, ammo counts |
-| `health_shield` | Health points + shield points |
 | `vehicle_seat` | Associates entity with a vehicle seat |
 | `vehicle_physics` | Wheeled vehicle rigid body configuration |
 | `horde_config` | GPU compute horde parameters for this world |
@@ -1105,19 +1140,32 @@ Snake Sweeper was built by Claude Code (Opus 4.6) in a single session using only
 
 The engine provides generic systems and Lua/YAML APIs. Game developers (human or AI) build content, logic, and game rules on top. HAVOC is a proof game built by a developer using these engine systems — it is not built into the engine.
 
-**Tier 1 — Gameplay Primitives** (unblocks any action game)
+**Tier 1 — Gameplay Primitives** (unblocks any action game) **DONE v0.1.2**
 
-These systems let a game developer build a playable shooter/brawler/survival game at CPU entity scale (~1K-5K entities).
+These systems let a game developer build a playable shooter/brawler/survival game at CPU entity scale. Implemented in engine version 0.1.2.
 
 | System | Engine Provides | Game Dev Uses Via |
 |--------|----------------|-------------------|
-| Health/Damage components | Generic `Health`, `Shield` ECS components. Engine applies damage, emits death events. | Lua: `entity.set_health(id, hp)`, `entity.damage(id, amount)`. YAML: `health: { max: 100 }` on entities. |
-| Projectile system | Engine spawns physics-driven projectile entities with velocity, gravity, lifetime, collision callbacks. | Lua: `entity.spawn_projectile(origin, dir, speed, damage, lifetime)` |
-| Third-person camera | Camera mode with configurable offset, collision-aware pullback via Rapier raycast. | YAML: `camera: { mode: third_person, distance: 4.0, height: 1.5 }` |
-| Hitscan API | Raycast from origin in direction, returns hit entity + point + normal. Extends existing `physics.raycast`. | Lua: `physics.hitscan(origin, dir, range)` returning `entity_id, hit_x, hit_y, hit_z` |
-| Collision damage events | Engine emits damage on rigid body collision based on impact velocity. Configurable threshold. | YAML: `collision_damage: { multiplier: 1.0, min_velocity: 5.0 }`. Lua: `on_collision` callback receives damage amount. |
+| Health/Damage components | Generic `Health` ECS component. Engine applies damage, tracks death state, fires `on_damage`/`on_death` callbacks. | Lua: `entity.get_health(id)`, `entity.damage(id, amount)`, `entity.heal(id, amount)`. YAML: `health: { max: 100 }` on entities. |
+| Projectile system | Engine spawns physics-driven projectile entities with velocity, gravity, lifetime, auto-damage via `CollisionDamage`. | Lua: `entity.spawn_projectile(owner, mesh, material, pos, dir, speed, damage, lifetime, gravity)` |
+| Third-person camera | Camera mode with configurable offset, collision-aware pullback via Rapier raycast. | YAML: `camera: { mode: third_person, distance: 4.0, height_offset: 1.5, pitch_limits: [-60, 75] }` |
+| Hitscan API | Raycast from origin in direction, returns hit entity + point + normal. Self-exclusion built in. | Lua: `physics.hitscan(ox, oy, oz, dx, dy, dz, range)` returning `hit, entity_id, distance, hx, hy, hz, nx, ny, nz` |
+| Collision damage | `CollisionDamage` component auto-applies damage on physics contact. Projectile owner-skip prevents self-damage. | YAML: `collision_damage: { damage: 25, destroy_on_hit: false }`. Engine handles detection automatically. |
 
-**Tier 2 — GPU Scale** (unblocks 50K entities)
+**Tier 2 — Production Foundations** (makes nAIVE a shippable engine)
+
+Informed by the HAVOC dev log. A complete Vampire Survivors prototype was built in nAIVE in a single session, validating Tier 1 systems. But the developer hit hard walls — engine crashes from entity overflow, mandatory workarounds for deferred destroy, no VFX, no runtime queries. These aren't missing features; they're the difference between "prototyping engine" and "real engine." The HAVOC developer's verdict: *"If I were pitching to a publisher, this nAIVE prototype would be the vertical slice demo. Then we'd rebuild it in a real engine."* Tier 2 ensures they don't have to.
+
+| System | Engine Provides | Game Dev Uses Via |
+|--------|----------------|-------------------|
+| Dynamic GPU instance buffer | Instance buffer grows automatically when entity count exceeds current capacity. No hard 256-entity ceiling. Graceful warning at configurable thresholds. | Transparent — game dev spawns entities freely. Engine handles buffer resizing. Target: 4K+ CPU entities before GPU becomes the bottleneck, not an arbitrary buffer. |
+| Safe entity lifecycle | Deferred destroy processes before spawns within the same frame. Spawn+destroy in one frame no longer doubles buffer usage. Optional `entity.destroy_immediate()` for cases where the dev needs guaranteed slot reclamation. | Lua: existing `entity.destroy()` becomes safe by default. `entity.destroy_immediate(id)` for explicit control. |
+| Built-in entity pooling | Engine-managed object pools. Pre-allocate N entities of a type, acquire/release without spawn/destroy overhead. Zero GPU buffer churn. | Lua: `entity.pool_create(name, count, mesh, material)`, `entity.pool_acquire(name)` returns id, `entity.pool_release(id)`. YAML: `pool: { name: "goblins", count: 200, mesh: ..., material: ... }` |
+| Particle system | Lightweight 2D billboard particles with lifetime, velocity, gravity, color fade, size curve. GPU-instanced rendering from a dedicated particle buffer (separate from entity buffer). | Lua: `particles.emit(x, y, z, { count: 20, lifetime: 0.5, speed: 3.0, color: {1,1,0}, gravity: -5 })`. YAML: `particle_emitter: { rate: 50, lifetime: 1.0, ... }` on entities. |
+| Runtime entity queries | Query entities by tag at runtime. Returns array of entity IDs matching a tag. | Lua: `scene.find_by_tag(tag)` returns `{id1, id2, ...}`. Eliminates hardcoded ID arrays in game scripts. |
+| Event subscription | Lua scripts can subscribe to named events and receive callbacks. Completes the event bus (currently write-only from Lua). | Lua: `events.on("enemy_killed", function(data) ... end)`, `events.emit("enemy_killed", { id = eid, killer = pid })`. Cross-script communication without polling the `game` table. |
+
+**Tier 3 — GPU Scale** (unblocks 50K entities)
 
 These systems move entity simulation from CPU to GPU. Game developers configure behavior via YAML and SLANG compute shaders.
 
@@ -1128,14 +1176,14 @@ These systems move entity simulation from CPU to GPU. Game developers configure 
 | GPU instanced rendering | Render 50K+ entities from compute-output transform buffer in one draw call per mesh type. | Automatic — engine reads instance buffer written by compute shader. Game dev configures mesh/material in YAML. |
 | Flow field pathfinding | GPU wavefront propagation from target position. 2D grid of direction vectors. Entities sample field for steering. | YAML: `flow_field: { resolution: 128, cell_size: 4.0 }`. Engine recomputes when target moves. Game dev's compute shader samples `flow_field_texture`. |
 
-**Tier 3 — Animation** (unblocks animated characters)
+**Tier 4 — Animation** (unblocks animated characters)
 
 | System | Engine Provides | Game Dev Uses Via |
 |--------|----------------|-------------------|
 | Skeletal animation | glTF skinned mesh loading (joints, weights, inverse bind matrices). Animation clip parsing. State machine with crossfade blending. GPU skinning. | YAML: animation state machine definition (states, transitions, conditions). Lua: `entity.set_anim_state(id, "run")`, `entity.set_anim_param(id, "speed", 5.0)` |
 | VAT loader + renderer | Load baked vertex animation textures (.exr). Vertex shader samples position/normal per frame. Works with GPU instanced rendering. | YAML: `animation: { type: vat, texture: assets/vat/goblin.exr, clips: { walk: { start: 0, end: 30 } } }` |
 
-**Tier 4 — Vehicles** (unblocks vehicle combat)
+**Tier 5 — Vehicles** (unblocks vehicle combat)
 
 | System | Engine Provides | Game Dev Uses Via |
 |--------|----------------|-------------------|
@@ -1147,20 +1195,23 @@ These systems move entity simulation from CPU to GPU. Game developers configure 
 
 | Phase | Tier | Weeks | Deliverables |
 |-------|------|-------|-------------|
-| 3a | Tier 1: Gameplay Primitives | 13-16 | Health/damage, projectiles, third-person camera, hitscan API, collision damage |
-| 3b | Tier 2: GPU Scale | 17-22 | GPU compute entity system, neighbor grid, instanced rendering, flow field |
-| 3c | Tier 3: Animation | 23-26 | Skeletal animation + state machine, VAT loader + renderer |
-| 3d | Tier 4: Vehicles | 27-30 | Vehicle physics, mount/dismount, LOD system |
+| 3a | Tier 1: Gameplay Primitives | — | **DONE (v0.1.2)** Health/damage, projectiles, third-person camera, hitscan API, collision damage |
+| 3b | Tier 2: Production Foundations | 13-18 | Dynamic instance buffer, safe entity lifecycle, entity pooling, particle system, runtime queries, event subscription |
+| 3c | Tier 3: GPU Scale | 19-24 | GPU compute entity system, neighbor grid, instanced rendering, flow field |
+| 3d | Tier 4: Animation | 25-28 | Skeletal animation + state machine, VAT loader + renderer |
+| 3e | Tier 5: Vehicles | 29-32 | Vehicle physics, mount/dismount, LOD system |
 
 **Phase 4: HAVOC — Proof Game (Built by Game Developer Using Engine)**
 
 HAVOC is built entirely in YAML + Lua + SLANG using the engine systems from Phase 3. It validates that the engine APIs are sufficient for a AAA-scale horde survival game. No Rust code is written for HAVOC — if Rust is needed, that's a missing engine system.
 
+A HAVOC prototype was already built during Tier 1 development using only CPU entities and Lua-side simulation. It validated the gameplay loop (driving, killing, leveling, upgrading) but hit hard limits: 256-entity ceiling, deferred destroy crashes, no VFX. Tier 2 removes these walls. The full HAVOC rebuild on Tier 2+ will prove nAIVE is a production engine, not just a prototyping tool.
+
 | Weeks | Deliverable | Engine Systems Exercised |
 |-------|------------|------------------------|
-| 31-32 | HAVOC core: arena scene, player controller, basic horde | Tier 1 (health, hitscan, third-person camera) + Tier 2 (GPU entities, flow field) |
-| 33-34 | HAVOC weapons + waves: 5 weapon types, wave progression | Tier 1 (projectiles, collision damage) + Tier 3 (skeletal anim for player) |
-| 35-36 | HAVOC vehicles + polish: 2 vehicles, LOD, 10-wave campaign | Tier 4 (vehicles, mount/dismount, LOD) + Tier 3 (VAT for horde) |
+| 33-34 | HAVOC core: arena scene, player controller, horde (pooled + particles) | Tier 1 (health, hitscan, third-person camera) + Tier 2 (pooling, particles, dynamic buffer, events) |
+| 35-36 | HAVOC GPU horde: 50K goblin swarm, wave progression, 5 weapon types | Tier 3 (GPU entities, flow field) + Tier 4 (skeletal anim for player, VAT for horde) |
+| 37-38 | HAVOC vehicles + polish: 2 vehicles, LOD, 10-wave campaign | Tier 5 (vehicles, mount/dismount, LOD) |
 
 ---
 
