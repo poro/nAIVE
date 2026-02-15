@@ -1,0 +1,80 @@
+[package]
+name = "naive-engine"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+description = "nAIVE game engine — rendering, physics, scripting, audio, CLI"
+
+[[bin]]
+name = "naive-runtime"
+path = "src/main.rs"
+
+[[bin]]
+name = "naive"
+path = "src/main.rs"
+
+[[bin]]
+name = "naive_mcp"
+path = "src/bin/naive_mcp.rs"
+
+[features]
+default = ["slang"]
+slang = ["dep:shader-slang"]
+
+[dependencies]
+naive-core = { workspace = true }
+
+# GPU rendering
+wgpu = { workspace = true }
+winit = { workspace = true }
+
+# SLANG shader compilation (optional)
+shader-slang = { workspace = true, optional = true }
+
+# Serialization
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
+
+# File watching
+notify = { workspace = true }
+
+# Math
+glam = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Async bridging
+pollster = { workspace = true }
+
+# Byte casting
+bytemuck = { workspace = true }
+
+# ECS
+hecs = { workspace = true }
+
+# Asset loading
+gltf = { workspace = true }
+image = { workspace = true }
+ply-rs = { workspace = true }
+linked-hash-map = { workspace = true }
+
+# Physics
+rapier3d = { workspace = true }
+
+# Scripting
+mlua = { workspace = true }
+
+# Audio
+kira = { workspace = true }
+
+# Time
+instant = { workspace = true }
+
+# Async / IPC
+tokio = { workspace = true }

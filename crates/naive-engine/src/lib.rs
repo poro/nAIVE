@@ -1,0 +1,32 @@
+// Re-export naive-core modules so engine files can use `crate::components`, `crate::scene`, etc.
+pub use naive_core::components;
+pub use naive_core::events;
+pub use naive_core::scene;
+pub use naive_core::transform;
+pub use naive_core::tween;
+
+pub mod audio;
+pub mod audio_gen;
+pub mod build;
+pub mod camera;
+pub mod cli;
+pub mod command;
+pub mod engine;
+pub mod font;
+pub mod init;
+pub mod input;
+pub mod material;
+pub mod mesh;
+pub mod physics;
+pub mod pipeline;
+pub mod project_config;
+pub mod publish;
+pub mod reflect;
+pub mod renderer;
+pub mod scripting;
+pub mod shader;
+pub mod splat;
+pub mod test_runner;
+pub mod ui;
+pub mod watcher;
+pub mod world;
