@@ -1,0 +1,178 @@
+name: "Tier 2 — Particle System Showcase"
+settings:
+  ambient_light: [0.05, 0.05, 0.08]
+  gravity: [0, -9.81, 0]
+
+entities:
+  # --- Camera (orbiting) ---
+  - id: camera
+    components:
+      transform:
+        position: [0, 5, 15]
+      camera:
+        fov: 70
+        near: 0.1
+        far: 200
+        role: main
+      script:
+        source: logic/tier2_particle_camera.lua
+
+  # --- Floor ---
+  - id: floor
+    tags: [environment]
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [30, 1, 30]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_floor.yaml
+      collider:
+        shape: box
+        half_extents: [15, 0.5, 15]
+
+  # --- Sun ---
+  - id: sun
+    components:
+      directional_light:
+        direction: [0.3, -1.0, 0.2]
+        color: [0.8, 0.85, 1.0]
+        intensity: 1.5
+        shadow_extent: 25.0
+
+  # --- Fire emitter (center) ---
+  - id: fire_emitter
+    tags: [emitter, fire]
+    components:
+      transform:
+        position: [0, 0.5, 0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/inferno_lava.yaml
+      particle_emitter:
+        max_particles: 200
+        spawn_rate: 60
+        lifetime: [0.4, 1.2]
+        initial_speed: [1.5, 4.0]
+        direction: [0, 1, 0]
+        spread: 20
+        size: [0.25, 0.03]
+        color_start: [1.0, 0.6, 0.1, 1.0]
+        color_end: [0.6, 0.1, 0.0, 0.0]
+        gravity_scale: -0.3
+
+  # --- Magic fountain (left) ---
+  - id: magic_fountain
+    tags: [emitter, magic]
+    components:
+      transform:
+        position: [-6, 0.5, 0]
+        scale: [0.6, 0.6, 0.6]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/neon_cyan.yaml
+      particle_emitter:
+        max_particles: 150
+        spawn_rate: 40
+        lifetime: [0.8, 2.0]
+        initial_speed: [3.0, 6.0]
+        direction: [0, 1, 0]
+        spread: 10
+        size: [0.15, 0.08]
+        color_start: [0.2, 0.8, 1.0, 1.0]
+        color_end: [0.1, 0.3, 1.0, 0.0]
+        gravity_scale: 0.8
+
+  # --- Poison cloud (right) ---
+  - id: poison_cloud
+    tags: [emitter, poison]
+    components:
+      transform:
+        position: [6, 1.5, 0]
+        scale: [0.8, 0.8, 0.8]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/neon_green.yaml
+      particle_emitter:
+        max_particles: 100
+        spawn_rate: 25
+        lifetime: [1.5, 3.0]
+        initial_speed: [0.5, 1.5]
+        direction: [0, 1, 0]
+        spread: 80
+        size: [0.4, 0.6]
+        color_start: [0.2, 1.0, 0.1, 0.6]
+        color_end: [0.1, 0.5, 0.0, 0.0]
+        gravity_scale: -0.2
+
+  # --- Sparkle trail (back left) ---
+  - id: sparkle_trail
+    tags: [emitter, sparkle]
+    components:
+      transform:
+        position: [-4, 2, -6]
+        scale: [0.4, 0.4, 0.4]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/neon_gold.yaml
+      particle_emitter:
+        max_particles: 80
+        spawn_rate: 30
+        lifetime: [0.3, 0.8]
+        initial_speed: [2.0, 5.0]
+        direction: [0, 0, 0]
+        spread: 180
+        size: [0.08, 0.02]
+        color_start: [1.0, 0.9, 0.3, 1.0]
+        color_end: [1.0, 0.5, 0.0, 0.0]
+        gravity_scale: 0.3
+
+  # --- Void rift (back right) ---
+  - id: void_rift
+    tags: [emitter, void]
+    components:
+      transform:
+        position: [4, 2, -6]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/neon_purple.yaml
+      particle_emitter:
+        max_particles: 120
+        spawn_rate: 35
+        lifetime: [0.6, 1.5]
+        initial_speed: [1.0, 3.0]
+        direction: [0, -1, 0]
+        spread: 40
+        size: [0.2, 0.1]
+        color_start: [0.7, 0.1, 1.0, 1.0]
+        color_end: [0.2, 0.0, 0.5, 0.0]
+        gravity_scale: -0.5
+
+  # --- Ambient lights ---
+  - id: fire_light
+    components:
+      transform:
+        position: [0, 3, 0]
+      point_light:
+        color: [1, 0.5, 0.1]
+        intensity: 10
+        range: 15
+
+  - id: magic_light
+    components:
+      transform:
+        position: [-6, 3, 0]
+      point_light:
+        color: [0.2, 0.6, 1]
+        intensity: 8
+        range: 12
+
+  - id: poison_light
+    components:
+      transform:
+        position: [6, 3, 0]
+      point_light:
+        color: [0.2, 1, 0.2]
+        intensity: 6
+        range: 10

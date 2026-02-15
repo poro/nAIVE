@@ -1,0 +1,161 @@
+name: "Tier 2 — Entity Lifecycle, Queries, Events & Pooling"
+settings:
+  ambient_light: [0.2, 0.2, 0.25]
+  gravity: [0, -9.81, 0]
+
+entities:
+  # --- Player ---
+  - id: player
+    tags: [player]
+    components:
+      transform:
+        position: [0, 2, 8]
+      camera:
+        fov: 75
+        near: 0.1
+        far: 200
+        role: main
+      character_controller:
+        move_speed: 6.0
+        sprint_multiplier: 2.0
+        jump_impulse: 7.0
+        height: 1.8
+        radius: 0.3
+      health:
+        max: 100
+      script:
+        source: logic/tier2_lifecycle_player.lua
+
+  # --- Arena floor ---
+  - id: floor
+    tags: [environment]
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [40, 1, 40]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_floor.yaml
+      collider:
+        shape: box
+        half_extents: [20, 0.5, 20]
+
+  # --- Sun ---
+  - id: sun
+    components:
+      directional_light:
+        direction: [0.2, -1.0, 0.3]
+        color: [1.0, 0.95, 0.9]
+        intensity: 2.5
+        shadow_extent: 30.0
+
+  # --- Tagged enemies (for find_by_tag demo) ---
+  - id: goblin_01
+    tags: [enemy, goblin]
+    components:
+      transform:
+        position: [-5, 0.5, -5]
+        scale: [0.8, 0.8, 0.8]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/goblin.yaml
+      collider:
+        shape: sphere
+        radius: 0.4
+      health:
+        max: 20
+
+  - id: goblin_02
+    tags: [enemy, goblin]
+    components:
+      transform:
+        position: [5, 0.5, -5]
+        scale: [0.8, 0.8, 0.8]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/goblin.yaml
+      collider:
+        shape: sphere
+        radius: 0.4
+      health:
+        max: 20
+
+  - id: goblin_03
+    tags: [enemy, goblin]
+    components:
+      transform:
+        position: [0, 0.5, -8]
+        scale: [0.8, 0.8, 0.8]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/goblin.yaml
+      collider:
+        shape: sphere
+        radius: 0.4
+      health:
+        max: 20
+
+  - id: demon_01
+    tags: [enemy, demon]
+    components:
+      transform:
+        position: [-3, 0.8, -10]
+        scale: [1.2, 1.2, 1.2]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/inferno_demon.yaml
+      collider:
+        shape: sphere
+        radius: 0.6
+      health:
+        max: 50
+
+  - id: demon_02
+    tags: [enemy, demon]
+    components:
+      transform:
+        position: [3, 0.8, -10]
+        scale: [1.2, 1.2, 1.2]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/inferno_demon.yaml
+      collider:
+        shape: sphere
+        radius: 0.6
+      health:
+        max: 50
+
+  # --- Pickup items (for tag queries) ---
+  - id: health_pickup_01
+    tags: [pickup, health]
+    components:
+      transform:
+        position: [-8, 0.5, 0]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/inferno_health.yaml
+      script:
+        source: logic/tier2_pickup_bob.lua
+
+  - id: health_pickup_02
+    tags: [pickup, health]
+    components:
+      transform:
+        position: [8, 0.5, 0]
+        scale: [0.5, 0.5, 0.5]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: assets/materials/inferno_health.yaml
+      script:
+        source: logic/tier2_pickup_bob.lua
+
+  # --- Key light ---
+  - id: key_light
+    components:
+      transform:
+        position: [0, 8, 5]
+      point_light:
+        color: [1, 0.95, 0.9]
+        intensity: 15
+        range: 40

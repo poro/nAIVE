@@ -1,0 +1,47 @@
+name: "Tier 2 — Stress Test (300+ Entities)"
+settings:
+  ambient_light: [0.15, 0.12, 0.2]
+  gravity: [0, 0, 0]
+
+entities:
+  # --- Camera ---
+  - id: camera
+    tags: [camera]
+    components:
+      transform:
+        position: [0, 15, 30]
+      camera:
+        fov: 65
+        near: 0.1
+        far: 200
+        role: main
+      script:
+        source: logic/tier2_stress_camera.lua
+
+  # --- Sun ---
+  - id: sun
+    components:
+      directional_light:
+        direction: [0.3, -1.0, 0.5]
+        color: [1.0, 0.95, 0.9]
+        intensity: 2.0
+        shadow_extent: 40.0
+
+  # --- Floor ---
+  - id: floor
+    components:
+      transform:
+        position: [0, -1, 0]
+        scale: [60, 1, 60]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_floor.yaml
+
+  # --- Spawner script (spawns 300+ entities at runtime) ---
+  - id: spawner
+    tags: [spawner]
+    components:
+      transform:
+        position: [0, 0, 0]
+      script:
+        source: logic/tier2_stress_spawner.lua
