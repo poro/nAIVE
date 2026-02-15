@@ -236,6 +236,8 @@ entities:
 | `script` | Attaches a Lua script file |
 | `gaussian_splat` | 3D Gaussian splat point cloud |
 | `tags` | Searchable string tags for entity lookup |
+| `health` | Health pool with max/current values for damageable entities |
+| `collision_damage` | Deals damage to entities with health on physics contact |
 
 ## 7. Scripting
 
@@ -271,6 +273,14 @@ end
 
 -- Called when another entity exits this trigger volume
 function on_trigger_exit(other_entity_id)
+end
+
+-- Called when entity takes damage (requires health component)
+function on_damage(amount, source_entity_id)
+end
+
+-- Called when entity's health reaches 0 (requires health component)
+function on_death()
 end
 
 -- Called after hot-reload (script file saved while running)
@@ -317,6 +327,18 @@ entity.destroy_by_prefix("bullet_") -- bulk destroy all entities with matching p
 
 -- Show/hide an entity
 entity.set_visible("some_entity_id", false)
+
+-- Health & Damage (requires health component on entity)
+local current, max = entity.get_health("enemy_01")
+entity.set_health("enemy_01", current, max)
+local new_hp = entity.damage("enemy_01", 25) -- returns new current (clamped to 0)
+local new_hp = entity.heal("player", 10)     -- returns new current (clamped to max)
+local alive = entity.is_alive("enemy_01")    -- false if dead or hp <= 0
+
+-- Spawn a projectile (physics-driven, auto-damages on contact)
+-- entity.spawn_projectile(owner_id, mesh, material, ox,oy,oz, dx,dy,dz, speed, damage, lifetime, gravity)
+entity.spawn_projectile(_entity_string_id, "procedural:sphere", "assets/materials/bullet.yaml",
+    x, y, z, dx, dy, dz, 20, 10, 5.0, false)
 ```
 
 > **Warning: `entity.destroy()` is deferred.** Destroy commands execute at end-of-frame.
@@ -355,6 +377,19 @@ local sx, sy, visible = camera.world_to_screen(x, y, z)
 -- sx, sy = screen pixel coordinates
 -- visible = true if the point is in front of the camera and inside the viewport
 ```
+
+Camera mode is configured in the scene YAML on the camera component:
+
+```yaml
+camera:
+  fov: 75
+  mode: third_person          # "first_person" (default) or "third_person"
+  distance: 5.0               # orbit distance behind player (third_person)
+  height_offset: 2.0          # camera target height above player (third_person)
+  pitch_limits: [-60, 75]     # [min_degrees, max_degrees] for look up/down
+```
+
+Third-person camera orbits behind the player using yaw/pitch and automatically handles wall collision.
 
 ### UI API
 
@@ -401,6 +436,13 @@ audio.stop_music(1.0)
 local hit, dist, nx, ny, nz = physics.raycast(0, 1, 0, 0, -1, 0, 100.0)
 if hit then
     log("Hit surface at distance " .. dist)
+end
+
+-- Hitscan: raycast that also returns the hit entity's string ID and hit point
+-- Returns: hit, entity_id, distance, hit_x, hit_y, hit_z, normal_x, normal_y, normal_z
+local hit, eid, dist, hx, hy, hz, nx, ny, nz = physics.hitscan(ox, oy, oz, dx, dy, dz, range)
+if hit and eid ~= "" then
+    entity.damage(eid, 25)  -- apply damage to the hit entity
 end
 ```
 
@@ -629,6 +671,8 @@ The engine repository includes several demo scenes that demonstrate various feat
 | `scenes/ui_demo.yaml` | UI overlay, text rendering, panels |
 | `scenes/audio_test.yaml` | Spatial audio, generated tones |
 | `scenes/pbr_gallery.yaml` | Metallic/roughness material grid |
+| `scenes/combat_demo.yaml` | Health/damage, hitscan, projectiles, collision damage |
+| `scenes/third_person_demo.yaml` | Third-person camera orbit with wall collision |
 
 To run an engine demo:
 

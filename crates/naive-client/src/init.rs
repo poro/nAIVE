@@ -118,6 +118,12 @@ entities:
         material: assets/materials/mat.yaml
       rigid_body:
         body_type: dynamic            # dynamic | fixed | kinematic
+      camera:
+        fov: 75
+        mode: third_person            # first_person | third_person
+        distance: 5.0                 # orbit distance (third_person)
+        height_offset: 2.0            # above player (third_person)
+        pitch_limits: [-60, 75]       # look up/down limits in degrees
       collider:
         shape: cuboid                 # cuboid | sphere | capsule
         half_extents: [x, y, z]       # for cuboid
@@ -131,13 +137,18 @@ entities:
       character_controller:
         speed: 5.0
         jump_force: 8.0
+      health:
+        max: 100                        # current defaults to max
+      collision_damage:
+        damage: 25                      # damage dealt on contact
+        destroy_on_hit: false           # destroy self after hitting
 ```
 
 ### Available Components
 
 `transform`, `camera`, `mesh_renderer`, `point_light`, `directional_light`,
 `rigid_body`, `collider`, `character_controller`, `player`, `script`,
-`gaussian_splat`, `tags`.
+`gaussian_splat`, `tags`, `health`, `collision_damage`.
 
 ### Available Meshes
 
@@ -178,6 +189,8 @@ function on_destroy()        -- called when entity is destroyed
 function on_collision(other_entity_id)    -- physics collision
 function on_trigger_enter(other_entity_id) -- trigger volume enter
 function on_trigger_exit(other_entity_id)  -- trigger volume exit
+function on_damage(amount, source_id)     -- entity took damage (requires health component)
+function on_death()                       -- entity health reached 0 (requires health component)
 function on_reload()         -- called after hot-reload
 ```
 
@@ -216,6 +229,21 @@ entity.destroy_by_prefix("bullet_")  -- bulk destroy all entities with matching 
 
 -- Visibility
 entity.set_visible(id, true)  -- or false to hide
+
+-- Health & Damage (requires health component on entity)
+local current, max = entity.get_health(id)
+entity.set_health(id, current, max)
+local new_hp = entity.damage(id, amount)   -- returns new current (clamped to 0)
+local new_hp = entity.heal(id, amount)     -- returns new current (clamped to max)
+local alive = entity.is_alive(id)          -- false if dead or health <= 0
+
+-- Projectile spawning (runtime, physics-driven, auto-damages on hit)
+-- entity.spawn_projectile(owner_id, mesh, material, ox, oy, oz, dx, dy, dz, speed, damage, lifetime, gravity)
+entity.spawn_projectile(_entity_string_id, "procedural:sphere", "assets/materials/bullet.yaml",
+    x, y, z, dx, dy, dz, 20, 10, 5.0, false)
+-- owner_id: projectile won't damage its owner
+-- gravity: false = flies straight, true = affected by gravity
+-- automatically destroyed on hit or when lifetime expires
 ```
 
 ### Input API — `input.*`
@@ -260,11 +288,30 @@ local sx, sy, visible = camera.world_to_screen(x, y, z)
 -- visible = true if the point is in front of the camera and inside the viewport
 ```
 
+Camera mode is set in the scene YAML on the camera component:
+
+```yaml
+camera:
+  fov: 75
+  mode: first_person          # "first_person" (default) or "third_person"
+  distance: 5.0               # third_person only: orbit distance behind player
+  height_offset: 2.0          # third_person only: camera target height above player
+  pitch_limits: [-60, 75]     # [min_degrees, max_degrees] for look up/down
+```
+
+Third-person camera automatically orbits behind the player and handles wall
+collision (pulls camera closer to avoid clipping through geometry).
+
 ### Physics API — `physics.*`
 
 ```lua
 -- Raycast returns: hit(bool), distance, normal_x, normal_y, normal_z
 local hit, dist, nx, ny, nz = physics.raycast(ox, oy, oz, dx, dy, dz, max_dist)
+
+-- Hitscan: raycast that returns entity info + hit point
+-- Returns: hit(bool), entity_id(string), distance, hit_x, hit_y, hit_z, normal_x, normal_y, normal_z
+local hit, eid, dist, hx, hy, hz, nx, ny, nz = physics.hitscan(ox, oy, oz, dx, dy, dz, range)
+-- Use with entity.damage(): if hit then entity.damage(eid, 25) end
 ```
 
 ### Math Utilities
@@ -424,6 +471,67 @@ function update(dt)
     self.t = self.t + dt
     local y = 1 + math.sin(self.t * 2) * 0.5  -- bob up and down
     entity.set_position(_entity_string_id, 0, y, 0)
+end
+```
+
+### Hitscan Shooting (click to damage)
+```lua
+function update(dt)
+    if input.just_pressed("attack") then
+        -- Get player position and forward direction for the ray
+        local px, py, pz = entity.get_position(_entity_string_id)
+        local hit, eid, dist, hx, hy, hz = physics.hitscan(
+            px, py + 1.5, pz, 0, 0, -1, 100)
+        if hit and eid ~= "" then
+            entity.damage(eid, 25)
+        end
+    end
+end
+```
+
+### Damageable Enemy with Death Callback
+In the scene YAML:
+```yaml
+  - id: enemy_01
+    components:
+      transform: {{ position: [5, 0, 0] }}
+      mesh_renderer: {{ mesh: procedural:cube, material: assets/materials/enemy.yaml }}
+      health: {{ max: 50 }}
+      collision_damage: {{ damage: 10, destroy_on_hit: false }}
+      collider: {{ shape: cuboid, half_extents: [0.5, 0.5, 0.5] }}
+      rigid_body: {{ body_type: fixed }}
+      script: {{ source: logic/enemy.lua }}
+```
+In `logic/enemy.lua`:
+```lua
+function on_damage(amount, source_id)
+    ui.flash(1, 0, 0, 0.3, 0.1)  -- red flash
+    log("Took " .. amount .. " damage from " .. source_id)
+end
+
+function on_death()
+    log(_entity_string_id .. " died!")
+    entity.destroy(_entity_string_id)
+end
+```
+
+### Projectile Shooting
+```lua
+function update(dt)
+    if input.just_pressed("attack") then
+        local px, py, pz = entity.get_position(_entity_string_id)
+        entity.spawn_projectile(
+            _entity_string_id,          -- owner (won't damage self)
+            "procedural:sphere",        -- mesh
+            "assets/materials/bullet.yaml",  -- material
+            px, py + 1.5, pz,          -- spawn position
+            0, 0, -1,                   -- direction
+            30,                         -- speed
+            10,                         -- damage
+            5.0,                        -- lifetime (seconds)
+            false                       -- gravity (false = flies straight)
+        )
+    end
 end
 ```
 

@@ -1,0 +1,229 @@
+name: "Tier 1 Combat Demo — Health, Hitscan, Projectiles, Collision Damage"
+settings:
+  ambient_light: [0.25, 0.25, 0.3]
+  gravity: [0, -9.81, 0]
+
+entities:
+  # --- Player with health and FPS camera ---
+  - id: player
+    tags: [player]
+    components:
+      transform:
+        position: [0, 2, 8]
+      camera:
+        fov: 75
+        near: 0.1
+        far: 200
+        role: main
+      character_controller:
+        move_speed: 6.0
+        sprint_multiplier: 2.0
+        jump_impulse: 7.0
+        step_height: 0.3
+        height: 1.8
+        radius: 0.3
+      health:
+        max: 100
+      script:
+        source: logic/combat_demo.lua
+
+  # --- Arena floor ---
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [30, 1, 30]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/dark_floor.yaml
+      collider:
+        shape: box
+        half_extents: [15, 0.5, 15]
+
+  # --- Walls ---
+  - id: wall_north
+    components:
+      transform:
+        position: [0, 2, -15]
+        scale: [30, 5, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [15, 2.5, 0.5]
+
+  - id: wall_south
+    components:
+      transform:
+        position: [0, 2, 15]
+        scale: [30, 5, 1]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [15, 2.5, 0.5]
+
+  - id: wall_east
+    components:
+      transform:
+        position: [15, 2, 0]
+        scale: [1, 5, 30]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 2.5, 15]
+
+  - id: wall_west
+    components:
+      transform:
+        position: [-15, 2, 0]
+        scale: [1, 5, 30]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.5, 2.5, 15]
+
+  # --- Static enemies with health (hitscan targets) ---
+  - id: enemy_01
+    tags: [enemy]
+    components:
+      transform:
+        position: [5, 1, -5]
+        scale: [1.5, 2, 1.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/enemy.yaml
+      health:
+        max: 50
+      collider:
+        shape: box
+        half_extents: [0.75, 1, 0.75]
+      rigid_body:
+        body_type: fixed
+      script:
+        source: logic/combat_enemy.lua
+
+  - id: enemy_02
+    tags: [enemy]
+    components:
+      transform:
+        position: [-6, 1, -8]
+        scale: [1.5, 2, 1.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/enemy.yaml
+      health:
+        max: 75
+      collider:
+        shape: box
+        half_extents: [0.75, 1, 0.75]
+      rigid_body:
+        body_type: fixed
+      script:
+        source: logic/combat_enemy.lua
+
+  - id: enemy_03
+    tags: [enemy]
+    components:
+      transform:
+        position: [8, 1, 3]
+        scale: [1.5, 2, 1.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/enemy.yaml
+      health:
+        max: 100
+      collider:
+        shape: box
+        half_extents: [0.75, 1, 0.75]
+      rigid_body:
+        body_type: fixed
+      script:
+        source: logic/combat_enemy.lua
+
+  # --- Spike traps with collision damage (hurt player on touch) ---
+  - id: spike_trap_01
+    tags: [trap]
+    components:
+      transform:
+        position: [3, 0.25, 3]
+        scale: [2, 0.5, 2]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/spike.yaml
+      collision_damage:
+        damage: 15
+        destroy_on_hit: false
+      collider:
+        shape: box
+        half_extents: [1, 0.25, 1]
+      rigid_body:
+        body_type: fixed
+
+  - id: spike_trap_02
+    tags: [trap]
+    components:
+      transform:
+        position: [-4, 0.25, -2]
+        scale: [2, 0.5, 2]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/spike.yaml
+      collision_damage:
+        damage: 15
+        destroy_on_hit: false
+      collider:
+        shape: box
+        half_extents: [1, 0.25, 1]
+      rigid_body:
+        body_type: fixed
+
+  # --- Cover pillars ---
+  - id: pillar_01
+    components:
+      transform:
+        position: [0, 1.5, -3]
+        scale: [1.5, 3, 1.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.75, 1.5, 0.75]
+
+  - id: pillar_02
+    components:
+      transform:
+        position: [-7, 1.5, 4]
+        scale: [1.5, 3, 1.5]
+      mesh_renderer:
+        mesh: assets/meshes/cube.gltf
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [0.75, 1.5, 0.75]
+
+  # --- Lighting ---
+  - id: sun
+    components:
+      transform:
+        position: [8, 20, -5]
+      point_light:
+        color: [1.0, 0.95, 0.9]
+        intensity: 20.0
+        range: 60.0
+
+  - id: fill_light
+    components:
+      transform:
+        position: [-8, 12, 8]
+      point_light:
+        color: [0.4, 0.5, 0.7]
+        intensity: 8.0
+        range: 40.0
