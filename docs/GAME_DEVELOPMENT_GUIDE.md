@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-nAIVE is an AI-native game engine where **games are content, not code**. The engine provides the runtime (rendering, physics, scripting, audio, networking) and your game is a collection of YAML scenes, Lua scripts, and assets.
+nAIVE is an AI-native game engine where **games are content, not code**. The engine provides the runtime (rendering, physics, scripting, audio) and your game is a collection of YAML scenes, Lua scripts, and assets.
 
 Key principles:
 - **Games live in their own repositories**, separate from the engine
@@ -13,32 +13,37 @@ Key principles:
 
 ## 2. Quick Start
 
+### Install
+
 ```bash
-# Create a new game project
-naive init my-game
-
-# Enter the project directory
-cd my-game
-
-# Run the game
-naive run
-
-# Run all tests
-naive test
-
-# Bundle for distribution
-naive build
+brew install poro/tap/naive
 ```
 
-### Prerequisites
-
-You need the `naive` binary (or `naive-runtime`) on your PATH. Build from source:
+Or build from source:
 
 ```bash
-git clone https://github.com/anthropics/naive.git
-cd naive
+git clone https://github.com/poro/nAIVE.git
+cd nAIVE
 cargo build --release
 # Add target/release/ to your PATH
+```
+
+### Create and Run a Project
+
+```bash
+naive init my-game
+cd my-game
+naive run
+```
+
+### Other Commands
+
+```bash
+naive test              # Run all tests
+naive test tests/t.lua  # Run a specific test file
+naive build             # Bundle for distribution
+naive build --target windows
+naive publish           # Publish to world server (coming soon)
 ```
 
 ## 3. Project Structure
@@ -49,16 +54,16 @@ After `naive init my-game`, you get:
 my-game/
 ├── naive.yaml              # Project configuration
 ├── CLAUDE.md               # AI agent instructions
-├── .gitignore              # Git ignore rules
+├── .gitignore
 ├── scenes/
 │   └── main.yaml           # Default scene
 ├── logic/
 │   └── main.lua            # Game logic scripts
 ├── assets/
-│   ├── meshes/             # 3D models (.gltf)
-│   ├── materials/          # Material definitions (.yaml)
+│   ├── meshes/             # 3D models (.gltf, .glb, .ply)
+│   ├── materials/
 │   │   └── default.yaml    # Default PBR material
-│   ├── textures/           # Texture images (.png, .jpg)
+│   ├── textures/           # Texture images (.png, .jpg, .hdr)
 │   └── audio/              # Sound files (.ogg, .wav)
 ├── shaders/
 │   ├── passes/             # Render pass shaders (.slang)
@@ -69,8 +74,11 @@ my-game/
 │   └── bindings.yaml       # Input action mappings
 ├── events/
 │   └── schema.yaml         # Event type definitions
-└── tests/
-    └── test_basic.lua      # Automated gameplay tests
+├── tests/
+│   └── test_basic.lua      # Automated gameplay tests
+└── docs/
+    ├── PRD.md              # Product Requirements Document
+    └── GDD.md              # Game Design Document
 ```
 
 ### Directory Reference
@@ -89,6 +97,7 @@ my-game/
 | `input/` | Input binding configs | `.yaml` |
 | `events/` | Game event schemas | `.yaml` |
 | `tests/` | Automated test scripts | `.lua` |
+| `docs/` | PRD, game design docs, project notes | `.md` |
 
 ## 4. naive.yaml Reference
 
@@ -178,7 +187,7 @@ entities:
         fov: 75                      # Field of view in degrees
         near: 0.1
         far: 500
-        role: main                   # main | editor
+        role: main                   # main | <custom name>
 
   - id: player
     components:
@@ -217,146 +226,204 @@ entities:
 |-----------|---------|
 | `transform` | Position, rotation, scale in 3D space |
 | `camera` | Camera with FOV, near/far planes, role |
-| `mesh_renderer` | 3D mesh with material |
+| `mesh_renderer` | 3D mesh with material reference |
 | `point_light` | Point light source with color, intensity, range |
+| `directional_light` | Sun-like directional light with shadow extent |
 | `rigid_body` | Physics rigid body (dynamic, fixed, kinematic) |
-| `collider` | Physics collision shape |
-| `character_controller` | FPS-style character movement |
-| `player` | Marks entity as the player |
-| `script` | Attaches a Lua script |
+| `collider` | Physics collision shape (cuboid, sphere, capsule) |
+| `character_controller` | FPS-style character movement (speed, jump) |
+| `player` | Marks entity as the player (enables FPS controller) |
+| `script` | Attaches a Lua script file |
 | `gaussian_splat` | 3D Gaussian splat point cloud |
+| `tags` | Searchable string tags for entity lookup |
 
 ## 7. Scripting
 
-Game logic is written in Lua and attached to entities via the `script` component.
+Game logic is written in Lua and attached to entities via the `script` component. Each script runs in its own sandboxed environment.
 
 ### Script Lifecycle
 
 ```lua
-function on_init(entity)
-    -- Called once when the entity is created
-    log.info("Entity initialized: " .. entity.name)
+-- Called once when the entity is created
+function init()
+    log("Entity initialized: " .. _entity_string_id)
 end
 
-function on_update(entity, dt)
-    -- Called every frame, dt = delta time in seconds
+-- Called every frame, dt = delta time in seconds
+function update(dt)
 end
 
-function on_fixed_update(entity, dt)
-    -- Called at fixed physics timestep
+-- Called at fixed physics timestep
+function fixed_update(dt)
 end
 
-function on_event(entity, event_type, event_data)
-    -- Called when a subscribed event fires
+-- Called when the entity is destroyed
+function on_destroy()
 end
 
-function on_trigger_enter(entity, other_id)
-    -- Called when another entity enters this trigger
+-- Called on physics collision with another entity
+function on_collision(other_entity_id)
 end
 
-function on_trigger_exit(entity, other_id)
-    -- Called when another entity exits this trigger
+-- Called when another entity enters this trigger volume
+function on_trigger_enter(other_entity_id)
+end
+
+-- Called when another entity exits this trigger volume
+function on_trigger_exit(other_entity_id)
+end
+
+-- Called after hot-reload (script file saved while running)
+function on_reload()
 end
 ```
+
+**Note:** Scripts do not receive an `entity` object. Instead, the variable `_entity_string_id` contains the entity's YAML `id` string. Use it with the `entity.*` API functions below. Per-script state can be stored on the `self` table.
 
 ### Entity API
 
+The `entity` table is a global API where every function takes an entity's string ID as the first argument:
+
 ```lua
 -- Transform
-local x, y, z = entity.get_position()
-entity.set_position(x, y, z)
+local x, y, z = entity.get_position(_entity_string_id)
+entity.set_position(_entity_string_id, x, y + 1, z)
 
-local rx, ry, rz = entity.get_rotation()
-entity.set_rotation(rx, ry, rz)
+entity.set_rotation(_entity_string_id, pitch_deg, yaw_deg, roll_deg)
 
-local sx, sy, sz = entity.get_scale()
-entity.set_scale(sx, sy, sz)
-```
+local sx, sy, sz = entity.get_scale(_entity_string_id)
+entity.set_scale(_entity_string_id, sx, sy, sz)
 
-### Scene API
+-- Lighting
+entity.set_light(_entity_string_id, intensity)
+entity.set_light_color(_entity_string_id, r, g, b)
 
-```lua
--- Find entities
-local player = scene.find("player")
+-- Material overrides (runtime only, does not modify YAML)
+entity.set_emission(_entity_string_id, r, g, b)
+entity.set_roughness(_entity_string_id, value)
+entity.set_metallic(_entity_string_id, value)
 
--- Load a scene
-scene.load("scenes/level_02.yaml")
+-- Spawn a new entity at runtime
+entity.spawn("new_id", "primitive://cube", "assets/materials/default.yaml", x, y, z, sx, sy, sz)
+
+-- Destroy an entity
+entity.destroy("some_entity_id")
+
+-- Show/hide an entity
+entity.set_visible("some_entity_id", false)
 ```
 
 ### Input API
 
 ```lua
--- Check input actions (defined in input/bindings.yaml)
-if input.pressed("jump") then
-    -- Jump logic
-end
-
-if input.held("sprint") then
+-- Check if an action is currently held (defined in input/bindings.yaml)
+if input.pressed("sprint") then
     -- Sprint logic
 end
 
+-- Check if an action was pressed this frame (single-frame trigger)
+if input.just_pressed("jump") then
+    -- Jump logic
+end
+
+-- Get mouse movement since last frame
 local mx, my = input.mouse_delta()
 ```
 
 ### UI API
 
 ```lua
--- Display text on screen
-ui.text("Score: " .. score, 10, 10)
-ui.text_colored("DANGER", 1.0, 0.0, 0.0, 100, 50)
+-- Draw text: ui.text(x, y, text, font_size, r, g, b, a)
+ui.text(10, 10, "Score: " .. score, 24.0, 1.0, 1.0, 1.0, 1.0)
 
--- Panels
-ui.panel(x, y, width, height, r, g, b, a)
+-- Draw filled rectangle: ui.rect(x, y, width, height, r, g, b, a)
+ui.rect(5, 5, 200, 40, 0.0, 0.0, 0.0, 0.5)
+
+-- Screen flash effect: ui.flash(r, g, b, a, duration_seconds)
+ui.flash(1.0, 0.0, 0.0, 0.3, 0.5)
+
+-- Get screen dimensions
+local w = ui.screen_width()
+local h = ui.screen_height()
 ```
 
 ### Audio API
 
 ```lua
--- Play sounds
-audio.play("assets/audio/explosion.ogg")
-audio.play_at("assets/audio/footstep.ogg", x, y, z)
+-- Play a sound effect: audio.play_sfx(id, path, volume)
+-- The id lets you reference this sound later (e.g. to stop it)
+audio.play_sfx("explosion", "assets/audio/explosion.ogg", 1.0)
 
--- Generate tones
-audio.generate("sine", frequency, duration, volume)
+-- Play background music: audio.play_music(path, volume, fade_in_seconds)
+audio.play_music("assets/audio/theme.ogg", 0.5, 2.0)
+
+-- Stop a sound effect: audio.stop_sound(id, fade_out_seconds)
+audio.stop_sound("explosion", 0.5)
+
+-- Stop music: audio.stop_music(fade_out_seconds)
+audio.stop_music(1.0)
 ```
 
 ### Physics API
 
 ```lua
--- Apply forces
-physics.apply_force(entity, fx, fy, fz)
-physics.apply_impulse(entity, ix, iy, iz)
-
--- Raycasting
-local hit = physics.raycast(origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, max_dist)
+-- Raycast: physics.raycast(origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, max_dist)
+-- Returns: hit (bool), distance, normal_x, normal_y, normal_z
+local hit, dist, nx, ny, nz = physics.raycast(0, 1, 0, 0, -1, 0, 100.0)
+if hit then
+    log("Hit surface at distance " .. dist)
+end
 ```
 
 ### Events API
 
 ```lua
--- Emit events
+-- Emit an event with a data table (keys must be strings)
 events.emit("item.collected", { item_id = "key_01", item_type = "key" })
-
--- Subscribe to events
-events.on("player.damaged", function(data)
-    log.info("Took " .. data.amount .. " damage!")
-end)
 ```
+
+Event types and their fields are defined in `events/schema.yaml`. Events are logged and can be checked in tests via `event_occurred()`.
 
 ### Game State
 
+A shared `game` table is accessible from all scripts for cross-script state:
+
 ```lua
--- Shared game state (persists across scripts)
-set_game_value("player_health", 100)
-local health = get_game_value("player_health")
+-- Read/write shared game state
+game.player_health = game.player_health - 10
+game.game_over = true
+game.level_complete = false
+
+-- You can add custom keys too
+game.score = (game.score or 0) + 100
 ```
 
 ### Logging
 
 ```lua
-log.info("Information message")
-log.warn("Warning message")
-log.error("Error message")
+-- Log a message (appears in engine output with [Lua] prefix)
+log("Player position: " .. x .. ", " .. y .. ", " .. z)
+
+-- print() also works (outputs to engine log)
+print("debug:", some_value)
+```
+
+### Per-Script State
+
+Each script has an isolated `self` table that persists across frames and survives hot-reload:
+
+```lua
+function init()
+    self.health = 100
+    self.speed = 5.0
+end
+
+function update(dt)
+    -- self.health persists between frames
+    if self.health <= 0 then
+        entity.destroy(_entity_string_id)
+    end
+end
 ```
 
 ## 8. Testing
@@ -375,7 +442,7 @@ naive test tests/test_combat.lua
 
 ### Writing Tests
 
-Test files are Lua scripts where every `function test_*()` is automatically discovered and run:
+Test files are Lua scripts where every `function test_*()` is automatically discovered and run. Each test gets an isolated runner with fresh game state.
 
 ```lua
 -- tests/test_player.lua
@@ -398,9 +465,9 @@ function test_player_can_move()
     local sx, sy, sz = get_position("player")
 
     -- Inject input: walk forward for 1 second
-    input.inject("move", "axis", {0, 1})
+    input.inject("move_forward", "press", nil)
     wait_seconds(1.0)
-    input.inject("move", "axis", {0, 0})
+    input.inject("move_forward", "release", nil)
 
     local ex, ey, ez = get_position("player")
     assert(ez < sz, "Player should have moved forward (negative Z)")
@@ -411,15 +478,26 @@ end
 
 | Function | Description |
 |----------|-------------|
-| `scene.load(path)` | Load a scene |
-| `wait_for_event(type)` | Block until an event fires |
-| `wait_seconds(n)` | Simulate n seconds of game time |
-| `wait_frames(n)` | Simulate n frames |
-| `get_position(entity_id)` | Get entity position (x, y, z) |
-| `get_game_value(key)` | Read shared game state |
-| `input.inject(action, type, value)` | Simulate player input |
+| `scene.load(path)` | Load a scene into the headless runner |
+| `scene.find(entity_id)` | Find an entity, returns table with `:get(component)` or nil |
+| `wait_for_event(type, timeout)` | Advance simulation until event fires (default 10s timeout) |
+| `wait_seconds(n)` | Advance n seconds of game time at fixed timestep |
+| `wait_frames(n)` | Advance n simulation frames |
+| `wait_until(fn, timeout)` | Advance until function returns true (errors on timeout) |
+| `get_position(entity_id)` | Get entity position as x, y, z |
+| `get_game_value(key)` | Read a value from the game state table |
+| `event_occurred(type, filter)` | Check if an event was emitted (optional filter table) |
+| `input.inject(action, type, value)` | Simulate input: type is "press", "release", or "axis" |
 | `assert(condition, message)` | Assert a condition is true |
-| `log.info(message)` | Log information |
+| `log.info(message)` | Log from test output |
+
+**`scene.find()` returns** a table with an `id` field and a `:get(component)` method:
+
+```lua
+local player = scene.find("player")
+local transform = player:get("transform")
+assert(transform.position.y > 0, "Player above ground")
+```
 
 ### Test Configuration
 
@@ -491,6 +569,8 @@ When working with an AI agent, it reads `CLAUDE.md` to understand how to:
 - Create materials and configure rendering
 - Write and run tests
 
+The `docs/` directory contains a PRD and GDD template to help structure your game design. Keeping these up to date helps AI agents make better decisions about your project.
+
 ### Tips for AI-Assisted Development
 
 1. **Describe what you want in natural language**: "Add a treasure chest entity that the player can open by pressing E"
@@ -515,7 +595,7 @@ The engine repository includes several demo scenes that demonstrate various feat
 To run an engine demo:
 
 ```bash
-cd /path/to/naive-engine
+cd /path/to/nAIVE
 naive-runtime --project project --scene scenes/genesis.yaml
 ```
 

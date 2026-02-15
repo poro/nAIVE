@@ -29,6 +29,7 @@ pub fn create_project(name: &str) -> Result<(), String> {
         "input",
         "events",
         "tests",
+        "docs",
     ];
 
     for dir in &dirs {
@@ -75,6 +76,7 @@ build:
 - `input/` — Input binding configurations
 - `events/` — Event schema definitions
 - `tests/` — Automated Lua test scripts
+- `docs/` — PRD, game design documents, and project notes
 
 ## Commands
 - `naive run` — Run the game
@@ -167,14 +169,15 @@ entities:
         r#"-- Main game logic script
 -- Attached to welcome_cube in scenes/main.yaml
 
-function on_init(entity)
-    log.info("Hello from " .. entity.name .. "!")
+function init()
+    self.angle = 0
+    log("Hello from " .. _entity_string_id .. "!")
 end
 
-function on_update(entity, dt)
+function update(dt)
     -- Rotate the cube slowly
-    local rx, ry, rz = entity.get_rotation()
-    entity.set_rotation(rx, ry + 30 * dt, rz)
+    self.angle = self.angle + 30 * dt
+    entity.set_rotation(_entity_string_id, 0, self.angle, 0)
 end
 "#,
     )?;
@@ -337,6 +340,184 @@ passes:
 "#,
     )?;
 
+    // docs/PRD.md — Product Requirements Document
+    write_file(
+        &root.join("docs/PRD.md"),
+        &format!(
+            r#"# {name} — Product Requirements Document
+
+## 1. Overview
+
+**Project:** {name}
+**Engine:** nAIVE (AI-native game engine)
+**Version:** 0.1.0
+
+### Vision
+<!-- What is this game? One paragraph that captures the core experience. -->
+
+### Target Audience
+<!-- Who is this game for? -->
+
+## 2. Core Gameplay
+
+### Game Loop
+<!-- Describe the primary gameplay loop: what does the player do repeatedly? -->
+
+### Win/Loss Conditions
+<!-- How does the player win? How do they lose? -->
+
+### Controls
+<!-- List the key actions and what they do. These map to input/bindings.yaml. -->
+
+| Action | Default Key | Description |
+|--------|------------|-------------|
+| move_forward | W | Move forward |
+| move_backward | S | Move backward |
+| move_left | A | Strafe left |
+| move_right | D | Strafe right |
+| jump | Space | Jump |
+| interact | E | Interact with objects |
+
+## 3. Scenes
+
+### Scene List
+<!-- List all planned scenes/levels. -->
+
+| Scene | File | Description |
+|-------|------|-------------|
+| Main | `scenes/main.yaml` | Default starting scene |
+
+## 4. Entities & Components
+
+### Entity Catalog
+<!-- List the key entities in the game. -->
+
+| Entity | Components | Description |
+|--------|-----------|-------------|
+| main_camera | transform, camera | Player camera |
+| sun | transform, point_light | Scene lighting |
+
+## 5. Events
+
+### Event Catalog
+<!-- List game events. These map to events/schema.yaml. -->
+
+| Event | Fields | Description |
+|-------|--------|-------------|
+| lifecycle.scene_loaded | — | Scene finished loading |
+
+## 6. Art & Audio
+
+### Visual Style
+<!-- Describe the visual direction. -->
+
+### Audio
+<!-- List key sounds and music tracks needed. -->
+
+## 7. Milestones
+
+- [ ] **v0.1.0** — Prototype: basic scene loads and runs
+- [ ] **v0.2.0** — Core mechanics implemented
+- [ ] **v0.3.0** — Content complete
+- [ ] **v1.0.0** — Release
+"#
+        ),
+    )?;
+
+    // docs/GDD.md — Game Design Document
+    write_file(
+        &root.join("docs/GDD.md"),
+        &format!(
+            r#"# {name} — Game Design Document
+
+## 1. Concept
+
+### Elevator Pitch
+<!-- One or two sentences that sell the game. -->
+
+### Genre & References
+<!-- What genre? What existing games inspired this? -->
+
+### Unique Selling Point
+<!-- What makes this game different? -->
+
+## 2. Mechanics
+
+### Core Mechanics
+<!-- Describe each mechanic in detail. For each mechanic:
+     - What does it do?
+     - How does the player interact with it?
+     - What entities/components does it require?
+     - What Lua scripts implement it? -->
+
+### Progression
+<!-- How does difficulty or complexity increase over time? -->
+
+### Economy / Resources
+<!-- If applicable: what resources exist, how are they earned/spent? -->
+
+## 3. World Design
+
+### Setting
+<!-- Where and when does the game take place? -->
+
+### Level Design Principles
+<!-- What makes a good level in this game? -->
+
+### Level List
+<!-- Detailed breakdown of each level/scene. -->
+
+| Level | Scene File | Description | Key Entities |
+|-------|-----------|-------------|--------------|
+| 1 | `scenes/main.yaml` | Starting area | camera, sun, floor |
+
+## 4. Narrative
+
+### Story Summary
+<!-- If applicable: what's the story? -->
+
+### Characters
+<!-- Key characters and their roles. -->
+
+## 5. Visual Design
+
+### Art Direction
+<!-- Color palette, style (realistic, stylized, pixel), mood. -->
+
+### Materials
+<!-- Key materials and their properties. -->
+
+| Material | File | Description |
+|----------|------|-------------|
+| Default | `assets/materials/default.yaml` | Base PBR material |
+
+## 6. Audio Design
+
+### Music
+<!-- Tracks needed, mood, when they play. -->
+
+### Sound Effects
+<!-- Key sounds and when they trigger. -->
+
+## 7. UI/UX
+
+### HUD Elements
+<!-- What's always on screen? (health, score, minimap, etc.) -->
+
+### Menus
+<!-- Main menu, pause menu, settings, etc. -->
+
+## 8. Technical Notes
+
+### Performance Targets
+<!-- Target FPS, supported platforms, min specs. -->
+
+### Known Constraints
+<!-- Engine limitations or design constraints to be aware of. -->
+"#
+        ),
+    )?;
+
     // tests/test_basic.lua
     write_file(
         &root.join("tests/test_basic.lua"),
@@ -387,6 +568,7 @@ end
     println!("    input/            Input bindings");
     println!("    events/           Event schemas");
     println!("    tests/            Automated test scripts");
+    println!("    docs/             PRD, game design docs");
 
     Ok(())
 }
