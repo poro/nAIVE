@@ -1101,24 +1101,66 @@ Snake Sweeper was built by Claude Code (Opus 4.6) in a single session using only
 | 9-10 | Neural shader prototype: style transfer pass |
 | 11-12 | WebGPU/WASM browser build |
 
-**Phase 3 (Weeks 13-20): v5.0 Engine Systems**
+**Phase 3: Engine Systems — Tiered by Game Capability**
 
-| Weeks | Deliverable |
-|-------|------------|
-| 13-14 | Skeletal animation: glTF skinned meshes, state machine |
-| 15-16 | Character controller: capsule movement, camera |
-| 17-18 | Weapon system: hitscan + projectile + continuous |
-| 19-20 | Vehicle system: Rapier rigid body, mount/dismount |
+The engine provides generic systems and Lua/YAML APIs. Game developers (human or AI) build content, logic, and game rules on top. HAVOC is a proof game built by a developer using these engine systems — it is not built into the engine.
 
-**Phase 4 (Weeks 21-32): GPU Compute + HAVOC**
+**Tier 1 — Gameplay Primitives** (unblocks any action game)
 
-| Weeks | Deliverable |
-|-------|------------|
-| 21-24 | GPU compute entity system: compute pipeline, neighbor grid |
-| 25-26 | VAT animation pipeline: baking tool + GPU sampling |
-| 27-28 | HAVOC core: wave system, horde spawning, combat |
-| 29-30 | HAVOC vehicles + weapons: 5 weapon types, 2 vehicles |
-| 31-32 | HAVOC polish: LOD, performance tuning, 10-wave campaign |
+These systems let a game developer build a playable shooter/brawler/survival game at CPU entity scale (~1K-5K entities).
+
+| System | Engine Provides | Game Dev Uses Via |
+|--------|----------------|-------------------|
+| Health/Damage components | Generic `Health`, `Shield` ECS components. Engine applies damage, emits death events. | Lua: `entity.set_health(id, hp)`, `entity.damage(id, amount)`. YAML: `health: { max: 100 }` on entities. |
+| Projectile system | Engine spawns physics-driven projectile entities with velocity, gravity, lifetime, collision callbacks. | Lua: `entity.spawn_projectile(origin, dir, speed, damage, lifetime)` |
+| Third-person camera | Camera mode with configurable offset, collision-aware pullback via Rapier raycast. | YAML: `camera: { mode: third_person, distance: 4.0, height: 1.5 }` |
+| Hitscan API | Raycast from origin in direction, returns hit entity + point + normal. Extends existing `physics.raycast`. | Lua: `physics.hitscan(origin, dir, range)` returning `entity_id, hit_x, hit_y, hit_z` |
+| Collision damage events | Engine emits damage on rigid body collision based on impact velocity. Configurable threshold. | YAML: `collision_damage: { multiplier: 1.0, min_velocity: 5.0 }`. Lua: `on_collision` callback receives damage amount. |
+
+**Tier 2 — GPU Scale** (unblocks 50K entities)
+
+These systems move entity simulation from CPU to GPU. Game developers configure behavior via YAML and SLANG compute shaders.
+
+| System | Engine Provides | Game Dev Uses Via |
+|--------|----------------|-------------------|
+| GPU compute entity system | Generic compute pipeline: storage buffers for entity data, configurable dispatch, spawn/death slot management with atomic free-list. | YAML: `gpu_entity_system: { max_entities: 65536, compute_shader: shaders/compute/horde.slang }`. Game dev writes SLANG shader for entity behavior. |
+| GPU neighbor grid | Spatial hash built on GPU each frame. Entities binned into cells. Query API for compute shaders. | Engine auto-builds grid from entity positions. Game dev's compute shader calls `query_neighbors(cell)` in SLANG. |
+| GPU instanced rendering | Render 50K+ entities from compute-output transform buffer in one draw call per mesh type. | Automatic — engine reads instance buffer written by compute shader. Game dev configures mesh/material in YAML. |
+| Flow field pathfinding | GPU wavefront propagation from target position. 2D grid of direction vectors. Entities sample field for steering. | YAML: `flow_field: { resolution: 128, cell_size: 4.0 }`. Engine recomputes when target moves. Game dev's compute shader samples `flow_field_texture`. |
+
+**Tier 3 — Animation** (unblocks animated characters)
+
+| System | Engine Provides | Game Dev Uses Via |
+|--------|----------------|-------------------|
+| Skeletal animation | glTF skinned mesh loading (joints, weights, inverse bind matrices). Animation clip parsing. State machine with crossfade blending. GPU skinning. | YAML: animation state machine definition (states, transitions, conditions). Lua: `entity.set_anim_state(id, "run")`, `entity.set_anim_param(id, "speed", 5.0)` |
+| VAT loader + renderer | Load baked vertex animation textures (.exr). Vertex shader samples position/normal per frame. Works with GPU instanced rendering. | YAML: `animation: { type: vat, texture: assets/vat/goblin.exr, clips: { walk: { start: 0, end: 30 } } }` |
+
+**Tier 4 — Vehicles** (unblocks vehicle combat)
+
+| System | Engine Provides | Game Dev Uses Via |
+|--------|----------------|-------------------|
+| Vehicle physics | Rapier wheel joints, raycast suspension, engine torque, steering angle, brake force. | YAML: `vehicle: { wheels: 4, max_speed: 25.0, suspension_stiffness: 30.0 }` |
+| Mount/dismount | Engine re-parents player to vehicle seat, switches input context (movement → driving). Proximity trigger. | Lua: `vehicle.mount(player_id, vehicle_id, "driver")`, `vehicle.dismount(player_id)`. Automatic on interact key near vehicle. |
+| LOD system | Distance-based mesh switching. Billboard fallback at far distance. Engine selects LOD per frame. | YAML: `lod: { distances: [30, 80], meshes: [lod0.gltf, lod1.gltf], billboard: sprite.png }` |
+
+**Implementation Schedule**
+
+| Phase | Tier | Weeks | Deliverables |
+|-------|------|-------|-------------|
+| 3a | Tier 1: Gameplay Primitives | 13-16 | Health/damage, projectiles, third-person camera, hitscan API, collision damage |
+| 3b | Tier 2: GPU Scale | 17-22 | GPU compute entity system, neighbor grid, instanced rendering, flow field |
+| 3c | Tier 3: Animation | 23-26 | Skeletal animation + state machine, VAT loader + renderer |
+| 3d | Tier 4: Vehicles | 27-30 | Vehicle physics, mount/dismount, LOD system |
+
+**Phase 4: HAVOC — Proof Game (Built by Game Developer Using Engine)**
+
+HAVOC is built entirely in YAML + Lua + SLANG using the engine systems from Phase 3. It validates that the engine APIs are sufficient for a AAA-scale horde survival game. No Rust code is written for HAVOC — if Rust is needed, that's a missing engine system.
+
+| Weeks | Deliverable | Engine Systems Exercised |
+|-------|------------|------------------------|
+| 31-32 | HAVOC core: arena scene, player controller, basic horde | Tier 1 (health, hitscan, third-person camera) + Tier 2 (GPU entities, flow field) |
+| 33-34 | HAVOC weapons + waves: 5 weapon types, wave progression | Tier 1 (projectiles, collision damage) + Tier 3 (skeletal anim for player) |
+| 35-36 | HAVOC vehicles + polish: 2 vehicles, LOD, 10-wave campaign | Tier 4 (vehicles, mount/dismount, LOD) + Tier 3 (VAT for horde) |
 
 ---
 
