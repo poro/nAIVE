@@ -1,36 +1,5 @@
-mod audio;
-mod audio_gen;
-mod build;
-mod camera;
-mod cli;
-mod command;
-mod components;
-mod events;
-mod engine;
-mod font;
-mod init;
-mod input;
-mod material;
-mod mesh;
-mod physics;
-mod pipeline;
-mod project_config;
-mod publish;
-mod reflect;
-mod renderer;
-mod scene;
-mod scripting;
-mod shader;
-mod splat;
-mod test_runner;
-mod transform;
-mod tween;
-mod ui;
-mod watcher;
-mod world;
-
 use clap::Parser;
-use cli::CliArgs;
+use naive_engine::cli::CliArgs;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -45,8 +14,8 @@ fn main() {
 
     match &args.command {
         // naive init <name>
-        Some(cli::Command::Init { name }) => {
-            if let Err(e) = init::create_project(name) {
+        Some(naive_engine::cli::Command::Init { name }) => {
+            if let Err(e) = naive_engine::init::create_project(name) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
@@ -54,12 +23,12 @@ fn main() {
         }
 
         // naive run [--scene X]
-        Some(cli::Command::Run { scene }) => {
+        Some(naive_engine::cli::Command::Run { scene }) => {
             let cwd = std::env::current_dir().expect("Failed to get current directory");
-            let args = match project_config::find_config(&cwd) {
+            let args = match naive_engine::project_config::find_config(&cwd) {
                 Some(config_path) => {
                     let project_root = config_path.parent().unwrap();
-                    let config = match project_config::load_config(&config_path) {
+                    let config = match naive_engine::project_config::load_config(&config_path) {
                         Ok(c) => c,
                         Err(e) => {
                             eprintln!("Error: {}", e);
@@ -67,7 +36,7 @@ fn main() {
                         }
                     };
                     tracing::info!("Loaded project: {} v{}", config.name, config.version);
-                    let mut cli_args = project_config::to_cli_args(&config, project_root);
+                    let mut cli_args = naive_engine::project_config::to_cli_args(&config, project_root);
                     // CLI scene override takes priority
                     if scene.is_some() {
                         cli_args.scene = scene.clone();
@@ -86,22 +55,20 @@ fn main() {
         }
 
         // naive test [test_file]
-        Some(cli::Command::Test { test_file }) => {
+        Some(naive_engine::cli::Command::Test { test_file }) => {
             match test_file {
-                // Explicit file: check if it's a relative path in a project or legacy mode
                 Some(file) => {
                     let cwd = std::env::current_dir().expect("Failed to get current directory");
-                    let project_root = match project_config::find_config(&cwd) {
+                    let project_root = match naive_engine::project_config::find_config(&cwd) {
                         Some(config_path) => config_path.parent().unwrap().to_path_buf(),
                         None => std::path::PathBuf::from(&args.project),
                     };
                     let test_path = project_root.join(file);
                     run_single_test(&project_root, &test_path);
                 }
-                // No file: discover all tests from naive.yaml
                 None => {
                     let cwd = std::env::current_dir().expect("Failed to get current directory");
-                    let config_path = match project_config::find_config(&cwd) {
+                    let config_path = match naive_engine::project_config::find_config(&cwd) {
                         Some(p) => p,
                         None => {
                             eprintln!("Error: No naive.yaml found. Specify a test file or run from a project directory.");
@@ -109,14 +76,14 @@ fn main() {
                         }
                     };
                     let project_root = config_path.parent().unwrap();
-                    let config = match project_config::load_config(&config_path) {
+                    let config = match naive_engine::project_config::load_config(&config_path) {
                         Ok(c) => c,
                         Err(e) => {
                             eprintln!("Error: {}", e);
                             std::process::exit(1);
                         }
                     };
-                    let test_files = project_config::discover_test_files(&config, project_root);
+                    let test_files = naive_engine::project_config::discover_test_files(&config, project_root);
                     if test_files.is_empty() {
                         println!("No test files found.");
                         return;
@@ -126,7 +93,7 @@ fn main() {
                     let mut total_failed = 0;
                     for test_path in &test_files {
                         println!("--- {} ---", test_path.display());
-                        let results = test_runner::run_test_file(project_root, test_path);
+                        let results = naive_engine::test_runner::run_test_file(project_root, test_path);
                         let passed = results.iter().filter(|r| r.passed).count();
                         let failed = results.len() - passed;
                         total_passed += passed;
@@ -144,9 +111,9 @@ fn main() {
         }
 
         // naive build [--target X]
-        Some(cli::Command::Build { target }) => {
+        Some(naive_engine::cli::Command::Build { target }) => {
             let cwd = std::env::current_dir().expect("Failed to get current directory");
-            let config_path = match project_config::find_config(&cwd) {
+            let config_path = match naive_engine::project_config::find_config(&cwd) {
                 Some(p) => p,
                 None => {
                     eprintln!("Error: No naive.yaml found. Run from a project directory.");
@@ -154,14 +121,14 @@ fn main() {
                 }
             };
             let project_root = config_path.parent().unwrap();
-            let config = match project_config::load_config(&config_path) {
+            let config = match naive_engine::project_config::load_config(&config_path) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("Error: {}", e);
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = build::bundle_project(&config, project_root, target.as_deref()) {
+            if let Err(e) = naive_engine::build::bundle_project(&config, project_root, target.as_deref()) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
@@ -169,23 +136,23 @@ fn main() {
         }
 
         // naive publish
-        Some(cli::Command::Publish) => {
+        Some(naive_engine::cli::Command::Publish) => {
             let cwd = std::env::current_dir().expect("Failed to get current directory");
-            let config_path = match project_config::find_config(&cwd) {
+            let config_path = match naive_engine::project_config::find_config(&cwd) {
                 Some(p) => p,
                 None => {
                     eprintln!("Error: No naive.yaml found. Run from a project directory.");
                     std::process::exit(1);
                 }
             };
-            let config = match project_config::load_config(&config_path) {
+            let config = match naive_engine::project_config::load_config(&config_path) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("Error: {}", e);
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = publish::publish_project(&config) {
+            if let Err(e) = naive_engine::publish::publish_project(&config) {
                 eprintln!("Note: {}", e);
                 std::process::exit(1);
             }
@@ -196,13 +163,10 @@ fn main() {
         None => {
             let cwd = std::env::current_dir().expect("Failed to get current directory");
 
-            // Auto-detect: if naive.yaml exists in CWD, behave like `naive run`
-            if let Some(config_path) = project_config::find_config(&cwd) {
-                // Only auto-detect if the user didn't pass explicit --scene or --project flags
-                // (i.e., they're relying on defaults)
+            if let Some(config_path) = naive_engine::project_config::find_config(&cwd) {
                 if args.scene.is_none() && args.project == "project" {
                     let project_root = config_path.parent().unwrap();
-                    let config = match project_config::load_config(&config_path) {
+                    let config = match naive_engine::project_config::load_config(&config_path) {
                         Ok(c) => c,
                         Err(e) => {
                             eprintln!("Warning: Found naive.yaml but failed to parse: {}", e);
@@ -213,13 +177,12 @@ fn main() {
                         }
                     };
                     tracing::info!("Auto-detected project: {} v{}", config.name, config.version);
-                    let cli_args = project_config::to_cli_args(&config, project_root);
+                    let cli_args = naive_engine::project_config::to_cli_args(&config, project_root);
                     run_engine(cli_args);
                     return;
                 }
             }
 
-            // Legacy mode: use --project and --scene flags as before
             tracing::info!("Project root: {}", args.project);
             run_engine(args);
         }
@@ -232,7 +195,7 @@ fn run_single_test(project_root: &std::path::Path, test_path: &std::path::Path) 
         std::process::exit(1);
     }
 
-    let results = test_runner::run_test_file(project_root, test_path);
+    let results = naive_engine::test_runner::run_test_file(project_root, test_path);
 
     let total = results.len();
     let passed = results.iter().filter(|r| r.passed).count();
@@ -253,7 +216,7 @@ fn run_engine(args: CliArgs) {
         winit::event_loop::EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
-    let mut engine = engine::Engine::new(args);
+    let mut engine = naive_engine::engine::Engine::new(args);
 
     event_loop
         .run_app(&mut engine)

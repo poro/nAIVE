@@ -1,0 +1,14 @@
+[package]
+name = "naive-core"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+description = "nAIVE engine core types — components, scenes, transforms, tweens, events"
+
+[dependencies]
+glam = { workspace = true }
+hecs = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,18 @@
+[package]
+name = "naive-server"
+version.workspace = true
+edition.workspace = true
+license = "BSL-1.1"
+description = "nAIVE server — networked game hosting infrastructure"
+
+[[bin]]
+name = "naive-server"
+path = "src/main.rs"
+
+[dependencies]
+naive-core = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
