@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
     "crates/naive-core",
-    "crates/naive-engine",
+    "crates/naive-client",
+    "crates/naive-runtime",
     "crates/naive-server",
 ]
 
@@ -68,7 +69,7 @@ tokio = { version = "1", features = ["net", "io-util", "rt", "sync", "macros"] }
 
 # Internal crates
 naive-core = { path = "crates/naive-core" }
-naive-engine = { path = "crates/naive-engine" }
+naive-client = { path = "crates/naive-client" }
 
 [profile.dev]
 opt-level = 1

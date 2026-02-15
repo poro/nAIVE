@@ -1899,19 +1899,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "naive-core"
-version = "0.1.0"
-dependencies = [
- "glam",
- "hecs",
- "serde",
- "serde_json",
- "serde_yaml",
- "tracing",
-]
-
-[[package]]
-name = "naive-engine"
+name = "naive-client"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -1937,6 +1925,30 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "naive-core"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "hecs",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tracing",
+]
+
+[[package]]
+name = "naive-runtime"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "naive-client",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
  "winit",
 ]
 

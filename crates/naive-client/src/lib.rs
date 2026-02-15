@@ -1,4 +1,4 @@
-// Re-export naive-core modules so engine files can use `crate::components`, `crate::scene`, etc.
+// Re-export naive-core modules so client files can use `crate::components`, `crate::scene`, etc.
 pub use naive_core::components;
 pub use naive_core::events;
 pub use naive_core::scene;

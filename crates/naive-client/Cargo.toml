@@ -1,21 +1,9 @@
 [package]
-name = "naive-engine"
+name = "naive-client"
 version.workspace = true
 edition.workspace = true
 license = "MIT"
-description = "nAIVE game engine — rendering, physics, scripting, audio, CLI"
-
-[[bin]]
-name = "naive-runtime"
-path = "src/main.rs"
-
-[[bin]]
-name = "naive"
-path = "src/main.rs"
-
-[[bin]]
-name = "naive_mcp"
-path = "src/bin/naive_mcp.rs"
+description = "nAIVE client — renderer, physics, scripting, audio, input"
 
 [features]
 default = ["slang"]

@@ -1,0 +1,34 @@
+[package]
+name = "naive-runtime"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+description = "nAIVE runtime — single-process game binary (client + local game loop)"
+
+[[bin]]
+name = "naive-runtime"
+path = "src/main.rs"
+
+[[bin]]
+name = "naive"
+path = "src/main.rs"
+
+[[bin]]
+name = "naive_mcp"
+path = "src/bin/naive_mcp.rs"
+
+[dependencies]
+naive-client = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Windowing (for EventLoop in main)
+winit = { workspace = true }
+
+# Serialization (for naive_mcp)
+serde_json = { workspace = true }
