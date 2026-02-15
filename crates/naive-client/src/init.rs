@@ -114,7 +114,7 @@ entities:
         rotation: [pitch, yaw, roll]  # degrees
         scale: [sx, sy, sz]
       mesh_renderer:
-        mesh: primitive://cube        # or assets/meshes/file.gltf
+        mesh: procedural:cube         # see "Available Meshes" below
         material: assets/materials/mat.yaml
       rigid_body:
         body_type: dynamic            # dynamic | fixed | kinematic
@@ -133,9 +133,34 @@ entities:
         jump_force: 8.0
 ```
 
-Available components: `transform`, `camera`, `mesh_renderer`, `point_light`,
-`directional_light`, `rigid_body`, `collider`, `character_controller`, `player`,
-`script`, `gaussian_splat`, `tags`.
+### Available Components
+
+`transform`, `camera`, `mesh_renderer`, `point_light`, `directional_light`,
+`rigid_body`, `collider`, `character_controller`, `player`, `script`,
+`gaussian_splat`, `tags`.
+
+### Available Meshes
+
+- `procedural:cube` — unit cube (built-in)
+- `procedural:sphere` — UV sphere, radius 0.5 (built-in)
+- `assets/meshes/file.gltf` — load a glTF/GLB model file
+- `assets/meshes/file.ply` — load a PLY point cloud
+- If a mesh file is missing, the engine silently falls back to a procedural cube
+
+### Material Format
+
+Materials are YAML files in `assets/materials/`:
+
+```yaml
+shader: shaders/passes/mesh_forward.slang
+properties:
+  base_color: [r, g, b]    # 0.0-1.0
+  roughness: 0.5            # 0.0 (smooth) to 1.0 (rough)
+  metallic: 0.0             # 0.0 (dielectric) to 1.0 (metal)
+  emission: [r, g, b]       # emissive color (0 = no glow)
+blend_mode: opaque           # opaque | transparent
+cull_mode: back              # back | front | none
+```
 
 ## Lua Scripting API — COMPLETE REFERENCE
 
@@ -178,7 +203,7 @@ entity.set_roughness(id, value)
 entity.set_metallic(id, value)
 
 -- Spawn new entity: entity.spawn(id, mesh, material, x, y, z, sx, sy, sz)
-entity.spawn("bullet_1", "primitive://cube", "assets/materials/default.yaml", 0, 1, 0, 0.1, 0.1, 0.1)
+entity.spawn("bullet_1", "procedural:sphere", "assets/materials/default.yaml", 0, 1, 0, 0.1, 0.1, 0.1)
 
 -- Destroy entity
 entity.destroy(id)
@@ -265,6 +290,107 @@ function update(dt)
 end
 ```
 
+## Important Limitations
+
+Know what the engine does NOT have so you don't waste time:
+
+- **No `entity.get_rotation()`** — you can set rotation but not read it back.
+  Track rotation yourself in `self` (e.g., `self.angle`).
+- **No `scene.find()` in runtime scripts** — only available in the test API.
+  You must know entity IDs upfront from your YAML. Plan your entity IDs.
+- **No `scene.load()` in runtime scripts** — cannot switch scenes from Lua.
+  For multi-screen games (title/gameplay/gameover), use a single scene with
+  visibility toggling: hide/show groups of entities with `entity.set_visible()`.
+- **No `events.on()` subscription** — `events.emit()` fires events but there
+  is no way to listen for events in runtime scripts. Use the `game` table for
+  cross-script communication instead.
+- **No tween/animation API** — animate manually in `update(dt)` using `self`
+  state, math, and `entity.set_position/set_rotation/set_scale`.
+- **No particle system** — build particle effects by spawning/destroying
+  entities with `entity.spawn()` and `entity.destroy()`.
+- **No camera shake API** — implement by moving the camera entity's position
+  with small random offsets in `update(dt)`.
+- **Camera is just an entity** — move/rotate the camera from any script using
+  `entity.set_position("main_camera", x, y, z)` and
+  `entity.set_rotation("main_camera", pitch, yaw, roll)`.
+
+## Common Patterns
+
+### Grid of Entities (boards, tile maps)
+Spawn entities in `init()` of a manager script:
+```lua
+function init()
+    for row = 0, 16 do
+        for col = 0, 16 do
+            local id = "tile_" .. row .. "_" .. col
+            entity.spawn(id, "procedural:cube", "assets/materials/default.yaml",
+                col - 8, 0, row - 8, 0.9, 0.1, 0.9)
+        end
+    end
+end
+```
+
+### Multi-Screen Game (title, gameplay, gameover)
+Define all screens in one scene. Use visibility and a state variable:
+```lua
+function init()
+    self.state = "title"
+    show_title()
+end
+
+function update(dt)
+    if self.state == "title" and input.just_pressed("interact") then
+        self.state = "playing"
+        hide_title()
+        show_gameplay()
+    end
+end
+
+function show_title()
+    entity.set_visible("title_text", true)
+    entity.set_visible("game_board", false)
+end
+```
+
+### Cross-Script Communication
+Use the shared `game` table:
+```lua
+-- In player script:
+game.score = game.score + 10
+game.player_alive = true
+
+-- In HUD script:
+function update(dt)
+    ui.text(10, 10, "Score: " .. (game.score or 0), 24, 1, 1, 1, 1)
+end
+```
+
+### Timer / Delayed Action
+```lua
+function init()
+    self.timer = 3.0  -- 3 second countdown
+end
+function update(dt)
+    self.timer = self.timer - dt
+    if self.timer <= 0 then
+        -- do something once
+        self.timer = 999  -- prevent re-trigger
+    end
+end
+```
+
+### Smooth Animation
+```lua
+function init()
+    self.t = 0
+end
+function update(dt)
+    self.t = self.t + dt
+    local y = 1 + math.sin(self.t * 2) * 0.5  -- bob up and down
+    entity.set_position(_entity_string_id, 0, y, 0)
+end
+```
+
 ## Test API (for tests/ scripts)
 
 Tests run headless (no GPU). Each `test_*()` function gets a fresh runner.
@@ -338,7 +464,7 @@ entities:
         position: [0, 0, 0]
         scale: [20, 0.1, 20]
       mesh_renderer:
-        mesh: primitive://cube
+        mesh: procedural:cube
         material: assets/materials/default.yaml
       rigid_body:
         body_type: fixed
@@ -351,7 +477,7 @@ entities:
       transform:
         position: [0, 1, 0]
       mesh_renderer:
-        mesh: primitive://cube
+        mesh: procedural:cube
         material: assets/materials/default.yaml
       script:
         path: logic/main.lua
