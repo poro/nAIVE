@@ -88,8 +88,9 @@ impl TestRunner {
 
         // Register physics API
         let physics_ptr = &self.physics_world as *const PhysicsWorld;
+        let sw_const_ptr = &self.scene_world as *const SceneWorld;
         self.script_runtime
-            .register_physics_api(physics_ptr)
+            .register_physics_api(physics_ptr, sw_const_ptr)
             .map_err(|e| format!("Physics API: {}", e))?;
 
         // Register entity API

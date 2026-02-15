@@ -145,3 +145,39 @@ pub struct MaterialOverride {
 
 /// Marker component: entity is hidden from rendering.
 pub struct Hidden;
+
+/// Health component for damageable entities.
+#[derive(Debug, Clone)]
+pub struct Health {
+    pub current: f32,
+    pub max: f32,
+    pub dead: bool,
+}
+
+/// Collision damage component: deals damage on physics contact.
+#[derive(Debug, Clone)]
+pub struct CollisionDamage {
+    pub damage: f32,
+    pub destroy_on_hit: bool,
+}
+
+/// Projectile component for runtime-spawned projectiles.
+#[derive(Debug, Clone)]
+pub struct Projectile {
+    pub damage: f32,
+    pub lifetime: f32,
+    pub age: f32,
+    pub owner_id: String,
+}
+
+/// Camera mode component for first-person or third-person behavior.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CameraMode {
+    FirstPerson,
+    ThirdPerson {
+        distance: f32,
+        height_offset: f32,
+        pitch_min: f32, // radians
+        pitch_max: f32, // radians
+    },
+}

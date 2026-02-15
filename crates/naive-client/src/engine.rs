@@ -13,7 +13,7 @@ use crate::audio::AudioSystem;
 use crate::camera::CameraState;
 use crate::cli::CliArgs;
 use crate::command::CommandServer;
-use crate::components::{Camera, CameraRole, GaussianSplat, Player, Transform};
+use crate::components::{Camera, CameraMode, CameraRole, CollisionDamage, GaussianSplat, Health, Player, Projectile, Transform};
 use crate::events::EventBus;
 use crate::font::BitmapFont;
 use crate::tween::TweenSystem;
@@ -347,9 +347,10 @@ impl Engine {
         }
 
         // Register physics API
-        if let Some(pw) = &self.physics_world {
+        if let (Some(pw), Some(sw)) = (&self.physics_world, &self.scene_world) {
             let physics_ptr = pw as *const PhysicsWorld;
-            if let Err(e) = script_runtime.register_physics_api(physics_ptr) {
+            let sw_ptr = sw as *const SceneWorld;
+            if let Err(e) = script_runtime.register_physics_api(physics_ptr, sw_ptr) {
                 tracing::error!("Failed to register physics API: {}", e);
             }
         }
@@ -817,8 +818,17 @@ impl Engine {
             let mouse_delta = input.mouse_delta();
             let sensitivity = 0.002;
             let new_yaw = player.yaw - mouse_delta.x * sensitivity;
-            let new_pitch = (player.pitch - mouse_delta.y * sensitivity)
-                .clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
+
+            // Get pitch limits from CameraMode if available
+            let (pitch_min, pitch_max) = if let Ok(camera_mode) = scene_world.world.get::<&CameraMode>(entity) {
+                match &*camera_mode {
+                    CameraMode::ThirdPerson { pitch_min, pitch_max, .. } => (*pitch_min, *pitch_max),
+                    CameraMode::FirstPerson => (-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01),
+                }
+            } else {
+                (-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01)
+            };
+            let new_pitch = (player.pitch - mouse_delta.y * sensitivity).clamp(pitch_min, pitch_max);
 
             // Movement
             let move_input = input.axis_2d("move_forward", "move_backward", "move_left", "move_right");
@@ -888,6 +898,142 @@ impl Engine {
 
     }
 
+    /// Process collision damage: auto-damage on physics contact.
+    fn process_collision_damage(&mut self) {
+        let scene_world = match &mut self.scene_world {
+            Some(sw) => sw as *mut SceneWorld,
+            None => return,
+        };
+        let physics_world = match &self.physics_world {
+            Some(pw) => pw,
+            None => return,
+        };
+        let script_runtime = match &self.script_runtime {
+            Some(sr) => sr,
+            None => return,
+        };
+        let sw = unsafe { &mut *scene_world };
+
+        // Build reverse lookup: entity -> string ID
+        let entity_to_id: HashMap<hecs::Entity, String> = sw
+            .entity_registry
+            .iter()
+            .map(|(id, &e)| (e, id.clone()))
+            .collect();
+
+        let mut destroys = Vec::new();
+
+        for event in &physics_world.collision_events {
+            if !event.started {
+                continue;
+            }
+
+            // Check both directions
+            for &(dmg_entity, target_entity) in &[
+                (event.entity_a, event.entity_b),
+                (event.entity_b, event.entity_a),
+            ] {
+                let cd = match sw.world.get::<&CollisionDamage>(dmg_entity) {
+                    Ok(cd) => (cd.damage, cd.destroy_on_hit),
+                    Err(_) => continue,
+                };
+                let (damage, destroy_on_hit) = cd;
+
+                // Skip if target has no health
+                if sw.world.get::<&Health>(target_entity).is_err() {
+                    continue;
+                }
+
+                // Owner skip: if damage entity is a projectile, skip if target is the owner
+                if let Ok(proj) = sw.world.get::<&Projectile>(dmg_entity) {
+                    let target_id = entity_to_id.get(&target_entity).map(|s| s.as_str()).unwrap_or("");
+                    if target_id == proj.owner_id {
+                        continue;
+                    }
+                }
+
+                // Apply damage
+                if let Ok(mut health) = sw.world.get::<&mut Health>(target_entity) {
+                    health.current = (health.current - damage).max(0.0);
+                }
+
+                // Call on_damage on the target
+                let source_id = entity_to_id.get(&dmg_entity).cloned().unwrap_or_default();
+                script_runtime.call_on_damage(target_entity, damage, source_id);
+
+                // Queue destruction of damage entity if destroy_on_hit
+                if destroy_on_hit {
+                    if let Some(id) = entity_to_id.get(&dmg_entity) {
+                        if !destroys.contains(id) {
+                            destroys.push(id.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Queue destroys
+        for id in destroys {
+            self.entity_commands.destroys.push(id);
+        }
+    }
+
+    /// Update projectile ages and destroy expired ones.
+    fn update_projectiles(&mut self) {
+        let scene_world = match &mut self.scene_world {
+            Some(sw) => sw,
+            None => return,
+        };
+        let dt = self.delta_time;
+
+        let mut expired = Vec::new();
+
+        for (entity, projectile) in scene_world.world.query::<&mut Projectile>().iter() {
+            projectile.age += dt;
+            if projectile.age >= projectile.lifetime {
+                expired.push(entity);
+            }
+        }
+
+        // Build entity->id lookup for expired projectiles
+        let entity_to_id: HashMap<hecs::Entity, String> = scene_world
+            .entity_registry
+            .iter()
+            .map(|(id, &e)| (e, id.clone()))
+            .collect();
+
+        for entity in expired {
+            if let Some(id) = entity_to_id.get(&entity) {
+                self.entity_commands.destroys.push(id.clone());
+            }
+        }
+    }
+
+    /// Process the health system: detect deaths and fire on_death callbacks.
+    fn process_health_system(&mut self) {
+        let scene_world = match &mut self.scene_world {
+            Some(sw) => sw,
+            None => return,
+        };
+        let script_runtime = match &self.script_runtime {
+            Some(sr) => sr,
+            None => return,
+        };
+
+        let mut newly_dead = Vec::new();
+
+        for (entity, health) in scene_world.world.query::<&mut Health>().iter() {
+            if health.current <= 0.0 && !health.dead {
+                health.dead = true;
+                newly_dead.push(entity);
+            }
+        }
+
+        for entity in newly_dead {
+            script_runtime.call_on_death(entity);
+        }
+    }
+
     /// Process deferred entity commands (spawn/destroy/scale/visibility).
     fn process_entity_commands(&mut self) {
         let gpu = match &self.gpu {
@@ -914,6 +1060,22 @@ impl Engine {
             }
         }
 
+        // Process projectile spawns
+        let proj_spawns: Vec<_> = self.entity_commands.projectile_spawns.drain(..).collect();
+        for cmd in &proj_spawns {
+            if let (Some(scene_world), Some(physics_world)) = (&mut self.scene_world, &mut self.physics_world) {
+                crate::world::spawn_projectile_entity(
+                    scene_world,
+                    cmd,
+                    &gpu.device,
+                    &self.project_root,
+                    &mut self.mesh_cache,
+                    &mut self.material_cache,
+                    physics_world,
+                );
+            }
+        }
+
         // Process destroys
         let destroys: Vec<_> = self.entity_commands.destroys.drain(..).collect();
         for id in destroys {
@@ -922,6 +1084,14 @@ impl Engine {
                 if let Some(&entity) = scene_world.entity_registry.get(&id) {
                     if let Some(script_runtime) = &self.script_runtime {
                         script_runtime.call_on_destroy(entity);
+                    }
+                    // Clean up physics body if entity has one
+                    if let Ok(rb) = scene_world.world.get::<&crate::physics::RigidBody>(entity) {
+                        let rb_handle = rb.handle;
+                        drop(rb);
+                        if let Some(physics_world) = &mut self.physics_world {
+                            physics_world.remove_body(rb_handle);
+                        }
                     }
                 }
                 crate::world::destroy_runtime_entity(scene_world, &id);
@@ -973,25 +1143,84 @@ impl Engine {
 
         // Check if there's a player entity controlling the camera
         let mut player_camera_applied = false;
-        for (_entity, (transform, player, camera)) in
+        for (entity, (transform, player, camera)) in
             scene_world.world.query::<(&Transform, &Player, &Camera)>().iter()
         {
             if camera.role == CameraRole::Main {
-                // Override camera transform with player look direction
-                let look_rotation = glam::Quat::from_rotation_y(player.yaw)
-                    * glam::Quat::from_rotation_x(player.pitch);
-                let cam_transform = Transform {
-                    position: transform.position + glam::Vec3::new(0.0, player.height * 0.4, 0.0),
-                    rotation: look_rotation,
-                    ..transform.clone()
-                };
-                camera_state.update(
-                    &gpu.queue,
-                    camera,
-                    &cam_transform,
-                    gpu.config.width,
-                    gpu.config.height,
-                );
+                // Check for CameraMode component
+                let camera_mode = scene_world.world.get::<&CameraMode>(entity).ok();
+
+                let is_third_person = camera_mode.as_ref().map(|cm| matches!(**cm, CameraMode::ThirdPerson { .. })).unwrap_or(false);
+
+                if is_third_person {
+                    let (distance, height_offset) = if let Some(ref cm) = camera_mode {
+                        match **cm {
+                            CameraMode::ThirdPerson { distance, height_offset, .. } => (distance, height_offset),
+                            _ => (4.0, 1.5),
+                        }
+                    } else {
+                        (4.0, 1.5)
+                    };
+                    // Third-person camera: orbit behind player
+                    let target = transform.position + glam::Vec3::new(0.0, height_offset, 0.0);
+
+                    // Camera position orbits around target based on yaw and pitch
+                    let cam_offset = glam::Vec3::new(
+                        player.yaw.sin() * player.pitch.cos() * distance,
+                        player.pitch.sin() * distance,
+                        player.yaw.cos() * player.pitch.cos() * distance,
+                    );
+                    let mut desired_pos = target + cam_offset;
+
+                    // Wall collision: raycast from target to desired camera position
+                    if let Some(physics_world) = &self.physics_world {
+                        let ray_dir = (desired_pos - target).normalize_or_zero();
+                        let ray_dist = (desired_pos - target).length();
+                        if let Some((_entity, toi, _hit, _normal)) = physics_world.raycast_detailed(
+                            target, ray_dir, ray_dist, None,
+                        ) {
+                            // Pull camera closer to avoid clipping through walls
+                            desired_pos = target + ray_dir * (toi - 0.2).max(0.5);
+                        }
+                    }
+
+                    // Look rotation: camera looks from desired_pos toward target
+                    let forward = (target - desired_pos).normalize_or_zero();
+                    let look_rotation = if forward.length_squared() > 0.001 {
+                        glam::Quat::from_rotation_arc(-glam::Vec3::Z, forward)
+                    } else {
+                        glam::Quat::IDENTITY
+                    };
+
+                    let cam_transform = Transform {
+                        position: desired_pos,
+                        rotation: look_rotation,
+                        ..transform.clone()
+                    };
+                    camera_state.update(
+                        &gpu.queue,
+                        camera,
+                        &cam_transform,
+                        gpu.config.width,
+                        gpu.config.height,
+                    );
+                } else {
+                    // First-person camera (existing behavior)
+                    let look_rotation = glam::Quat::from_rotation_y(player.yaw)
+                        * glam::Quat::from_rotation_x(player.pitch);
+                    let cam_transform = Transform {
+                        position: transform.position + glam::Vec3::new(0.0, player.height * 0.4, 0.0),
+                        rotation: look_rotation,
+                        ..transform.clone()
+                    };
+                    camera_state.update(
+                        &gpu.queue,
+                        camera,
+                        &cam_transform,
+                        gpu.config.width,
+                        gpu.config.height,
+                    );
+                }
                 player_camera_applied = true;
                 break;
             }
@@ -1200,6 +1429,15 @@ impl ApplicationHandler for Engine {
                                 script_runtime.call_on_collision(event.entity_b, id_a);
                             }
                         }
+
+                        // Tier 1: Process collision damage (auto-damage + projectile hits)
+                        self.process_collision_damage();
+
+                        // Tier 1: Update projectiles (age tracking, lifetime expiry)
+                        self.update_projectiles();
+
+                        // Tier 1: Process health system (on_death callbacks)
+                        self.process_health_system();
 
                         // Phase 6: Update scripts
                         let dt = self.delta_time;

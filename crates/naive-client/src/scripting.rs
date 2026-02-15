@@ -5,13 +5,13 @@ use glam::Vec3;
 use mlua::prelude::*;
 
 use crate::audio::AudioSystem;
-use crate::components::{MaterialOverride, PointLight, Transform};
+use crate::components::{Health, MaterialOverride, PointLight, Transform};
 use crate::events::EventBus;
 use crate::font::BitmapFont;
 use crate::input::InputState;
 use crate::physics::PhysicsWorld;
 use crate::ui::UiRenderer;
-use crate::world::{EntityCommandQueue, SceneWorld};
+use crate::world::{EntityCommandQueue, ProjectileSpawnCommand, SceneWorld};
 
 /// Script component attached to entities.
 #[derive(Debug, Clone)]
@@ -126,6 +126,16 @@ impl ScriptRuntime {
         self.call_hook(entity, "on_trigger_exit", other_entity_id.to_string());
     }
 
+    /// Call the `on_damage` hook with damage amount and source entity ID.
+    pub fn call_on_damage(&self, entity: hecs::Entity, amount: f32, source_id: String) {
+        self.call_hook(entity, "on_damage", (amount, source_id));
+    }
+
+    /// Call the `on_death` hook.
+    pub fn call_on_death(&self, entity: hecs::Entity) {
+        self.call_hook(entity, "on_death", ());
+    }
+
     /// Internal: call a named function in an entity's environment.
     fn call_hook<A: IntoLuaMulti>(&self, entity: hecs::Entity, name: &str, args: A) {
         let key = match self.entity_envs.get(&entity) {
@@ -225,7 +235,11 @@ impl ScriptRuntime {
     }
 
     /// Register physics API functions.
-    pub fn register_physics_api(&self, physics_ptr: *const PhysicsWorld) -> Result<(), String> {
+    pub fn register_physics_api(
+        &self,
+        physics_ptr: *const PhysicsWorld,
+        scene_world_ptr: *const SceneWorld,
+    ) -> Result<(), String> {
         let globals = self.lua.globals();
         let physics_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
@@ -239,6 +253,30 @@ impl ScriptRuntime {
             }
         }).map_err(|e| e.to_string())?;
         physics_table.set("raycast", raycast_fn).map_err(|e| e.to_string())?;
+
+        // physics.hitscan(ox, oy, oz, dx, dy, dz, range) -> (hit, entity_id, distance, hx, hy, hz, nx, ny, nz)
+        let hitscan_fn = self.lua.create_function(move |_, (ox, oy, oz, dx, dy, dz, range): (f32, f32, f32, f32, f32, f32, f32)| {
+            let physics = unsafe { &*physics_ptr };
+            let sw = unsafe { &*scene_world_ptr };
+            match physics.raycast_detailed(
+                Vec3::new(ox, oy, oz),
+                Vec3::new(dx, dy, dz),
+                range,
+                None,
+            ) {
+                Some((entity, distance, hit_point, normal)) => {
+                    // Reverse lookup: entity -> string ID
+                    let entity_id = sw.entity_registry
+                        .iter()
+                        .find(|(_, &e)| e == entity)
+                        .map(|(id, _)| id.clone())
+                        .unwrap_or_default();
+                    Ok((true, entity_id, distance, hit_point.x, hit_point.y, hit_point.z, normal.x, normal.y, normal.z))
+                }
+                None => Ok((false, String::new(), 0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32)),
+            }
+        }).map_err(|e| e.to_string())?;
+        physics_table.set("hitscan", hitscan_fn).map_err(|e| e.to_string())?;
 
         globals.set("physics", physics_table).map_err(|e| e.to_string())?;
         Ok(())
@@ -412,6 +450,69 @@ impl ScriptRuntime {
         }).map_err(|e| e.to_string())?;
         entity_table.set("set_base_color", set_base_color_fn).map_err(|e| e.to_string())?;
 
+        // entity.get_health(id) -> current, max
+        let get_health_fn = self.lua.create_function(move |_, id: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(health) = sw.world.get::<&Health>(entity) {
+                    return Ok((health.current, health.max));
+                }
+            }
+            Ok((0.0f32, 0.0f32))
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("get_health", get_health_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_health(id, current, max)
+        let set_health_fn = self.lua.create_function(move |_, (id, current, max): (String, f32, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
+                    health.current = current;
+                    health.max = max;
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_health", set_health_fn).map_err(|e| e.to_string())?;
+
+        // entity.damage(id, amount) -> new_current
+        let damage_fn = self.lua.create_function(move |_, (id, amount): (String, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
+                    health.current = (health.current - amount).max(0.0);
+                    return Ok(health.current);
+                }
+            }
+            Ok(0.0f32)
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("damage", damage_fn).map_err(|e| e.to_string())?;
+
+        // entity.heal(id, amount) -> new_current
+        let heal_fn = self.lua.create_function(move |_, (id, amount): (String, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
+                    health.current = (health.current + amount).min(health.max);
+                    return Ok(health.current);
+                }
+            }
+            Ok(0.0f32)
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("heal", heal_fn).map_err(|e| e.to_string())?;
+
+        // entity.is_alive(id) -> bool
+        let is_alive_fn = self.lua.create_function(move |_, id: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(health) = sw.world.get::<&Health>(entity) {
+                    return Ok(health.current > 0.0 && !health.dead);
+                }
+            }
+            Ok(true) // entities without health are considered alive
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("is_alive", is_alive_fn).map_err(|e| e.to_string())?;
+
         globals.set("entity", entity_table).map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -557,6 +658,28 @@ impl ScriptRuntime {
             Ok(())
         }).map_err(|e| e.to_string())?;
         entity_table.set("set_visible", set_vis_fn).map_err(|e| e.to_string())?;
+
+        // entity.spawn_projectile(owner_id, mesh, material, ox, oy, oz, dx, dy, dz, speed, damage, lifetime, gravity)
+        let spawn_proj_fn = self.lua.create_function(move |_, (owner_id, mesh, material, ox, oy, oz, dx, dy, dz, speed, damage, lifetime, gravity): (String, String, String, f32, f32, f32, f32, f32, f32, f32, f32, f32, bool)| {
+            let cmd = unsafe { &mut *cmd_ptr };
+            cmd.projectile_counter += 1;
+            let id = format!("proj_{}", cmd.projectile_counter);
+            cmd.projectile_spawns.push(ProjectileSpawnCommand {
+                id,
+                mesh,
+                material,
+                position: [ox, oy, oz],
+                direction: [dx, dy, dz],
+                speed,
+                damage,
+                lifetime,
+                gravity,
+                owner_id,
+                scale: [1.0, 1.0, 1.0],
+            });
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("spawn_projectile", spawn_proj_fn).map_err(|e| e.to_string())?;
 
         // entity.destroy_by_prefix(prefix) - bulk destroy all entities whose ID starts with prefix
         let destroy_prefix_fn = self.lua.create_function(move |_, prefix: String| {

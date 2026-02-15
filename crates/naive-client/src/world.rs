@@ -17,6 +17,8 @@ pub struct EntityCommandQueue {
     pub destroys: Vec<String>,
     pub scale_updates: Vec<(String, [f32; 3])>,
     pub visibility_updates: Vec<(String, bool)>,
+    pub projectile_spawns: Vec<ProjectileSpawnCommand>,
+    pub projectile_counter: u64,
 }
 
 pub struct SpawnCommand {
@@ -24,6 +26,20 @@ pub struct SpawnCommand {
     pub mesh: String,
     pub material: String,
     pub position: [f32; 3],
+    pub scale: [f32; 3],
+}
+
+pub struct ProjectileSpawnCommand {
+    pub id: String,
+    pub mesh: String,
+    pub material: String,
+    pub position: [f32; 3],
+    pub direction: [f32; 3],
+    pub speed: f32,
+    pub damage: f32,
+    pub lifetime: f32,
+    pub gravity: bool,
+    pub owner_id: String,
     pub scale: [f32; 3],
 }
 
@@ -37,6 +53,7 @@ impl EntityCommandQueue {
         self.destroys.clear();
         self.scale_updates.clear();
         self.visibility_updates.clear();
+        self.projectile_spawns.clear();
     }
 }
 
@@ -288,6 +305,39 @@ fn spawn_entity(
         .entity_registry
         .insert(entity_def.id.clone(), entity);
 
+    // Attach Health component if defined
+    if let Some(health_def) = &entity_def.components.health {
+        let health = crate::components::Health {
+            current: health_def.current.unwrap_or(health_def.max),
+            max: health_def.max,
+            dead: false,
+        };
+        let _ = scene_world.world.insert_one(entity, health);
+    }
+
+    // Attach CollisionDamage component if defined
+    if let Some(cd_def) = &entity_def.components.collision_damage {
+        let collision_damage = crate::components::CollisionDamage {
+            damage: cd_def.damage,
+            destroy_on_hit: cd_def.destroy_on_hit,
+        };
+        let _ = scene_world.world.insert_one(entity, collision_damage);
+    }
+
+    // Attach CameraMode component if camera mode is third_person
+    if let Some(cam_def) = &entity_def.components.camera {
+        if cam_def.mode == "third_person" {
+            let pitch_limits = cam_def.pitch_limits.unwrap_or([-60.0, 75.0]);
+            let camera_mode = crate::components::CameraMode::ThirdPerson {
+                distance: cam_def.distance,
+                height_offset: cam_def.height_offset,
+                pitch_min: pitch_limits[0].to_radians(),
+                pitch_max: pitch_limits[1].to_radians(),
+            };
+            let _ = scene_world.world.insert_one(entity, camera_mode);
+        }
+    }
+
     // Spawn physics components if physics world is available
     if let Some(pw) = physics_world {
         let pos = if let Some(t) = &entity_def.components.transform {
@@ -406,6 +456,102 @@ pub fn parse_collider_shape(col_def: &crate::scene::ColliderDef) -> PhysicsShape
     }
 }
 
+/// Spawn a projectile entity at runtime with physics.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_projectile_entity(
+    scene_world: &mut SceneWorld,
+    cmd: &ProjectileSpawnCommand,
+    device: &wgpu::Device,
+    project_root: &Path,
+    mesh_cache: &mut MeshCache,
+    material_cache: &mut MaterialCache,
+    physics_world: &mut PhysicsWorld,
+) -> bool {
+    if scene_world.entity_registry.contains_key(&cmd.id) {
+        tracing::warn!("spawn_projectile_entity: id '{}' already exists", cmd.id);
+        return false;
+    }
+
+    let mesh_handle = match mesh_cache.get_or_load(device, project_root, &cmd.mesh) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("spawn_projectile_entity: mesh '{}' failed: {}", cmd.mesh, e);
+            return false;
+        }
+    };
+    let material_handle = match material_cache.get_or_load(device, project_root, &cmd.material) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("spawn_projectile_entity: material '{}' failed: {}", cmd.material, e);
+            return false;
+        }
+    };
+
+    let position = glam::Vec3::from(cmd.position);
+    let direction = glam::Vec3::from(cmd.direction).normalize_or_zero();
+
+    let transform = Transform {
+        position,
+        scale: glam::Vec3::from(cmd.scale),
+        dirty: true,
+        ..Default::default()
+    };
+    let mesh_renderer = crate::components::MeshRenderer {
+        mesh_handle,
+        material_handle,
+    };
+    let entity_id_comp = crate::components::EntityId(cmd.id.clone());
+    let tags = crate::components::Tags(vec!["projectile".to_string()]);
+    let projectile = crate::components::Projectile {
+        damage: cmd.damage,
+        lifetime: cmd.lifetime,
+        age: 0.0,
+        owner_id: cmd.owner_id.clone(),
+    };
+    let collision_damage = crate::components::CollisionDamage {
+        damage: cmd.damage,
+        destroy_on_hit: true,
+    };
+
+    let entity = scene_world.world.spawn((
+        entity_id_comp,
+        tags,
+        transform,
+        mesh_renderer,
+        projectile,
+        collision_damage,
+    ));
+    scene_world.entity_registry.insert(cmd.id.clone(), entity);
+
+    // Add physics body: dynamic sphere collider
+    let velocity = direction * cmd.speed;
+    let shape = PhysicsShape::Sphere { radius: 0.1 };
+    let (rb_handle, col_handle) = physics_world.add_dynamic_body(
+        entity,
+        position,
+        glam::Quat::IDENTITY,
+        shape.clone(),
+        0.1, // light mass
+        0.0,
+        0.5,
+    );
+
+    // Set initial velocity via PhysicsWorld helper
+    physics_world.set_linvel(rb_handle, velocity, !cmd.gravity);
+
+    let rb_comp = physics::RigidBody {
+        handle: rb_handle,
+        body_type: physics::PhysicsBodyType::Dynamic,
+    };
+    let col_comp = physics::Collider {
+        handle: col_handle,
+        shape,
+        is_trigger: false,
+    };
+    let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
+    true
+}
+
 /// Convert Euler degrees [pitch, yaw, roll] to a Quaternion.
 pub fn euler_degrees_to_quat(euler: [f32; 3]) -> glam::Quat {
     let [pitch, yaw, roll] = euler;
@@ -505,6 +651,25 @@ fn spawn_entity_headless(
     };
 
     scene_world.entity_registry.insert(entity_def.id.clone(), entity);
+
+    // Attach Health component if defined
+    if let Some(health_def) = &entity_def.components.health {
+        let health = crate::components::Health {
+            current: health_def.current.unwrap_or(health_def.max),
+            max: health_def.max,
+            dead: false,
+        };
+        let _ = scene_world.world.insert_one(entity, health);
+    }
+
+    // Attach CollisionDamage component if defined
+    if let Some(cd_def) = &entity_def.components.collision_damage {
+        let collision_damage = crate::components::CollisionDamage {
+            damage: cd_def.damage,
+            destroy_on_hit: cd_def.destroy_on_hit,
+        };
+        let _ = scene_world.world.insert_one(entity, collision_damage);
+    }
 
     // Spawn physics components
     let pos = if let Some(t) = &entity_def.components.transform {

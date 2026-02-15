@@ -93,6 +93,10 @@ pub struct ComponentMap {
     pub character_controller: Option<CharacterControllerDef>,
     #[serde(default)]
     pub script: Option<ScriptDef>,
+    #[serde(default)]
+    pub health: Option<HealthDef>,
+    #[serde(default)]
+    pub collision_damage: Option<CollisionDamageDef>,
     /// Absorbs unknown component types for forward compatibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
@@ -136,6 +140,14 @@ pub struct CameraDef {
     pub far: f32,
     #[serde(default = "default_role")]
     pub role: String,
+    #[serde(default = "default_camera_mode")]
+    pub mode: String,
+    #[serde(default = "default_camera_distance")]
+    pub distance: f32,
+    #[serde(default = "default_camera_height_offset")]
+    pub height_offset: f32,
+    #[serde(default)]
+    pub pitch_limits: Option<[f32; 2]>,
 }
 
 fn default_fov() -> f32 {
@@ -149,6 +161,15 @@ fn default_far() -> f32 {
 }
 fn default_role() -> String {
     "main".to_string()
+}
+fn default_camera_mode() -> String {
+    "first_person".to_string()
+}
+fn default_camera_distance() -> f32 {
+    4.0
+}
+fn default_camera_height_offset() -> f32 {
+    1.5
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -246,6 +267,20 @@ pub struct CharacterControllerDef {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HealthDef {
+    pub max: f32,
+    #[serde(default)]
+    pub current: Option<f32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CollisionDamageDef {
+    pub damage: f32,
+    #[serde(default)]
+    pub destroy_on_hit: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScriptDef {
     pub source: String,
 }
@@ -339,6 +374,12 @@ fn merge_entity(parent: &EntityDef, child: &EntityDef) -> EntityDef {
     }
     if merged.components.script.is_none() {
         merged.components.script = parent.components.script.clone();
+    }
+    if merged.components.health.is_none() {
+        merged.components.health = parent.components.health.clone();
+    }
+    if merged.components.collision_damage.is_none() {
+        merged.components.collision_damage = parent.components.collision_damage.clone();
     }
 
     // Merge extra components from parent that child doesn't have

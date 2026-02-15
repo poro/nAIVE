@@ -376,6 +376,84 @@ impl PhysicsWorld {
         None
     }
 
+    /// Cast a ray and return the first hit with detailed info including entity, distance, hit point, and normal.
+    /// Optionally excludes a specific entity from the results.
+    pub fn raycast_detailed(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        max_distance: f32,
+        exclude_entity: Option<hecs::Entity>,
+    ) -> Option<(hecs::Entity, f32, Vec3, Vec3)> {
+        let dir = direction.normalize_or_zero();
+        let ray = Ray::new(
+            point![origin.x, origin.y, origin.z],
+            vector![dir.x, dir.y, dir.z],
+        );
+
+        // Find the collider handles to exclude based on entity
+        let exclude_colliders: Vec<ColliderHandle> = if let Some(excl) = exclude_entity {
+            self.collider_to_entity
+                .iter()
+                .filter(|(_, &e)| e == excl)
+                .map(|(&h, _)| h)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Use cast_ray_and_get_normal with a filter
+        let filter = if let Some(excl) = exclude_entity {
+            // Find the rigid body handle for the excluded entity
+            let excl_rb: Option<RigidBodyHandle> = self.body_to_entity
+                .iter()
+                .find(|(_, &e)| e == excl)
+                .map(|(&h, _)| h);
+            if let Some(rb) = excl_rb {
+                QueryFilter::default().exclude_rigid_body(rb)
+            } else {
+                QueryFilter::default()
+            }
+        } else {
+            QueryFilter::default()
+        };
+
+        if let Some((handle, intersection)) = self.query_pipeline.cast_ray_and_get_normal(
+            &self.rigid_body_set,
+            &self.collider_set,
+            &ray,
+            max_distance,
+            true,
+            filter,
+        ) {
+            // Double check collider isn't in exclude list
+            if exclude_colliders.contains(&handle) {
+                return None;
+            }
+            if let Some(&entity) = self.collider_to_entity.get(&handle) {
+                let toi = intersection.time_of_impact;
+                let hit_point = origin + dir * toi;
+                let normal = Vec3::new(
+                    intersection.normal.x,
+                    intersection.normal.y,
+                    intersection.normal.z,
+                );
+                return Some((entity, toi, hit_point, normal));
+            }
+        }
+        None
+    }
+
+    /// Set the linear velocity of a rigid body and optionally disable gravity.
+    pub fn set_linvel(&mut self, rb_handle: RigidBodyHandle, velocity: Vec3, zero_gravity: bool) {
+        if let Some(body) = self.rigid_body_set.get_mut(rb_handle) {
+            body.set_linvel(vector![velocity.x, velocity.y, velocity.z], true);
+            if zero_gravity {
+                body.set_gravity_scale(0.0, true);
+            }
+        }
+    }
+
     /// Remove a body and its colliders.
     pub fn remove_body(&mut self, rb_handle: RigidBodyHandle) {
         self.rigid_body_set.remove(
