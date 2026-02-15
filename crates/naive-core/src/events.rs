@@ -135,12 +135,13 @@ impl EventBus {
         }
     }
 
-    /// Flush pending events: notify listeners, log to ring buffer and file.
-    pub fn flush(&mut self) {
+    /// Flush pending events: notify Rust listeners, log to ring buffer and file.
+    /// Returns the flushed events for Lua listener dispatch.
+    pub fn flush(&mut self) -> Vec<GameEvent> {
         let events: Vec<GameEvent> = self.pending.drain(..).collect();
 
         for event in &events {
-            // Notify listeners
+            // Notify Rust listeners
             if let Some(listeners) = self.listeners.get(&event.event_type) {
                 for (_id, callback) in listeners {
                     callback(event);
@@ -167,6 +168,8 @@ impl EventBus {
                 }
             }
         }
+
+        events
     }
 
     /// Advance time.

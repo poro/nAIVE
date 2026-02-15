@@ -78,6 +78,17 @@ pub struct Engine {
 
     // Entity command queue (deferred Lua commands)
     pub entity_commands: crate::world::EntityCommandQueue,
+
+    // Tier 2: Entity pool manager
+    pub pool_manager: crate::world::EntityPoolManager,
+
+    // Tier 2: Particle system
+    pub particle_system: crate::particles::ParticleSystem,
+
+    // Tier 2: Lua event listeners
+    pub lua_event_listeners: HashMap<String, Vec<mlua::RegistryKey>>,
+    pub next_lua_listener_id: u64,
+    pub lua_listener_id_map: HashMap<u64, (String, usize)>,
 }
 
 impl Engine {
@@ -112,6 +123,11 @@ impl Engine {
             bitmap_font: None,
             ui_renderer: None,
             entity_commands: crate::world::EntityCommandQueue::new(),
+            pool_manager: crate::world::EntityPoolManager::new(),
+            particle_system: crate::particles::ParticleSystem::new(),
+            lua_event_listeners: HashMap::new(),
+            next_lua_listener_id: 0,
+            lua_listener_id_map: HashMap::new(),
         }
     }
 
@@ -361,9 +377,10 @@ impl Engine {
             if let Err(e) = script_runtime.register_entity_api(sw_ptr) {
                 tracing::error!("Failed to register entity API: {}", e);
             }
-            // Entity command API (spawn, destroy, scale, visibility)
+            // Entity command API (spawn, destroy, scale, visibility, pooling)
             let cmd_ptr = &mut self.entity_commands as *mut crate::world::EntityCommandQueue;
-            if let Err(e) = script_runtime.register_entity_command_api(sw_ptr, cmd_ptr) {
+            let pool_mgr_ptr = &mut self.pool_manager as *mut crate::world::EntityPoolManager;
+            if let Err(e) = script_runtime.register_entity_command_api(sw_ptr, cmd_ptr, pool_mgr_ptr) {
                 tracing::error!("Failed to register entity command API: {}", e);
             }
         }
@@ -391,10 +408,13 @@ impl Engine {
             }
         }
 
-        // Register event bus API
+        // Register event bus API (with Lua listener support)
         {
             let bus_ptr = &mut self.event_bus as *mut crate::events::EventBus;
-            if let Err(e) = script_runtime.register_event_api(bus_ptr) {
+            let listeners_ptr = &mut self.lua_event_listeners as *mut HashMap<String, Vec<mlua::RegistryKey>>;
+            let next_id_ptr = &mut self.next_lua_listener_id as *mut u64;
+            let id_map_ptr = &mut self.lua_listener_id_map as *mut HashMap<u64, (String, usize)>;
+            if let Err(e) = script_runtime.register_event_api(bus_ptr, listeners_ptr, next_id_ptr, id_map_ptr) {
                 tracing::error!("Failed to register event API: {}", e);
             }
         }
@@ -404,6 +424,15 @@ impl Engine {
             let audio_ptr = &mut self.audio_system as *mut AudioSystem;
             if let Err(e) = script_runtime.register_audio_api(audio_ptr, self.project_root.clone()) {
                 tracing::error!("Failed to register audio API: {}", e);
+            }
+        }
+
+        // Register particle API
+        if let Some(sw) = &mut self.scene_world {
+            let sw_ptr = sw as *mut SceneWorld;
+            let ps_ptr = &mut self.particle_system as *mut crate::particles::ParticleSystem;
+            if let Err(e) = script_runtime.register_particle_api(sw_ptr, ps_ptr) {
+                tracing::error!("Failed to register particle API: {}", e);
             }
         }
 
@@ -1041,7 +1070,29 @@ impl Engine {
             None => return,
         };
 
-        // Process spawns
+        // Tier 2: Process destroys FIRST (fixes destroy+spawn same-frame bug)
+        let destroys: Vec<_> = self.entity_commands.destroys.drain(..).collect();
+        for id in destroys {
+            if let Some(scene_world) = &mut self.scene_world {
+                // Call on_destroy hook before despawning
+                if let Some(&entity) = scene_world.entity_registry.get(&id) {
+                    if let Some(script_runtime) = &self.script_runtime {
+                        script_runtime.call_on_destroy(entity);
+                    }
+                    // Clean up physics body if entity has one
+                    if let Ok(rb) = scene_world.world.get::<&crate::physics::RigidBody>(entity) {
+                        let rb_handle = rb.handle;
+                        drop(rb);
+                        if let Some(physics_world) = &mut self.physics_world {
+                            physics_world.remove_body(rb_handle);
+                        }
+                    }
+                }
+                crate::world::destroy_runtime_entity(scene_world, &id);
+            }
+        }
+
+        // Process spawns (after destroys, so destroy+spawn same ID works)
         let spawns: Vec<_> = self.entity_commands.spawns.drain(..).collect();
         for cmd in spawns {
             if let Some(scene_world) = &mut self.scene_world {
@@ -1076,25 +1127,24 @@ impl Engine {
             }
         }
 
-        // Process destroys
-        let destroys: Vec<_> = self.entity_commands.destroys.drain(..).collect();
-        for id in destroys {
+        // Process pool operations
+        let pool_ops: Vec<_> = self.entity_commands.pool_ops.drain(..).collect();
+        for op in pool_ops {
             if let Some(scene_world) = &mut self.scene_world {
-                // Call on_destroy hook before despawning
-                if let Some(&entity) = scene_world.entity_registry.get(&id) {
-                    if let Some(script_runtime) = &self.script_runtime {
-                        script_runtime.call_on_destroy(entity);
-                    }
-                    // Clean up physics body if entity has one
-                    if let Ok(rb) = scene_world.world.get::<&crate::physics::RigidBody>(entity) {
-                        let rb_handle = rb.handle;
-                        drop(rb);
-                        if let Some(physics_world) = &mut self.physics_world {
-                            physics_world.remove_body(rb_handle);
+                match op {
+                    crate::world::PoolOp::Release(id) => {
+                        if let Some(&entity) = scene_world.entity_registry.get(&id) {
+                            // Hide the entity and mark as inactive
+                            let _ = scene_world.world.insert_one(entity, crate::components::Hidden);
+                            if let Ok(mut pooled) = scene_world.world.get::<&mut crate::components::Pooled>(entity) {
+                                pooled.active = false;
+                                let pool_name = pooled.pool_name.clone();
+                                drop(pooled);
+                                self.pool_manager.release(&pool_name, &id);
+                            }
                         }
                     }
                 }
-                crate::world::destroy_runtime_entity(scene_world, &id);
             }
         }
 
@@ -1456,11 +1506,52 @@ impl ApplicationHandler for Engine {
                         // Process deferred entity commands from Lua
                         self.process_entity_commands();
 
-                        // Phase 7: Tick event bus and tweens
+                        // Tier 2: Dispatch Lua event listeners
                         self.event_bus.tick(dt as f64);
-                        self.event_bus.flush();
+                        let flushed_events = self.event_bus.flush();
+                        if let Some(script_runtime) = &self.script_runtime {
+                            for event in &flushed_events {
+                                if let Some(listeners) = self.lua_event_listeners.get(&event.event_type) {
+                                    for key in listeners {
+                                        if let Ok(func) = script_runtime.lua.registry_value::<mlua::Function>(key) {
+                                            let lua = &script_runtime.lua;
+                                            if let Ok(tbl) = lua.create_table() {
+                                                let _ = tbl.set("type", event.event_type.clone());
+                                                if let Ok(data_tbl) = lua.create_table() {
+                                                    for (k, v) in &event.data {
+                                                        match v {
+                                                            serde_json::Value::Number(n) => {
+                                                                if let Some(f) = n.as_f64() {
+                                                                    let _ = data_tbl.set(k.as_str(), f);
+                                                                }
+                                                            }
+                                                            serde_json::Value::String(s) => {
+                                                                let _ = data_tbl.set(k.as_str(), s.as_str());
+                                                            }
+                                                            serde_json::Value::Bool(b) => {
+                                                                let _ = data_tbl.set(k.as_str(), *b);
+                                                            }
+                                                            _ => {}
+                                                        }
+                                                    }
+                                                    let _ = tbl.set("data", data_tbl);
+                                                }
+                                                if let Err(e) = func.call::<()>(tbl) {
+                                                    tracing::error!("Lua event listener error: {}", e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         let _tween_results = self.tween_system.update(dt);
                         self.audio_system.cleanup();
+
+                        // Tier 2: Update particle system
+                        if let Some(scene_world) = &self.scene_world {
+                            self.particle_system.update(dt, scene_world);
+                        }
 
                         // Update listener position for spatial audio
                         if let Some(scene_world) = &self.scene_world {
@@ -1478,6 +1569,20 @@ impl ApplicationHandler for Engine {
                         &mut self.scene_world.as_mut().unwrap().world,
                     );
                     self.update_camera();
+
+                    // Tier 2: Grow GPU draw buffer if needed
+                    if let (Some(gpu), Some(scene_world), Some(draw_pool)) =
+                        (&self.gpu, &self.scene_world, &mut self.draw_pool)
+                    {
+                        let mut visible_count = 0u32;
+                        for (entity, _) in scene_world.world.query::<&crate::components::MeshRenderer>().iter() {
+                            if scene_world.world.get::<&crate::components::Hidden>(entity).is_ok() {
+                                continue;
+                            }
+                            visible_count += 1;
+                        }
+                        draw_pool.ensure_capacity(&gpu.device, visible_count);
+                    }
 
                     // Sort splats for correct alpha blending (CPU back-to-front)
                     if let (Some(gpu), Some(scene_world), Some(camera_state)) =

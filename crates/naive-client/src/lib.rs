@@ -17,6 +17,7 @@ pub mod init;
 pub mod input;
 pub mod material;
 pub mod mesh;
+pub mod particles;
 pub mod physics;
 pub mod pipeline;
 pub mod project_config;

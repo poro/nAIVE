@@ -1961,9 +1961,10 @@ pub fn execute_pipeline_to_view(
         }
     }
 
-    // Upload per-entity draw uniforms
-    for (draw_index, (entity, (transform, mesh_renderer))) in
-        (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
+    // Upload per-entity draw uniforms (skip hidden entities before incrementing draw_index)
+    let mut draw_index = 0u32;
+    for (entity, (transform, mesh_renderer)) in
+        scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
     {
         if scene_world.world.get::<&Hidden>(entity).is_ok() {
             continue;
@@ -2010,6 +2011,7 @@ pub fn execute_pipeline_to_view(
             draw_index as u64 * DRAW_UNIFORM_SIZE,
             bytemuck::cast_slice(&[draw_uniform]),
         );
+        draw_index += 1;
     }
 
     // Upload light uniforms (point lights + directional light)
@@ -2170,9 +2172,10 @@ fn execute_shadow_pass(
             render_pass.set_bind_group(0, bg, &[]);
         }
 
-        // Draw all mesh entities
-        for (draw_index, (entity, (_, mesh_renderer))) in
-            (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
+        // Draw all mesh entities (skip hidden before incrementing draw_index)
+        let mut draw_index = 0u32;
+        for (entity, (_, mesh_renderer)) in
+            scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
         {
             if scene_world.world.get::<&Hidden>(entity).is_ok() {
                 continue;
@@ -2187,6 +2190,7 @@ fn execute_shadow_pass(
                 wgpu::IndexFormat::Uint32,
             );
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
+            draw_index += 1;
         }
     }
 }
@@ -2254,9 +2258,9 @@ fn execute_rasterize_pass(
         render_pass.set_pipeline(&pass.pipeline);
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
-        let mut draw_count = 0u32;
-        for (draw_index, (entity, (_, mesh_renderer))) in
-            (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
+        let mut draw_index = 0u32;
+        for (entity, (_, mesh_renderer)) in
+            scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
         {
             if scene_world.world.get::<&Hidden>(entity).is_ok() {
                 continue;
@@ -2271,8 +2275,9 @@ fn execute_rasterize_pass(
                 wgpu::IndexFormat::Uint32,
             );
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
-            draw_count += 1;
+            draw_index += 1;
         }
+        let draw_count = draw_index;
         if draw_count == 0 {
             tracing::warn!("Rasterize pass '{}': ZERO entities drawn!", pass.name);
         } else {

@@ -3,6 +3,7 @@
 //! Runs Lua test scripts that inject input, advance game time, and assert
 //! that game events occurred. No GPU or window required.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use mlua::prelude::*;
@@ -37,6 +38,10 @@ pub struct TestRunner {
     pub delta_time: f32,
     pub total_time: f32,
     pub frame_count: u64,
+    // Tier 2: Lua event listener storage
+    lua_event_listeners: HashMap<String, Vec<mlua::RegistryKey>>,
+    next_lua_listener_id: u64,
+    lua_listener_id_map: HashMap<u64, (String, usize)>,
 }
 
 impl TestRunner {
@@ -53,6 +58,9 @@ impl TestRunner {
             delta_time: 1.0 / 60.0,
             total_time: 0.0,
             frame_count: 0,
+            lua_event_listeners: HashMap::new(),
+            next_lua_listener_id: 0,
+            lua_listener_id_map: HashMap::new(),
         }
     }
 
@@ -99,10 +107,13 @@ impl TestRunner {
             .register_entity_api(sw_ptr)
             .map_err(|e| format!("Entity API: {}", e))?;
 
-        // Register event bus API
+        // Register event bus API (with Lua listener support)
         let bus_ptr = &mut self.event_bus as *mut EventBus;
+        let listeners_ptr = &mut self.lua_event_listeners as *mut HashMap<String, Vec<mlua::RegistryKey>>;
+        let next_id_ptr = &mut self.next_lua_listener_id as *mut u64;
+        let id_map_ptr = &mut self.lua_listener_id_map as *mut HashMap<u64, (String, usize)>;
         self.script_runtime
-            .register_event_api(bus_ptr)
+            .register_event_api(bus_ptr, listeners_ptr, next_id_ptr, id_map_ptr)
             .map_err(|e| format!("Event API: {}", e))?;
 
         // Load event schema

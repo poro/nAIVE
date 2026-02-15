@@ -97,6 +97,8 @@ pub struct ComponentMap {
     pub health: Option<HealthDef>,
     #[serde(default)]
     pub collision_damage: Option<CollisionDamageDef>,
+    #[serde(default)]
+    pub particle_emitter: Option<ParticleEmitterDef>,
     /// Absorbs unknown component types for forward compatibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
@@ -285,6 +287,42 @@ pub struct ScriptDef {
     pub source: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ParticleEmitterDef {
+    #[serde(default = "default_max_particles")]
+    pub max_particles: u32,
+    #[serde(default = "default_spawn_rate")]
+    pub spawn_rate: f32,
+    #[serde(default = "default_lifetime")]
+    pub lifetime: [f32; 2],
+    #[serde(default = "default_initial_speed")]
+    pub initial_speed: [f32; 2],
+    #[serde(default = "default_emitter_direction")]
+    pub direction: [f32; 3],
+    #[serde(default = "default_spread")]
+    pub spread: f32,
+    #[serde(default = "default_particle_size")]
+    pub size: [f32; 2],
+    #[serde(default = "default_color_white")]
+    pub color_start: [f32; 4],
+    #[serde(default = "default_color_transparent")]
+    pub color_end: [f32; 4],
+    #[serde(default)]
+    pub gravity_scale: f32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_max_particles() -> u32 { 100 }
+fn default_spawn_rate() -> f32 { 10.0 }
+fn default_lifetime() -> [f32; 2] { [0.5, 1.5] }
+fn default_initial_speed() -> [f32; 2] { [1.0, 3.0] }
+fn default_emitter_direction() -> [f32; 3] { [0.0, 1.0, 0.0] }
+fn default_spread() -> f32 { 30.0 }
+fn default_particle_size() -> [f32; 2] { [0.2, 0.05] }
+fn default_color_white() -> [f32; 4] { [1.0, 1.0, 1.0, 1.0] }
+fn default_color_transparent() -> [f32; 4] { [1.0, 1.0, 1.0, 0.0] }
+
 fn default_move_speed() -> f32 { 5.0 }
 fn default_sprint_multiplier() -> f32 { 1.8 }
 fn default_jump_impulse() -> f32 { 7.0 }
@@ -380,6 +418,9 @@ fn merge_entity(parent: &EntityDef, child: &EntityDef) -> EntityDef {
     }
     if merged.components.collision_damage.is_none() {
         merged.components.collision_damage = parent.components.collision_damage.clone();
+    }
+    if merged.components.particle_emitter.is_none() {
+        merged.components.particle_emitter = parent.components.particle_emitter.clone();
     }
 
     // Merge extra components from parent that child doesn't have

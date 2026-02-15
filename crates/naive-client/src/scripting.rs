@@ -5,13 +5,13 @@ use glam::Vec3;
 use mlua::prelude::*;
 
 use crate::audio::AudioSystem;
-use crate::components::{Health, MaterialOverride, PointLight, Transform};
+use crate::components::{EntityId, Health, MaterialOverride, ParticleEmitter, PointLight, Tags, Transform};
 use crate::events::EventBus;
 use crate::font::BitmapFont;
 use crate::input::InputState;
 use crate::physics::PhysicsWorld;
 use crate::ui::UiRenderer;
-use crate::world::{EntityCommandQueue, ProjectileSpawnCommand, SceneWorld};
+use crate::world::{EntityCommandQueue, EntityPoolManager, PoolOp, ProjectileSpawnCommand, SceneWorld};
 
 /// Script component attached to entities.
 #[derive(Debug, Clone)]
@@ -513,12 +513,94 @@ impl ScriptRuntime {
         }).map_err(|e| e.to_string())?;
         entity_table.set("is_alive", is_alive_fn).map_err(|e| e.to_string())?;
 
+        // entity.has_tag(id, tag) -> bool
+        let has_tag_fn = self.lua.create_function(move |_, (id, tag): (String, String)| {
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(tags) = sw.world.get::<&Tags>(entity) {
+                    return Ok(tags.0.contains(&tag));
+                }
+            }
+            Ok(false)
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("has_tag", has_tag_fn).map_err(|e| e.to_string())?;
+
+        // entity.add_tag(id, tag)
+        let add_tag_fn = self.lua.create_function(move |_, (id, tag): (String, String)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut tags) = sw.world.get::<&mut Tags>(entity) {
+                    if !tags.0.contains(&tag) {
+                        tags.0.push(tag);
+                    }
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("add_tag", add_tag_fn).map_err(|e| e.to_string())?;
+
+        // entity.remove_tag(id, tag)
+        let remove_tag_fn = self.lua.create_function(move |_, (id, tag): (String, String)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut tags) = sw.world.get::<&mut Tags>(entity) {
+                    tags.0.retain(|t| t != &tag);
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("remove_tag", remove_tag_fn).map_err(|e| e.to_string())?;
+
         globals.set("entity", entity_table).map_err(|e| e.to_string())?;
+
+        // --- scene table (Tier 2: Runtime Entity Queries) ---
+        let scene_table = self.lua.create_table().map_err(|e| e.to_string())?;
+
+        // scene.find_by_tag(tag) -> {entity_id1, entity_id2, ...}
+        let find_by_tag_fn = self.lua.create_function(move |lua, tag: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            let result = lua.create_table()?;
+            let mut idx = 1;
+            for (_entity, (tags, entity_id)) in sw.world.query::<(&Tags, &EntityId)>().iter() {
+                if tags.0.contains(&tag) {
+                    result.set(idx, entity_id.0.clone())?;
+                    idx += 1;
+                }
+            }
+            Ok(result)
+        }).map_err(|e| e.to_string())?;
+        scene_table.set("find_by_tag", find_by_tag_fn).map_err(|e| e.to_string())?;
+
+        // scene.find_by_tags(tag1, tag2, ...) -> entities with ALL specified tags
+        let find_by_tags_fn = self.lua.create_function(move |lua, tags_arg: LuaMultiValue| {
+            let sw = unsafe { &*scene_world_ptr };
+            let required_tags: Vec<String> = tags_arg.into_iter().filter_map(|v| {
+                if let LuaValue::String(s) = v { Some(s.to_string_lossy().to_string()) } else { None }
+            }).collect();
+            let result = lua.create_table()?;
+            let mut idx = 1;
+            for (_entity, (tags, entity_id)) in sw.world.query::<(&Tags, &EntityId)>().iter() {
+                if required_tags.iter().all(|rt| tags.0.contains(rt)) {
+                    result.set(idx, entity_id.0.clone())?;
+                    idx += 1;
+                }
+            }
+            Ok(result)
+        }).map_err(|e| e.to_string())?;
+        scene_table.set("find_by_tags", find_by_tags_fn).map_err(|e| e.to_string())?;
+
+        globals.set("scene", scene_table).map_err(|e| e.to_string())?;
         Ok(())
     }
 
-    /// Register event bus API (events.emit).
-    pub fn register_event_api(&self, event_bus_ptr: *mut EventBus) -> Result<(), String> {
+    /// Register event bus API (events.emit, events.on, events.off).
+    pub fn register_event_api(
+        &self,
+        event_bus_ptr: *mut EventBus,
+        lua_listeners_ptr: *mut HashMap<String, Vec<mlua::RegistryKey>>,
+        next_id_ptr: *mut u64,
+        id_map_ptr: *mut HashMap<u64, (String, usize)>,
+    ) -> Result<(), String> {
         let globals = self.lua.globals();
         let events_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
@@ -544,6 +626,48 @@ impl ScriptRuntime {
             Ok(())
         }).map_err(|e| e.to_string())?;
         events_table.set("emit", emit_fn).map_err(|e| e.to_string())?;
+
+        // events.on(event_type, callback) -> listener_id
+        let on_fn = self.lua.create_function(move |lua, (event_type, callback): (String, LuaFunction)| {
+            let listeners = unsafe { &mut *lua_listeners_ptr };
+            let next_id = unsafe { &mut *next_id_ptr };
+            let id_map = unsafe { &mut *id_map_ptr };
+
+            let owned_key = lua.create_registry_value(callback)
+                .map_err(|e| mlua::Error::external(e))?;
+            let list = listeners.entry(event_type.clone()).or_default();
+            let index = list.len();
+            list.push(owned_key);
+
+            let listener_id = *next_id;
+            *next_id += 1;
+            id_map.insert(listener_id, (event_type, index));
+
+            Ok(listener_id)
+        }).map_err(|e| e.to_string())?;
+        events_table.set("on", on_fn).map_err(|e| e.to_string())?;
+
+        // events.off(listener_id) - remove a listener
+        let off_fn = self.lua.create_function(move |_, listener_id: u64| {
+            let listeners: &mut HashMap<String, Vec<mlua::RegistryKey>> = unsafe { &mut *lua_listeners_ptr };
+            let id_map: &mut HashMap<u64, (String, usize)> = unsafe { &mut *id_map_ptr };
+
+            if let Some((event_type, index)) = id_map.remove(&listener_id) {
+                if let Some(list) = listeners.get_mut(&event_type) {
+                    if index < list.len() {
+                        list.remove(index);
+                        // Reindex the id_map entries for this event type
+                        for (_id, (et, idx)) in id_map.iter_mut() {
+                            if *et == event_type && *idx > index {
+                                *idx -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        events_table.set("off", off_fn).map_err(|e| e.to_string())?;
 
         globals.set("events", events_table).map_err(|e| e.to_string())?;
         Ok(())
@@ -596,12 +720,13 @@ impl ScriptRuntime {
         Ok(())
     }
 
-    /// Register entity lifecycle commands (spawn, destroy, visibility)
+    /// Register entity lifecycle commands (spawn, destroy, visibility, pooling)
     /// that are deferred via the EntityCommandQueue.
     pub fn register_entity_command_api(
         &self,
         scene_world_ptr: *mut SceneWorld,
         cmd_ptr: *mut EntityCommandQueue,
+        pool_mgr_ptr: *mut EntityPoolManager,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let entity_table: LuaTable = globals.get("entity").map_err(|e| e.to_string())?;
@@ -696,6 +821,83 @@ impl ScriptRuntime {
         }).map_err(|e| e.to_string())?;
         entity_table.set("destroy_by_prefix", destroy_prefix_fn).map_err(|e| e.to_string())?;
 
+        // --- Tier 2: Entity Pool API ---
+
+        // entity.pool_create(name, mesh, material, count) — create pool and pre-warm
+        let pool_create_fn = self.lua.create_function(move |_, (name, mesh, material, count): (String, String, String, u32)| {
+            let pool_mgr = unsafe { &mut *pool_mgr_ptr };
+            let cmd = unsafe { &mut *cmd_ptr };
+            pool_mgr.create_pool(&name, &mesh, &material);
+            // Pre-warm by spawning `count` hidden entities
+            for i in 0..count {
+                let entity_id = format!("_pool_{}_{}", name, i);
+                cmd.spawns.push(crate::world::SpawnCommand {
+                    id: entity_id,
+                    mesh: mesh.clone(),
+                    material: material.clone(),
+                    position: [0.0, -1000.0, 0.0], // offscreen
+                    scale: [1.0, 1.0, 1.0],
+                });
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("pool_create", pool_create_fn).map_err(|e| e.to_string())?;
+
+        // entity.pool_acquire(name) -> entity_id or nil
+        let pool_acquire_fn = self.lua.create_function(move |_, name: String| {
+            let pool_mgr = unsafe { &mut *pool_mgr_ptr };
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(entity_id) = pool_mgr.try_acquire(&name) {
+                // Unhide the entity, mark as active
+                if let Some(&entity) = sw.entity_registry.get(&entity_id) {
+                    let _ = sw.world.remove_one::<crate::components::Hidden>(entity);
+                    if let Ok(mut pooled) = sw.world.get::<&mut crate::components::Pooled>(entity) {
+                        pooled.active = true;
+                    }
+                    // Reset health if present
+                    if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
+                        health.current = health.max;
+                        health.dead = false;
+                    }
+                }
+                Ok(Some(entity_id))
+            } else {
+                // Pool empty — spawn a new entity
+                let cmd = unsafe { &mut *cmd_ptr };
+                if let Some((mesh, material)) = pool_mgr.get_pool_assets(&name) {
+                    let entity_id = format!("_pool_{}_{}", name, sw.entity_registry.len());
+                    cmd.spawns.push(crate::world::SpawnCommand {
+                        id: entity_id.clone(),
+                        mesh,
+                        material,
+                        position: [0.0, 0.0, 0.0],
+                        scale: [1.0, 1.0, 1.0],
+                    });
+                    pool_mgr.register_entity(&name, &entity_id);
+                    Ok(Some(entity_id))
+                } else {
+                    Ok(None)
+                }
+            }
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("pool_acquire", pool_acquire_fn).map_err(|e| e.to_string())?;
+
+        // entity.pool_release(id) — hide + return to pool
+        let pool_release_fn = self.lua.create_function(move |_, id: String| {
+            let cmd = unsafe { &mut *cmd_ptr };
+            cmd.pool_ops.push(PoolOp::Release(id));
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("pool_release", pool_release_fn).map_err(|e| e.to_string())?;
+
+        // entity.pool_size(name) -> total, available
+        let pool_size_fn = self.lua.create_function(move |_, name: String| {
+            let pool_mgr = unsafe { &*pool_mgr_ptr };
+            let (total, available) = pool_mgr.pool_size(&name);
+            Ok((total as u32, available as u32))
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("pool_size", pool_size_fn).map_err(|e| e.to_string())?;
+
         Ok(())
     }
 
@@ -730,6 +932,100 @@ impl ScriptRuntime {
         camera_table.set("world_to_screen", w2s_fn).map_err(|e| e.to_string())?;
 
         globals.set("camera", camera_table).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Register particle system API (entity emitter control + one-shot bursts).
+    pub fn register_particle_api(
+        &self,
+        scene_world_ptr: *mut SceneWorld,
+        particle_system_ptr: *mut crate::particles::ParticleSystem,
+    ) -> Result<(), String> {
+        let globals = self.lua.globals();
+        let entity_table: LuaTable = globals.get("entity").map_err(|e| e.to_string())?;
+
+        // entity.set_emitter_enabled(id, enabled)
+        let set_emitter_fn = self.lua.create_function(move |_, (id, enabled): (String, bool)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut emitter) = sw.world.get::<&mut ParticleEmitter>(entity) {
+                    emitter.enabled = enabled;
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_emitter_enabled", set_emitter_fn).map_err(|e| e.to_string())?;
+
+        // entity.set_emitter_rate(id, rate)
+        let set_rate_fn = self.lua.create_function(move |_, (id, rate): (String, f32)| {
+            let sw = unsafe { &mut *scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut emitter) = sw.world.get::<&mut ParticleEmitter>(entity) {
+                    emitter.config.spawn_rate = rate;
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("set_emitter_rate", set_rate_fn).map_err(|e| e.to_string())?;
+
+        // entity.burst(id, count) — spawn N particles immediately on an emitter entity
+        let burst_fn = self.lua.create_function(move |_, (id, count): (String, u32)| {
+            let sw = unsafe { &*scene_world_ptr };
+            let ps = unsafe { &mut *particle_system_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                ps.burst_on_entity(entity, count, sw);
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("burst", burst_fn).map_err(|e| e.to_string())?;
+
+        // particles table for non-entity operations
+        let particles_table = self.lua.create_table().map_err(|e| e.to_string())?;
+
+        // particles.spawn_burst(x, y, z, count, config_table)
+        let spawn_burst_fn = self.lua.create_function(move |_, (x, y, z, count, config_tbl): (f32, f32, f32, u32, LuaTable)| {
+            let ps = unsafe { &mut *particle_system_ptr };
+            let config = crate::components::ParticleConfig {
+                max_particles: count * 2,
+                spawn_rate: 0.0,
+                lifetime: [
+                    config_tbl.get::<f32>("lifetime_min").unwrap_or(0.5),
+                    config_tbl.get::<f32>("lifetime_max").unwrap_or(1.5),
+                ],
+                initial_speed: [
+                    config_tbl.get::<f32>("speed_min").unwrap_or(1.0),
+                    config_tbl.get::<f32>("speed_max").unwrap_or(3.0),
+                ],
+                direction: glam::Vec3::new(
+                    config_tbl.get::<f32>("dir_x").unwrap_or(0.0),
+                    config_tbl.get::<f32>("dir_y").unwrap_or(1.0),
+                    config_tbl.get::<f32>("dir_z").unwrap_or(0.0),
+                ),
+                spread: config_tbl.get::<f32>("spread").unwrap_or(360.0),
+                size: [
+                    config_tbl.get::<f32>("size_start").unwrap_or(0.2),
+                    config_tbl.get::<f32>("size_end").unwrap_or(0.05),
+                ],
+                color_start: [
+                    config_tbl.get::<f32>("r").unwrap_or(1.0),
+                    config_tbl.get::<f32>("g").unwrap_or(1.0),
+                    config_tbl.get::<f32>("b").unwrap_or(1.0),
+                    config_tbl.get::<f32>("a").unwrap_or(1.0),
+                ],
+                color_end: [
+                    config_tbl.get::<f32>("r_end").unwrap_or(1.0),
+                    config_tbl.get::<f32>("g_end").unwrap_or(1.0),
+                    config_tbl.get::<f32>("b_end").unwrap_or(1.0),
+                    0.0,
+                ],
+                gravity_scale: config_tbl.get::<f32>("gravity_scale").unwrap_or(0.0),
+            };
+            ps.spawn_burst(glam::Vec3::new(x, y, z), count, &config);
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        particles_table.set("spawn_burst", spawn_burst_fn).map_err(|e| e.to_string())?;
+
+        globals.set("particles", particles_table).map_err(|e| e.to_string())?;
         Ok(())
     }
 

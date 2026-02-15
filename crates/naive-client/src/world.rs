@@ -10,6 +10,11 @@ use crate::physics::{self, CharacterController, PhysicsShape, PhysicsWorld};
 use crate::scene::{EntityDef, SceneFile};
 use crate::splat::SplatCache;
 
+/// Deferred pool operation.
+pub enum PoolOp {
+    Release(String),
+}
+
 /// Deferred entity commands from Lua scripts, processed each frame.
 #[derive(Default)]
 pub struct EntityCommandQueue {
@@ -19,6 +24,7 @@ pub struct EntityCommandQueue {
     pub visibility_updates: Vec<(String, bool)>,
     pub projectile_spawns: Vec<ProjectileSpawnCommand>,
     pub projectile_counter: u64,
+    pub pool_ops: Vec<PoolOp>,
 }
 
 pub struct SpawnCommand {
@@ -54,6 +60,7 @@ impl EntityCommandQueue {
         self.scale_updates.clear();
         self.visibility_updates.clear();
         self.projectile_spawns.clear();
+        self.pool_ops.clear();
     }
 }
 
@@ -322,6 +329,26 @@ fn spawn_entity(
             destroy_on_hit: cd_def.destroy_on_hit,
         };
         let _ = scene_world.world.insert_one(entity, collision_damage);
+    }
+
+    // Attach ParticleEmitter component if defined
+    if let Some(pe_def) = &entity_def.components.particle_emitter {
+        let emitter = crate::components::ParticleEmitter {
+            config: crate::components::ParticleConfig {
+                max_particles: pe_def.max_particles,
+                spawn_rate: pe_def.spawn_rate,
+                lifetime: pe_def.lifetime,
+                initial_speed: pe_def.initial_speed,
+                direction: glam::Vec3::from(pe_def.direction),
+                spread: pe_def.spread,
+                size: pe_def.size,
+                color_start: pe_def.color_start,
+                color_end: pe_def.color_end,
+                gravity_scale: pe_def.gravity_scale,
+            },
+            enabled: pe_def.enabled,
+        };
+        let _ = scene_world.world.insert_one(entity, emitter);
     }
 
     // Attach CameraMode component if camera mode is third_person
@@ -854,5 +881,75 @@ fn patch_entity(
             point_light.intensity = pl.intensity;
             point_light.range = pl.range;
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Entity Pool Manager (Tier 2)
+// ---------------------------------------------------------------------------
+
+struct EntityPool {
+    available: Vec<String>,
+    all: Vec<String>,
+    mesh: String,
+    material: String,
+}
+
+/// Manages reusable entity pools to avoid spawn/destroy overhead.
+pub struct EntityPoolManager {
+    pools: HashMap<String, EntityPool>,
+}
+
+impl EntityPoolManager {
+    pub fn new() -> Self {
+        Self {
+            pools: HashMap::new(),
+        }
+    }
+
+    /// Create a new pool (does not pre-warm — that happens via acquire calls).
+    pub fn create_pool(&mut self, name: &str, mesh: &str, material: &str) {
+        self.pools.insert(name.to_string(), EntityPool {
+            available: Vec::new(),
+            all: Vec::new(),
+            mesh: mesh.to_string(),
+            material: material.to_string(),
+        });
+    }
+
+    /// Return an available entity ID from the pool, or None if pool is empty.
+    pub fn try_acquire(&mut self, pool_name: &str) -> Option<String> {
+        self.pools.get_mut(pool_name).and_then(|pool| pool.available.pop())
+    }
+
+    /// Release an entity back to the pool's available list.
+    pub fn release(&mut self, pool_name: &str, entity_id: &str) {
+        if let Some(pool) = self.pools.get_mut(pool_name) {
+            if !pool.available.contains(&entity_id.to_string()) {
+                pool.available.push(entity_id.to_string());
+            }
+        }
+    }
+
+    /// Register a newly spawned entity in the pool's tracking.
+    pub fn register_entity(&mut self, pool_name: &str, entity_id: &str) {
+        if let Some(pool) = self.pools.get_mut(pool_name) {
+            pool.all.push(entity_id.to_string());
+        }
+    }
+
+    /// Get the mesh and material for a pool.
+    pub fn get_pool_assets(&self, pool_name: &str) -> Option<(String, String)> {
+        self.pools.get(pool_name).map(|p| (p.mesh.clone(), p.material.clone()))
+    }
+
+    /// Check if a pool exists.
+    pub fn has_pool(&self, name: &str) -> bool {
+        self.pools.contains_key(name)
+    }
+
+    /// Get pool stats: (total, available).
+    pub fn pool_size(&self, name: &str) -> (usize, usize) {
+        self.pools.get(name).map(|p| (p.all.len(), p.available.len())).unwrap_or((0, 0))
     }
 }

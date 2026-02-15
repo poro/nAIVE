@@ -181,3 +181,49 @@ pub enum CameraMode {
         pitch_max: f32, // radians
     },
 }
+
+/// Marker component for entities managed by the entity pool system.
+#[derive(Debug, Clone)]
+pub struct Pooled {
+    pub pool_name: String,
+    pub active: bool,
+}
+
+/// Particle emitter configuration.
+#[derive(Debug, Clone)]
+pub struct ParticleConfig {
+    pub max_particles: u32,
+    pub spawn_rate: f32,
+    pub lifetime: [f32; 2],
+    pub initial_speed: [f32; 2],
+    pub direction: Vec3,
+    pub spread: f32,
+    pub size: [f32; 2],
+    pub color_start: [f32; 4],
+    pub color_end: [f32; 4],
+    pub gravity_scale: f32,
+}
+
+impl Default for ParticleConfig {
+    fn default() -> Self {
+        Self {
+            max_particles: 100,
+            spawn_rate: 10.0,
+            lifetime: [0.5, 1.5],
+            initial_speed: [1.0, 3.0],
+            direction: Vec3::Y,
+            spread: 30.0,
+            size: [0.2, 0.05],
+            color_start: [1.0, 1.0, 1.0, 1.0],
+            color_end: [1.0, 1.0, 1.0, 0.0],
+            gravity_scale: 0.0,
+        }
+    }
+}
+
+/// Particle emitter component attached to entities.
+#[derive(Debug, Clone)]
+pub struct ParticleEmitter {
+    pub config: ParticleConfig,
+    pub enabled: bool,
+}

@@ -64,13 +64,16 @@ pub struct DrawUniforms {
 }
 
 pub const DRAW_UNIFORM_SIZE: u64 = 256;
-const MAX_ENTITIES: usize = 256;
+const INITIAL_CAPACITY: u32 = 256;
+const GROWTH_FACTOR: u32 = 2;
 
 /// Manages per-entity draw uniforms with dynamic offsets.
+/// Buffer grows dynamically when more entities are needed.
 pub struct DrawUniformPool {
     pub buffer: wgpu::Buffer,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
+    pub capacity: u32,
 }
 
 impl DrawUniformPool {
@@ -90,9 +93,10 @@ impl DrawUniformPool {
                 }],
             });
 
+        let capacity = INITIAL_CAPACITY;
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Draw Uniform Buffer"),
-            size: DRAW_UNIFORM_SIZE * MAX_ENTITIES as u64,
+            size: DRAW_UNIFORM_SIZE * capacity as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -114,7 +118,50 @@ impl DrawUniformPool {
             buffer,
             bind_group_layout,
             bind_group,
+            capacity,
         }
+    }
+
+    /// Ensure the buffer can hold at least `needed` entities.
+    /// Returns true if the buffer was rebuilt (bind_group changed).
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, needed: u32) -> bool {
+        if needed <= self.capacity {
+            return false;
+        }
+
+        let mut new_capacity = self.capacity;
+        while new_capacity < needed {
+            new_capacity *= GROWTH_FACTOR;
+        }
+
+        tracing::info!(
+            "Growing DrawUniformPool: {} -> {} entities",
+            self.capacity,
+            new_capacity
+        );
+
+        self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Draw Uniform Buffer"),
+            size: DRAW_UNIFORM_SIZE * new_capacity as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Draw Bind Group"),
+            layout: &self.bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &self.buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(DRAW_UNIFORM_SIZE),
+                }),
+            }],
+        });
+
+        self.capacity = new_capacity;
+        true
     }
 }
 
@@ -428,9 +475,10 @@ pub fn render_scene_to_view(
     view: &wgpu::TextureView,
     encoder: &mut wgpu::CommandEncoder,
 ) {
-    // Write per-draw uniforms
-    for (draw_index, (entity, (transform, mesh_renderer))) in
-        (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
+    // Write per-draw uniforms (skip hidden entities before incrementing draw_index)
+    let mut draw_index = 0u32;
+    for (entity, (transform, mesh_renderer)) in
+        scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
     {
         if scene_world.world.get::<&Hidden>(entity).is_ok() {
             continue;
@@ -455,6 +503,7 @@ pub fn render_scene_to_view(
             draw_index as u64 * DRAW_UNIFORM_SIZE,
             bytemuck::cast_slice(&[draw_uniform]),
         );
+        draw_index += 1;
     }
 
     {
@@ -488,8 +537,9 @@ pub fn render_scene_to_view(
         render_pass.set_pipeline(forward_pipeline);
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
-        for (draw_index, (entity, (_, mesh_renderer))) in
-            (0_u32..).zip(scene_world.world.query::<(&Transform, &MeshRenderer)>().iter())
+        let mut draw_index = 0u32;
+        for (entity, (_, mesh_renderer)) in
+            scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
         {
             if scene_world.world.get::<&Hidden>(entity).is_ok() {
                 continue;
@@ -504,6 +554,7 @@ pub fn render_scene_to_view(
                 wgpu::IndexFormat::Uint32,
             );
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
+            draw_index += 1;
         }
     }
 }
