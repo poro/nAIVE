@@ -187,11 +187,15 @@ impl PhysicsWorld {
         mass: f32,
         restitution: f32,
         friction: f32,
+        ccd: bool,
     ) -> (RigidBodyHandle, ColliderHandle) {
-        let rb = RigidBodyBuilder::dynamic()
+        let mut rb_builder = RigidBodyBuilder::dynamic()
             .translation(vector![position.x, position.y, position.z])
-            .rotation(quat_to_angvector(rotation))
-            .build();
+            .rotation(quat_to_angvector(rotation));
+        if ccd {
+            rb_builder = rb_builder.ccd_enabled(true);
+        }
+        let rb = rb_builder.build();
         let rb_handle = self.rigid_body_set.insert(rb);
 
         let collider = shape_to_collider(&shape)
@@ -450,6 +454,52 @@ impl PhysicsWorld {
             body.set_linvel(vector![velocity.x, velocity.y, velocity.z], true);
             if zero_gravity {
                 body.set_gravity_scale(0.0, true);
+            }
+        }
+    }
+
+    /// Apply an impulse to a rigid body (instantaneous velocity change).
+    pub fn apply_impulse(&mut self, rb_handle: RigidBodyHandle, impulse: Vec3) {
+        if let Some(body) = self.rigid_body_set.get_mut(rb_handle) {
+            body.apply_impulse(vector![impulse.x, impulse.y, impulse.z], true);
+        }
+    }
+
+    /// Apply a force to a rigid body (continuous acceleration).
+    pub fn apply_force(&mut self, rb_handle: RigidBodyHandle, force: Vec3) {
+        if let Some(body) = self.rigid_body_set.get_mut(rb_handle) {
+            body.add_force(vector![force.x, force.y, force.z], true);
+        }
+    }
+
+    /// Get the linear velocity of a rigid body.
+    pub fn get_linvel(&self, rb_handle: RigidBodyHandle) -> Option<Vec3> {
+        self.rigid_body_set.get(rb_handle).map(|body| {
+            let v = body.linvel();
+            Vec3::new(v.x, v.y, v.z)
+        })
+    }
+
+    /// Set the restitution (bounciness) of all colliders attached to a rigid body.
+    pub fn set_restitution(&mut self, rb_handle: RigidBodyHandle, value: f32) {
+        if let Some(body) = self.rigid_body_set.get(rb_handle) {
+            let col_handles: Vec<ColliderHandle> = body.colliders().to_vec();
+            for col_handle in col_handles {
+                if let Some(col) = self.collider_set.get_mut(col_handle) {
+                    col.set_restitution(value);
+                }
+            }
+        }
+    }
+
+    /// Set the friction of all colliders attached to a rigid body.
+    pub fn set_friction(&mut self, rb_handle: RigidBodyHandle, value: f32) {
+        if let Some(body) = self.rigid_body_set.get(rb_handle) {
+            let col_handles: Vec<ColliderHandle> = body.colliders().to_vec();
+            for col_handle in col_handles {
+                if let Some(col) = self.collider_set.get_mut(col_handle) {
+                    col.set_friction(value);
+                }
             }
         }
     }

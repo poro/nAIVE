@@ -25,6 +25,7 @@ pub struct EntityCommandQueue {
     pub projectile_spawns: Vec<ProjectileSpawnCommand>,
     pub projectile_counter: u64,
     pub pool_ops: Vec<PoolOp>,
+    pub pending_scene_load: Option<String>,
 }
 
 pub struct SpawnCommand {
@@ -61,6 +62,7 @@ impl EntityCommandQueue {
         self.visibility_updates.clear();
         self.projectile_spawns.clear();
         self.pool_ops.clear();
+        self.pending_scene_load = None;
     }
 }
 
@@ -432,8 +434,14 @@ fn spawn_entity(
                         .as_ref()
                         .map(|rb| rb.mass)
                         .unwrap_or(1.0);
+                    let ccd = entity_def
+                        .components
+                        .rigid_body
+                        .as_ref()
+                        .map(|rb| rb.ccd)
+                        .unwrap_or(false);
                     let (rb_handle, col_handle) =
-                        pw.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction);
+                        pw.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
                     let rb_comp = physics::RigidBody {
                         handle: rb_handle,
                         body_type: physics::PhysicsBodyType::Dynamic,
@@ -550,7 +558,7 @@ pub fn spawn_projectile_entity(
     ));
     scene_world.entity_registry.insert(cmd.id.clone(), entity);
 
-    // Add physics body: dynamic sphere collider
+    // Add physics body: dynamic sphere collider with CCD for fast projectiles
     let velocity = direction * cmd.speed;
     let shape = PhysicsShape::Sphere { radius: 0.1 };
     let (rb_handle, col_handle) = physics_world.add_dynamic_body(
@@ -561,6 +569,7 @@ pub fn spawn_projectile_entity(
         0.1, // light mass
         0.0,
         0.5,
+        true, // CCD enabled for projectiles
     );
 
     // Set initial velocity via PhysicsWorld helper
@@ -760,8 +769,14 @@ fn spawn_entity_headless(
                     .as_ref()
                     .map(|rb| rb.mass)
                     .unwrap_or(1.0);
+                let ccd = entity_def
+                    .components
+                    .rigid_body
+                    .as_ref()
+                    .map(|rb| rb.ccd)
+                    .unwrap_or(false);
                 let (rb_handle, col_handle) =
-                    physics_world.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction);
+                    physics_world.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
                 let rb_comp = physics::RigidBody {
                     handle: rb_handle,
                     body_type: physics::PhysicsBodyType::Dynamic,

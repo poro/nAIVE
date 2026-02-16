@@ -20,6 +20,25 @@ pub struct Script {
     pub initialized: bool,
 }
 
+/// Camera shake state, stored in Engine and passed by pointer to Lua.
+pub struct CameraShakeState {
+    pub intensity: f32,
+    pub duration: f32,
+    pub timer: f32,
+    pub seed: u32,
+}
+
+impl CameraShakeState {
+    pub fn new() -> Self {
+        Self {
+            intensity: 0.0,
+            duration: 0.0,
+            timer: 0.0,
+            seed: 0,
+        }
+    }
+}
+
 /// Central scripting runtime managing all Lua VMs.
 pub struct ScriptRuntime {
     pub lua: Lua,
@@ -237,7 +256,7 @@ impl ScriptRuntime {
     /// Register physics API functions.
     pub fn register_physics_api(
         &self,
-        physics_ptr: *const PhysicsWorld,
+        physics_ptr: *mut PhysicsWorld,
         scene_world_ptr: *const SceneWorld,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
@@ -277,6 +296,86 @@ impl ScriptRuntime {
             }
         }).map_err(|e| e.to_string())?;
         physics_table.set("hitscan", hitscan_fn).map_err(|e| e.to_string())?;
+
+        // physics.apply_impulse(id, fx, fy, fz)
+        let apply_impulse_fn = self.lua.create_function(move |_, (id, fx, fy, fz): (String, f32, f32, f32)| {
+            let physics = unsafe { &mut *physics_ptr };
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
+                    physics.apply_impulse(rb.handle, Vec3::new(fx, fy, fz));
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        physics_table.set("apply_impulse", apply_impulse_fn).map_err(|e| e.to_string())?;
+
+        // physics.apply_force(id, fx, fy, fz)
+        let apply_force_fn = self.lua.create_function(move |_, (id, fx, fy, fz): (String, f32, f32, f32)| {
+            let physics = unsafe { &mut *physics_ptr };
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
+                    physics.apply_force(rb.handle, Vec3::new(fx, fy, fz));
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        physics_table.set("apply_force", apply_force_fn).map_err(|e| e.to_string())?;
+
+        // physics.set_velocity(id, vx, vy, vz)
+        let set_velocity_fn = self.lua.create_function(move |_, (id, vx, vy, vz): (String, f32, f32, f32)| {
+            let physics = unsafe { &mut *physics_ptr };
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
+                    physics.set_linvel(rb.handle, Vec3::new(vx, vy, vz), false);
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        physics_table.set("set_velocity", set_velocity_fn).map_err(|e| e.to_string())?;
+
+        // physics.get_velocity(id) -> vx, vy, vz
+        let get_velocity_fn = self.lua.create_function(move |_, id: String| {
+            let physics = unsafe { &*physics_ptr };
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
+                    if let Some(v) = physics.get_linvel(rb.handle) {
+                        return Ok((v.x, v.y, v.z));
+                    }
+                }
+            }
+            Ok((0.0f32, 0.0f32, 0.0f32))
+        }).map_err(|e| e.to_string())?;
+        physics_table.set("get_velocity", get_velocity_fn).map_err(|e| e.to_string())?;
+
+        // physics.set_restitution(id, value)
+        let set_restitution_fn = self.lua.create_function(move |_, (id, value): (String, f32)| {
+            let physics = unsafe { &mut *physics_ptr };
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
+                    physics.set_restitution(rb.handle, value);
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        physics_table.set("set_restitution", set_restitution_fn).map_err(|e| e.to_string())?;
+
+        // physics.set_friction(id, value)
+        let set_friction_fn = self.lua.create_function(move |_, (id, value): (String, f32)| {
+            let physics = unsafe { &mut *physics_ptr };
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
+                    physics.set_friction(rb.handle, value);
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        physics_table.set("set_friction", set_friction_fn).map_err(|e| e.to_string())?;
 
         globals.set("physics", physics_table).map_err(|e| e.to_string())?;
         Ok(())
@@ -550,6 +649,35 @@ impl ScriptRuntime {
             Ok(())
         }).map_err(|e| e.to_string())?;
         entity_table.set("remove_tag", remove_tag_fn).map_err(|e| e.to_string())?;
+
+        // entity.get_tag(id) -> first tag string or nil
+        let get_tag_fn = self.lua.create_function(move |_, id: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(tags) = sw.world.get::<&Tags>(entity) {
+                    if let Some(first) = tags.0.first() {
+                        return Ok(Some(first.clone()));
+                    }
+                }
+            }
+            Ok(None)
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("get_tag", get_tag_fn).map_err(|e| e.to_string())?;
+
+        // entity.get_tags(id) -> table of all tags
+        let get_tags_fn = self.lua.create_function(move |lua, id: String| {
+            let sw = unsafe { &*scene_world_ptr };
+            let result = lua.create_table()?;
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(tags) = sw.world.get::<&Tags>(entity) {
+                    for (i, tag) in tags.0.iter().enumerate() {
+                        result.set(i + 1, tag.clone())?;
+                    }
+                }
+            }
+            Ok(result)
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("get_tags", get_tags_fn).map_err(|e| e.to_string())?;
 
         globals.set("entity", entity_table).map_err(|e| e.to_string())?;
 
@@ -898,6 +1026,15 @@ impl ScriptRuntime {
         }).map_err(|e| e.to_string())?;
         entity_table.set("pool_size", pool_size_fn).map_err(|e| e.to_string())?;
 
+        // --- scene.load(path) — deferred scene loading ---
+        let scene_table: LuaTable = globals.get("scene").map_err(|e| e.to_string())?;
+        let scene_load_fn = self.lua.create_function(move |_, path: String| {
+            let cmd = unsafe { &mut *cmd_ptr };
+            cmd.pending_scene_load = Some(path);
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        scene_table.set("load", scene_load_fn).map_err(|e| e.to_string())?;
+
         Ok(())
     }
 
@@ -932,6 +1069,28 @@ impl ScriptRuntime {
         camera_table.set("world_to_screen", w2s_fn).map_err(|e| e.to_string())?;
 
         globals.set("camera", camera_table).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Register camera shake API (camera.shake).
+    pub fn register_camera_shake_api(
+        &self,
+        shake_ptr: *mut CameraShakeState,
+    ) -> Result<(), String> {
+        let globals = self.lua.globals();
+        let camera_table: LuaTable = globals.get("camera").map_err(|e| e.to_string())?;
+
+        // camera.shake(intensity, duration)
+        let shake_fn = self.lua.create_function(move |_, (intensity, duration): (f32, f32)| {
+            let shake = unsafe { &mut *shake_ptr };
+            shake.intensity = intensity;
+            shake.duration = duration;
+            shake.timer = duration;
+            shake.seed = shake.seed.wrapping_add(1);
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        camera_table.set("shake", shake_fn).map_err(|e| e.to_string())?;
+
         Ok(())
     }
 

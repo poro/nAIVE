@@ -95,7 +95,7 @@ impl TestRunner {
             .map_err(|e| format!("Input API: {}", e))?;
 
         // Register physics API
-        let physics_ptr = &self.physics_world as *const PhysicsWorld;
+        let physics_ptr = &mut self.physics_world as *mut PhysicsWorld;
         let sw_const_ptr = &self.scene_world as *const SceneWorld;
         self.script_runtime
             .register_physics_api(physics_ptr, sw_const_ptr)

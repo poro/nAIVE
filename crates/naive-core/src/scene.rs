@@ -214,6 +214,8 @@ pub struct RigidBodyDef {
     pub body_type: String,
     #[serde(default = "default_mass")]
     pub mass: f32,
+    #[serde(default)]
+    pub ccd: bool,
 }
 
 fn default_body_type() -> String {
