@@ -10,7 +10,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 - **Scripting:** Lua 5.4 (mlua)
 - **ECS:** hecs
 - **Audio:** kira
-- **Current version:** 0.1.6
+- **Current version:** 0.1.7
 
 ## Workspace Crates
 
@@ -46,7 +46,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 |------|-------------|--------|
 | Tier 1 | Gameplay Primitives (health, damage, hitscan, projectiles, third-person camera) | **DONE v0.1.2** |
 | Tier 2 | Production Foundations (dynamic instance buffer, entity lifecycle, pooling, particles, events) | **DONE v0.1.4** |
-| Tier 2.5 | Physics & Scene API (impulse/force, velocity, CCD, collider materials, entity tags, camera shake, scene loading) | **DONE v0.1.6** |
+| Tier 2.5 | Physics & Scene API (impulse/force, velocity, CCD, collider materials, entity tags, camera shake, scene loading) | **DONE v0.1.7** |
 | Tier 3 | GPU Scale (50K+ GPU compute entities, neighbor-grid collisions, flow field) | Planned |
 | Tier 4 | Animation & Polish (skeletal animation, VAT, UI) | Planned |
 

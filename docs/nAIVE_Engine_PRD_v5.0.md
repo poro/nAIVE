@@ -28,7 +28,7 @@ v4.0's engine was a renderer with scripting and physics. v5.0 adds the systems n
 
 - **Gameplay primitives (DONE v0.1.2)** — health/damage, hitscan, projectiles, collision damage, third-person camera. Tier 1 complete.
 - **Production foundations (DONE v0.1.4)** — dynamic GPU instance buffer (no more 256-entity ceiling), entity pooling, particle system, runtime entity queries, event subscription. Tier 2 complete.
-- **Physics & scene API (DONE v0.1.6)** — physics impulse/velocity, collider materials, CCD, scene loading, camera shake, render debug HUD. Tier 2.5 complete. Informed by Angry Birds dev log feedback.
+- **Physics & scene API (DONE v0.1.7)** — physics impulse/velocity, collider materials, CCD, scene loading, camera shake, render debug HUD, 5 demo scenes. Tier 2.5 complete. Informed by Angry Birds dev log feedback.
 - **GPU compute entity simulation** — 50,000+ physics-driven entities on the GPU. nAIVE's answer to Unreal's Niagara, but for gameplay entities, not just particles.
 - **Vertex Animation Textures (VAT)** — baked skeletal animation sampled on the GPU for massive instanced rendering
 - **Skeletal animation system** — glTF skinned meshes, animation state machines, blend trees
@@ -950,8 +950,8 @@ The game "There Are Millions of Goblins" (Unreal Engine 5, Niagara GPU simulatio
 | Dynamic buffer + pooling | 200+ CPU entities without crashes, horde pooling | **Tier 2 (DONE)** |
 | Particle system | Kill effects, weapon VFX, boost trails | **Tier 2 (DONE)** |
 | Event subscription | Cross-script game events (kills, waves, pickups) | **Tier 2 (DONE)** |
-| Physics impulse + velocity | Knockback, explosion forces, launch mechanics | Tier 2.5 (DONE v0.1.6) |
-| CCD + collider materials | Fast projectiles don't tunnel, surfaces bounce/slide correctly | Tier 2.5 (DONE v0.1.6) |
+| Physics impulse + velocity | Knockback, explosion forces, launch mechanics | Tier 2.5 (DONE v0.1.7) |
+| CCD + collider materials | Fast projectiles don't tunnel, surfaces bounce/slide correctly | Tier 2.5 (DONE v0.1.7) |
 | GPU compute entities | 50,000+ goblins on GPU | Tier 3 |
 | Neighbor-grid collisions | Goblins collide with each other and players | Tier 3 |
 | VAT animation | 50,000 goblins animated via vertex textures | Tier 4 |
@@ -1084,7 +1084,7 @@ All v4.0 components remain. v5.0 adds:
 | `particle_emitter` | Billboard particle source with rate, lifetime, velocity, color, size curves |
 | `pool_member` | Marks entity as belonging to a named pool for acquire/release lifecycle |
 
-**Tier 2.5 — Physics & Scene API (DONE v0.1.6)**
+**Tier 2.5 — Physics & Scene API (DONE v0.1.7)**
 
 | Component / API | Purpose |
 |-----------------|---------|
@@ -1176,7 +1176,7 @@ Informed by the HAVOC dev log. A complete Vampire Survivors prototype was built 
 | Runtime entity queries | Query entities by tag at runtime. Returns array of entity IDs matching a tag. | Lua: `scene.find_by_tag(tag)` returns `{id1, id2, ...}`. Eliminates hardcoded ID arrays in game scripts. |
 | Event subscription | Lua scripts can subscribe to named events and receive callbacks. Completes the event bus (currently write-only from Lua). | Lua: `events.on("enemy_killed", function(data) ... end)`, `events.emit("enemy_killed", { id = eid, killer = pid })`. Cross-script communication without polling the `game` table. |
 
-**Tier 2.5 — Physics & Scene API** (unblocks physics-driven games like Angry Birds) **DONE v0.1.6**
+**Tier 2.5 — Physics & Scene API** (unblocks physics-driven games like Angry Birds) **DONE v0.1.7**
 
 Informed by the Angry Birds dev log. A complete Angry Birds clone was built in nAIVE v0.1.2 in a single session. The game was playable but the developer hit critical API gaps: no way to apply impulses to rigid bodies (had to fake slingshot with set_position lerps), no velocity read/write (couldn't detect when birds stop moving), no scene transitions, no collider material properties (couldn't make surfaces bouncy or slippery), and fast projectiles tunneled through thin walls. These are fundamental physics engine APIs that any physics-driven game requires.
 
@@ -1223,7 +1223,7 @@ These systems move entity simulation from CPU to GPU. Game developers configure 
 |-------|------|-------|-------------|
 | 3a | Tier 1: Gameplay Primitives | — | **DONE (v0.1.2)** Health/damage, projectiles, third-person camera, hitscan API, collision damage |
 | 3b | Tier 2: Production Foundations | — | **DONE (v0.1.4)** Dynamic instance buffer, safe entity lifecycle, entity pooling, particle system, runtime queries, event subscription |
-| 3b.5 | Tier 2.5: Physics & Scene API | — | **DONE (v0.1.6)** Physics impulse/velocity, entity.get_tag, scene.load, collider materials, CCD, camera shake, render debug HUD |
+| 3b.5 | Tier 2.5: Physics & Scene API | — | **DONE (v0.1.7)** Physics impulse/velocity, entity.get_tag, scene.load, collider materials, CCD, camera shake, render debug HUD, 5 demo scenes |
 | 3c | Tier 3: GPU Scale | 17-22 | GPU compute entity system, neighbor grid, instanced rendering, flow field |
 | 3d | Tier 4: Animation | 23-26 | Skeletal animation + state machine, VAT loader + renderer |
 | 3e | Tier 5: Vehicles | 27-30 | Vehicle physics, mount/dismount, LOD system |
