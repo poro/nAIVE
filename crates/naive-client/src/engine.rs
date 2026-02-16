@@ -1670,46 +1670,48 @@ impl ApplicationHandler for Engine {
                     }
                 }
 
-                // Render debug toggles (number keys 1-9, 0)
+                // Render debug toggles: 0 always toggles HUD, 1-6 only when HUD is visible
                 if let Some(input) = &self.input_state {
-                    if input.just_pressed_key(KeyCode::Digit1) {
-                        self.render_debug.bloom_enabled = !self.render_debug.bloom_enabled;
-                        tracing::info!("Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" });
-                    }
-                    if input.just_pressed_key(KeyCode::Digit2) {
-                        // Cycle light intensity: 1x → 5x → 10x → 20x → 1x
-                        self.render_debug.light_intensity_mult = match self.render_debug.light_intensity_mult as u32 {
-                            0..=1 => 5.0,
-                            2..=5 => 10.0,
-                            6..=10 => 20.0,
-                            _ => 1.0,
-                        };
-                        tracing::info!("Light intensity: {}x", self.render_debug.light_intensity_mult);
-                    }
-                    if input.just_pressed_key(KeyCode::Digit3) {
-                        self.render_debug.point_lights_enabled = !self.render_debug.point_lights_enabled;
-                        tracing::info!("Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" });
-                    }
-                    if input.just_pressed_key(KeyCode::Digit4) {
-                        self.render_debug.emission_enabled = !self.render_debug.emission_enabled;
-                        tracing::info!("Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" });
-                    }
-                    if input.just_pressed_key(KeyCode::Digit5) {
-                        self.render_debug.torch_flicker_enabled = !self.render_debug.torch_flicker_enabled;
-                        tracing::info!("Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" });
-                    }
-                    if input.just_pressed_key(KeyCode::Digit6) {
-                        // Cycle ambient override: 0 → 0.3 → 1.0 → 3.0 → 0
-                        self.render_debug.ambient_override = match self.render_debug.ambient_override {
-                            x if x < 0.1 => 0.3,
-                            x if x < 0.5 => 1.0,
-                            x if x < 2.0 => 3.0,
-                            _ => 0.0,
-                        };
-                        tracing::info!("Ambient override: {}", self.render_debug.ambient_override);
-                    }
                     if input.just_pressed_key(KeyCode::Digit0) {
                         self.render_debug.show_hud = !self.render_debug.show_hud;
+                    }
+                    if self.render_debug.show_hud {
+                        if input.just_pressed_key(KeyCode::Digit1) {
+                            self.render_debug.bloom_enabled = !self.render_debug.bloom_enabled;
+                            tracing::info!("Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" });
+                        }
+                        if input.just_pressed_key(KeyCode::Digit2) {
+                            // Cycle light intensity: 1x → 5x → 10x → 20x → 1x
+                            self.render_debug.light_intensity_mult = match self.render_debug.light_intensity_mult as u32 {
+                                0..=1 => 5.0,
+                                2..=5 => 10.0,
+                                6..=10 => 20.0,
+                                _ => 1.0,
+                            };
+                            tracing::info!("Light intensity: {}x", self.render_debug.light_intensity_mult);
+                        }
+                        if input.just_pressed_key(KeyCode::Digit3) {
+                            self.render_debug.point_lights_enabled = !self.render_debug.point_lights_enabled;
+                            tracing::info!("Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" });
+                        }
+                        if input.just_pressed_key(KeyCode::Digit4) {
+                            self.render_debug.emission_enabled = !self.render_debug.emission_enabled;
+                            tracing::info!("Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" });
+                        }
+                        if input.just_pressed_key(KeyCode::Digit5) {
+                            self.render_debug.torch_flicker_enabled = !self.render_debug.torch_flicker_enabled;
+                            tracing::info!("Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" });
+                        }
+                        if input.just_pressed_key(KeyCode::Digit6) {
+                            // Cycle ambient override: 0 → 0.3 → 1.0 → 3.0 → 0
+                            self.render_debug.ambient_override = match self.render_debug.ambient_override {
+                                x if x < 0.1 => 0.3,
+                                x if x < 0.5 => 1.0,
+                                x if x < 2.0 => 3.0,
+                                _ => 0.0,
+                            };
+                            tracing::info!("Ambient override: {}", self.render_debug.ambient_override);
+                        }
                     }
                 }
 
