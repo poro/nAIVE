@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "naive-client"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "bytemuck",
  "clap",
@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "naive-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "glam",
  "hecs",
@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "naive-runtime"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "clap",
  "naive-client",
@@ -1954,7 +1954,7 @@ dependencies = [
 
 [[package]]
 name = "naive-server"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "naive-core",
  "serde",
