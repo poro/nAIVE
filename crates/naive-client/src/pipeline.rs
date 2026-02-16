@@ -13,6 +13,38 @@ use crate::splat::SplatCache;
 use crate::world::SceneWorld;
 
 // ---------------------------------------------------------------------------
+// Runtime render debug state (toggled interactively via number keys)
+// ---------------------------------------------------------------------------
+
+/// Runtime debug state for toggling render passes interactively.
+#[derive(Debug, Clone)]
+pub struct RenderDebugState {
+    pub bloom_enabled: bool,
+    pub point_lights_enabled: bool,
+    pub emission_enabled: bool,
+    pub torch_flicker_enabled: bool,
+    pub show_hud: bool,
+    /// Multiplier for all light intensities (1.0 = normal, 10.0 = boosted)
+    pub light_intensity_mult: f32,
+    /// Override ambient light level (0.0 = use scene default)
+    pub ambient_override: f32,
+}
+
+impl Default for RenderDebugState {
+    fn default() -> Self {
+        Self {
+            bloom_enabled: true,
+            point_lights_enabled: true,
+            emission_enabled: true,
+            torch_flicker_enabled: true,
+            show_hud: false,
+            light_intensity_mult: 1.0,
+            ambient_override: 0.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline YAML serde types
 // ---------------------------------------------------------------------------
 
@@ -1891,6 +1923,7 @@ pub fn execute_pipeline(
     mesh_cache: &MeshCache,
     material_cache: &MaterialCache,
     splat_cache: &SplatCache,
+    debug: &RenderDebugState,
 ) {
     let output = match gpu.surface.get_current_texture() {
         Ok(t) => t,
@@ -1908,9 +1941,9 @@ pub fn execute_pipeline(
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
-    let mut encoder = execute_pipeline_to_view(
+    let encoder = execute_pipeline_to_view(
         gpu, compiled, scene_world, camera_state, draw_pool,
-        mesh_cache, material_cache, splat_cache, &swapchain_view,
+        mesh_cache, material_cache, splat_cache, &swapchain_view, debug,
     );
 
     gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -1928,6 +1961,7 @@ pub fn execute_pipeline_to_view(
     material_cache: &MaterialCache,
     splat_cache: &SplatCache,
     swapchain_view: &wgpu::TextureView,
+    debug: &RenderDebugState,
 ) -> wgpu::CommandEncoder {
 
     // DEBUG: dump camera VP matrix and first entities' transforms (frame 0 only)
@@ -1983,11 +2017,15 @@ pub fn execute_pipeline_to_view(
             .as_ref()
             .and_then(|o| o.metallic)
             .unwrap_or(material.uniform.metallic);
-        let emission = mat_override
-            .as_ref()
-            .and_then(|o| o.emission)
-            .map(|e| [e[0], e[1], e[2], 0.0])
-            .unwrap_or(material.uniform.emission);
+        let emission = if debug.emission_enabled {
+            mat_override
+                .as_ref()
+                .and_then(|o| o.emission)
+                .map(|e| [e[0], e[1], e[2], 0.0])
+                .unwrap_or(material.uniform.emission)
+        } else {
+            [0.0; 4]
+        };
 
         let base_color = mat_override
             .as_ref()
@@ -2016,18 +2054,25 @@ pub fn execute_pipeline_to_view(
 
     // Upload light uniforms (point lights + directional light)
     let mut light_data = LightingUniforms::default();
-    for (_entity, (transform, light)) in
-        scene_world.world.query::<(&Transform, &PointLight)>().iter()
-    {
-        if (light_data.light_count as usize) < MAX_LIGHTS {
-            let idx = light_data.light_count as usize;
-            light_data.lights[idx] = PointLightUniform {
-                position: transform.position.to_array(),
-                range: light.range,
-                color: light.color.to_array(),
-                intensity: light.intensity,
-            };
-            light_data.light_count += 1;
+    if debug.point_lights_enabled {
+        for (_entity, (transform, light)) in
+            scene_world.world.query::<(&Transform, &PointLight)>().iter()
+        {
+            if (light_data.light_count as usize) < MAX_LIGHTS {
+                let idx = light_data.light_count as usize;
+                let base_intensity = if debug.torch_flicker_enabled {
+                    light.intensity
+                } else {
+                    1.5 // base_intensity, ignoring flicker script
+                };
+                light_data.lights[idx] = PointLightUniform {
+                    position: transform.position.to_array(),
+                    range: light.range,
+                    color: light.color.to_array(),
+                    intensity: base_intensity * debug.light_intensity_mult,
+                };
+                light_data.light_count += 1;
+            }
         }
     }
 
@@ -2051,6 +2096,14 @@ pub fn execute_pipeline_to_view(
         light_vp = light_proj * light_view;
         light_data.light_vp = light_vp.to_cols_array_2d();
         break; // Only one directional light supported
+    }
+
+    // Debug: inject a directional light for ambient override
+    if debug.ambient_override > 0.0 && light_data.has_directional == 0 {
+        light_data.has_directional = 1;
+        light_data.dir_light_direction = [0.0, -1.0, 0.0]; // straight down
+        light_data.dir_light_intensity = debug.ambient_override;
+        light_data.dir_light_color = [1.0, 1.0, 1.0];
     }
 
     gpu.queue.write_buffer(
@@ -2078,10 +2131,32 @@ pub fn execute_pipeline_to_view(
             label: Some("Pipeline Render Encoder"),
         });
 
-    // Execute passes in topological order
+    // Execute passes in topological order (skip passes disabled by debug state)
     for &pass_idx in &compiled.pass_order {
         let pass = &compiled.passes[pass_idx];
 
+        // Skip passes disabled via debug toggles
+        if !debug.bloom_enabled && pass.name == "bloom_pass" {
+            // Clear bloom buffer to black so tonemap reads zero bloom
+            if let Some(resource) = compiled.resources.get("bloom_buffer") {
+                let _clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("bloom_clear"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &resource.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                // Drop immediately ends the pass
+            }
+            continue;
+        }
         match pass.pass_type {
             PassType::Rasterize => {
                 execute_rasterize_pass(

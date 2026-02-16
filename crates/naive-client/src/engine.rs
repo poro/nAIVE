@@ -89,6 +89,9 @@ pub struct Engine {
     pub lua_event_listeners: HashMap<String, Vec<mlua::RegistryKey>>,
     pub next_lua_listener_id: u64,
     pub lua_listener_id_map: HashMap<u64, (String, usize)>,
+
+    // Render debug: interactive pass toggles (number keys)
+    pub render_debug: crate::pipeline::RenderDebugState,
 }
 
 impl Engine {
@@ -128,6 +131,7 @@ impl Engine {
             lua_event_listeners: HashMap::new(),
             next_lua_listener_id: 0,
             lua_listener_id_map: HashMap::new(),
+            render_debug: crate::pipeline::RenderDebugState::default(),
         }
     }
 
@@ -1442,6 +1446,49 @@ impl ApplicationHandler for Engine {
                     }
                 }
 
+                // Render debug toggles (number keys 1-9, 0)
+                if let Some(input) = &self.input_state {
+                    if input.just_pressed_key(KeyCode::Digit1) {
+                        self.render_debug.bloom_enabled = !self.render_debug.bloom_enabled;
+                        tracing::info!("Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" });
+                    }
+                    if input.just_pressed_key(KeyCode::Digit2) {
+                        // Cycle light intensity: 1x → 5x → 10x → 20x → 1x
+                        self.render_debug.light_intensity_mult = match self.render_debug.light_intensity_mult as u32 {
+                            0..=1 => 5.0,
+                            2..=5 => 10.0,
+                            6..=10 => 20.0,
+                            _ => 1.0,
+                        };
+                        tracing::info!("Light intensity: {}x", self.render_debug.light_intensity_mult);
+                    }
+                    if input.just_pressed_key(KeyCode::Digit3) {
+                        self.render_debug.point_lights_enabled = !self.render_debug.point_lights_enabled;
+                        tracing::info!("Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" });
+                    }
+                    if input.just_pressed_key(KeyCode::Digit4) {
+                        self.render_debug.emission_enabled = !self.render_debug.emission_enabled;
+                        tracing::info!("Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" });
+                    }
+                    if input.just_pressed_key(KeyCode::Digit5) {
+                        self.render_debug.torch_flicker_enabled = !self.render_debug.torch_flicker_enabled;
+                        tracing::info!("Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" });
+                    }
+                    if input.just_pressed_key(KeyCode::Digit6) {
+                        // Cycle ambient override: 0 → 0.3 → 1.0 → 3.0 → 0
+                        self.render_debug.ambient_override = match self.render_debug.ambient_override {
+                            x if x < 0.1 => 0.3,
+                            x if x < 0.5 => 1.0,
+                            x if x < 2.0 => 3.0,
+                            _ => 0.0,
+                        };
+                        tracing::info!("Ambient override: {}", self.render_debug.ambient_override);
+                    }
+                    if input.just_pressed_key(KeyCode::Digit0) {
+                        self.render_debug.show_hud = !self.render_debug.show_hud;
+                    }
+                }
+
                 // Poll for file changes (shader + scene + pipeline)
                 self.poll_changes();
 
@@ -1653,6 +1700,7 @@ impl ApplicationHandler for Engine {
                                     &self.material_cache,
                                     &self.splat_cache,
                                     &swapchain_view,
+                                    &self.render_debug,
                                 );
                                 gpu.queue.submit(std::iter::once(encoder.finish()));
                             }
@@ -1691,6 +1739,30 @@ impl ApplicationHandler for Engine {
                             &mut self.ui_renderer,
                             &self.bitmap_font,
                         ) {
+                            // Queue render debug HUD if enabled
+                            if self.render_debug.show_hud {
+                                let on = [0.3, 1.0, 0.3, 1.0];
+                                let off = [1.0, 0.3, 0.3, 1.0];
+                                let val = [1.0, 0.9, 0.3, 1.0];
+                                let hdr = [0.7, 0.7, 0.7, 1.0];
+                                let sz = 16.0;
+                                let x = 10.0;
+                                let mut y = 10.0;
+
+                                ui.draw_text(x, y, "RENDER DEBUG", sz, hdr, font); y += sz + 4.0;
+                                let c = if self.render_debug.bloom_enabled { on } else { off };
+                                ui.draw_text(x, y, &format!("[1] Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
+                                ui.draw_text(x, y, &format!("[2] Light Boost: {}x", self.render_debug.light_intensity_mult), sz, val, font); y += sz + 2.0;
+                                let c = if self.render_debug.point_lights_enabled { on } else { off };
+                                ui.draw_text(x, y, &format!("[3] Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
+                                let c = if self.render_debug.emission_enabled { on } else { off };
+                                ui.draw_text(x, y, &format!("[4] Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
+                                let c = if self.render_debug.torch_flicker_enabled { on } else { off };
+                                ui.draw_text(x, y, &format!("[5] Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
+                                ui.draw_text(x, y, &format!("[6] Ambient: {}", if self.render_debug.ambient_override < 0.1 { "scene".to_string() } else { format!("{:.1}", self.render_debug.ambient_override) }), sz, val, font); y += sz + 2.0;
+                                ui.draw_text(x, y, "[0] Toggle this HUD", sz, hdr, font);
+                            }
+
                             let mut ui_encoder = gpu.device.create_command_encoder(
                                 &wgpu::CommandEncoderDescriptor {
                                     label: Some("UI Encoder"),

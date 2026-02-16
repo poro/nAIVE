@@ -369,6 +369,11 @@ impl InputState {
         self.keys_held.contains(&code)
     }
 
+    /// Check if a raw key was just pressed this frame (by KeyCode, not action name).
+    pub fn just_pressed_key(&self, code: KeyCode) -> bool {
+        self.keys_just_pressed.contains(&code)
+    }
+
     /// Inject synthetic key press (for MCP/testing).
     /// Cancels any pending release for the same key so last-write wins.
     pub fn inject_key_press(&mut self, key_name: &str) {
