@@ -352,7 +352,7 @@ See the full roadmap in [docs/nAIVE_Engine_PRD_v5.0.md](docs/nAIVE_Engine_PRD_v5
 | [Engine PRD v5.0](docs/nAIVE_Engine_PRD_v5.0.md) | Full engine specification and tiered roadmap |
 | [Platform PRD v5.0](docs/nAIVE_Platform_PRD_v5.0.md) | Server infrastructure: multiplayer, matchmaking, AI Director |
 | [Game Development Guide](docs/GAME_DEVELOPMENT_GUIDE.md) | How to build games with nAIVE |
-| [Dev Log](docs/DEVLOG.md) | Development history and decisions |
+| [Snake Sweeper Dev Log](docs/SNAKE_SWEEPER_DEV_LOG.md) | Building Snake Sweeper in nAIVE |
 | [HAVOC Dev Log](docs/havoc.dev.log) | Building a Vampire Survivors prototype in nAIVE |
 | [Whitepaper](docs/whitepaper.md) | Technical whitepaper and benchmarks |
 

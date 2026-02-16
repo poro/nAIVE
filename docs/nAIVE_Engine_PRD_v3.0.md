@@ -745,7 +745,7 @@ docs/
   nAIVE_Engine_PRD_v3.0.md     — This document
   nAIVEv3.md                   — Networked worlds architecture notes
   GAME_DESIGN_DOCUMENT.md      — Snake Sweeper full game design
-  DEVLOG.md                    — Phase-by-phase development log
+  SNAKE_SWEEPER_DEV_LOG.md     — Snake Sweeper development log
   architecture.html            — Interactive architecture diagram
   demos.html                   — Demo scene gallery and run commands
 ```

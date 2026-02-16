@@ -1657,7 +1657,7 @@ docs/
   nAIVE_Engine_PRD_v3.0.md       — Previous unified spec (superseded by v4.0)
   nAIVE_Engine_PRD_v4.0.md       — This document (unified platform specification)
   GAME_DESIGN_DOCUMENT.md        — Snake Sweeper complete game design (729 lines)
-  DEVLOG.md                      — Phase-by-phase development log
+  SNAKE_SWEEPER_DEV_LOG.md       — Snake Sweeper development log
   architecture.html              — Interactive architecture diagram
   demos.html                     — Demo scene gallery with run commands
 ```
