@@ -27,7 +27,8 @@ You do not need the platform to ship a game. `naive-core` + `naive-client` + `na
 v4.0's engine was a renderer with scripting and physics. v5.0 adds the systems needed to build action games — shooters, brawlers, horde survival, racing — not just Snake Sweeper:
 
 - **Gameplay primitives (DONE v0.1.2)** — health/damage, hitscan, projectiles, collision damage, third-person camera. Tier 1 complete.
-- **Production foundations** — dynamic GPU instance buffer (no more 256-entity ceiling), entity pooling, particle system, runtime entity queries, event subscription. Informed by HAVOC dev log feedback.
+- **Production foundations (DONE v0.1.4)** — dynamic GPU instance buffer (no more 256-entity ceiling), entity pooling, particle system, runtime entity queries, event subscription. Tier 2 complete.
+- **Physics & scene API** — physics impulse/velocity, collider materials, CCD, scene loading, camera shake, render debug HUD. Informed by Angry Birds dev log feedback.
 - **GPU compute entity simulation** — 50,000+ physics-driven entities on the GPU. nAIVE's answer to Unreal's Niagara, but for gameplay entities, not just particles.
 - **Vertex Animation Textures (VAT)** — baked skeletal animation sampled on the GPU for massive instanced rendering
 - **Skeletal animation system** — glTF skinned meshes, animation state machines, blend trees
@@ -946,9 +947,11 @@ The game "There Are Millions of Goblins" (Unreal Engine 5, Niagara GPU simulatio
 |--------|-------------------|-------------|
 | Health/damage/hitscan | Weapon damage, enemy death, collision damage | **Tier 1 (DONE)** |
 | Projectiles | Physics-driven weapon projectiles | **Tier 1 (DONE)** |
-| Dynamic buffer + pooling | 200+ CPU entities without crashes, horde pooling | Tier 2 |
-| Particle system | Kill effects, weapon VFX, boost trails | Tier 2 |
-| Event subscription | Cross-script game events (kills, waves, pickups) | Tier 2 |
+| Dynamic buffer + pooling | 200+ CPU entities without crashes, horde pooling | **Tier 2 (DONE)** |
+| Particle system | Kill effects, weapon VFX, boost trails | **Tier 2 (DONE)** |
+| Event subscription | Cross-script game events (kills, waves, pickups) | **Tier 2 (DONE)** |
+| Physics impulse + velocity | Knockback, explosion forces, launch mechanics | Tier 2.5 |
+| CCD + collider materials | Fast projectiles don't tunnel, surfaces bounce/slide correctly | Tier 2.5 |
 | GPU compute entities | 50,000+ goblins on GPU | Tier 3 |
 | Neighbor-grid collisions | Goblins collide with each other and players | Tier 3 |
 | VAT animation | 50,000 goblins animated via vertex textures | Tier 4 |
@@ -1074,12 +1077,20 @@ All v4.0 components remain. v5.0 adds:
 | `camera_mode` | `FirstPerson` or `ThirdPerson { distance, height_offset, pitch_min, pitch_max }`. Wall collision via raycast. |
 | `character_controller` | Capsule movement: walk, sprint, jump, step height |
 
-**Tier 2 — Production Foundations (planned)**
+**Tier 2 — Production Foundations** **DONE v0.1.4**
 
 | Component | Purpose |
 |-----------|---------|
 | `particle_emitter` | Billboard particle source with rate, lifetime, velocity, color, size curves |
 | `pool_member` | Marks entity as belonging to a named pool for acquire/release lifecycle |
+
+**Tier 2.5 — Physics & Scene API (planned)**
+
+| Component / API | Purpose |
+|-----------------|---------|
+| `collider.restitution` | Bounciness of physics colliders (0.0–1.0). YAML: `collider: { restitution: 0.8 }` |
+| `collider.friction` | Surface friction of physics colliders. YAML: `collider: { friction: 0.3 }` |
+| `collider.ccd` | Continuous collision detection flag. Prevents fast-moving bodies (projectiles, slingshot ammo) from tunneling through thin surfaces. |
 
 **Tier 3+ — Future**
 
@@ -1152,9 +1163,9 @@ These systems let a game developer build a playable shooter/brawler/survival gam
 | Hitscan API | Raycast from origin in direction, returns hit entity + point + normal. Self-exclusion built in. | Lua: `physics.hitscan(ox, oy, oz, dx, dy, dz, range)` returning `hit, entity_id, distance, hx, hy, hz, nx, ny, nz` |
 | Collision damage | `CollisionDamage` component auto-applies damage on physics contact. Projectile owner-skip prevents self-damage. | YAML: `collision_damage: { damage: 25, destroy_on_hit: false }`. Engine handles detection automatically. |
 
-**Tier 2 — Production Foundations** (makes nAIVE a shippable engine)
+**Tier 2 — Production Foundations** (makes nAIVE a shippable engine) **DONE v0.1.4**
 
-Informed by the HAVOC dev log. A complete Vampire Survivors prototype was built in nAIVE in a single session, validating Tier 1 systems. But the developer hit hard walls — engine crashes from entity overflow, mandatory workarounds for deferred destroy, no VFX, no runtime queries. These aren't missing features; they're the difference between "prototyping engine" and "real engine." The HAVOC developer's verdict: *"If I were pitching to a publisher, this nAIVE prototype would be the vertical slice demo. Then we'd rebuild it in a real engine."* Tier 2 ensures they don't have to.
+Informed by the HAVOC dev log. A complete Vampire Survivors prototype was built in nAIVE in a single session, validating Tier 1 systems. But the developer hit hard walls — engine crashes from entity overflow, mandatory workarounds for deferred destroy, no VFX, no runtime queries. Tier 2 addressed every wall the prototype hit.
 
 | System | Engine Provides | Game Dev Uses Via |
 |--------|----------------|-------------------|
@@ -1164,6 +1175,21 @@ Informed by the HAVOC dev log. A complete Vampire Survivors prototype was built 
 | Particle system | Lightweight 2D billboard particles with lifetime, velocity, gravity, color fade, size curve. GPU-instanced rendering from a dedicated particle buffer (separate from entity buffer). | Lua: `particles.emit(x, y, z, { count: 20, lifetime: 0.5, speed: 3.0, color: {1,1,0}, gravity: -5 })`. YAML: `particle_emitter: { rate: 50, lifetime: 1.0, ... }` on entities. |
 | Runtime entity queries | Query entities by tag at runtime. Returns array of entity IDs matching a tag. | Lua: `scene.find_by_tag(tag)` returns `{id1, id2, ...}`. Eliminates hardcoded ID arrays in game scripts. |
 | Event subscription | Lua scripts can subscribe to named events and receive callbacks. Completes the event bus (currently write-only from Lua). | Lua: `events.on("enemy_killed", function(data) ... end)`, `events.emit("enemy_killed", { id = eid, killer = pid })`. Cross-script communication without polling the `game` table. |
+
+**Tier 2.5 — Physics & Scene API** (unblocks physics-driven games like Angry Birds)
+
+Informed by the Angry Birds dev log. A complete Angry Birds clone was built in nAIVE v0.1.2 in a single session. The game was playable but the developer hit critical API gaps: no way to apply impulses to rigid bodies (had to fake slingshot with set_position lerps), no velocity read/write (couldn't detect when birds stop moving), no scene transitions, no collider material properties (couldn't make surfaces bouncy or slippery), and fast projectiles tunneled through thin walls. These are fundamental physics engine APIs that any physics-driven game requires.
+
+| System | Engine Provides | Game Dev Uses Via |
+|--------|----------------|-------------------|
+| Physics impulse API | Apply impulse/force to Rapier rigid bodies at runtime. Enables slingshots, explosions, knockback, wind. | Lua: `physics.apply_impulse(id, fx, fy, fz)`, `physics.apply_force(id, fx, fy, fz)` |
+| Velocity read/write | Get and set linear velocity of rigid bodies. Essential for launch mechanics, movement detection, speed limits. | Lua: `physics.set_velocity(id, vx, vy, vz)`, `physics.get_velocity(id)` returns `vx, vy, vz` |
+| Entity tag query | Read an entity's tag at runtime. Completes the tag API (tags are set in YAML but unreadable from Lua). | Lua: `entity.get_tag(id)` returns tag string or nil |
+| Scene loading | Load/switch to a different scene at runtime. Enables level transitions, menus, game-over screens. | Lua: `scene.load("scenes/level2.yaml")` |
+| Collider material properties | Restitution (bounciness) and friction per collider. YAML-configurable. | YAML: `collider: { shape: sphere, radius: 0.3, restitution: 0.8, friction: 0.3 }`. Lua: `physics.set_restitution(id, value)` |
+| Continuous collision detection | CCD flag per rigid body. Prevents fast-moving objects (projectiles, slingshot ammo) from tunneling through thin geometry. | YAML: `rigid_body: { type: dynamic, ccd: true }`. Enabled automatically for projectiles. |
+| Camera shake | Screen shake effect for impacts, explosions, destruction. | Lua: `camera.shake(intensity, duration)` with configurable decay |
+| Render debug HUD | Interactive number-key toggles for render pass isolation (bloom, lights, emission, flicker, ambient). `--hud` CLI flag. | CLI: `naive run --hud`. Keys 0-6 toggle passes at runtime. Engine-level, works in all scenes. |
 
 **Tier 3 — GPU Scale** (unblocks 50K entities)
 
@@ -1196,22 +1222,23 @@ These systems move entity simulation from CPU to GPU. Game developers configure 
 | Phase | Tier | Weeks | Deliverables |
 |-------|------|-------|-------------|
 | 3a | Tier 1: Gameplay Primitives | — | **DONE (v0.1.2)** Health/damage, projectiles, third-person camera, hitscan API, collision damage |
-| 3b | Tier 2: Production Foundations | 13-18 | Dynamic instance buffer, safe entity lifecycle, entity pooling, particle system, runtime queries, event subscription |
-| 3c | Tier 3: GPU Scale | 19-24 | GPU compute entity system, neighbor grid, instanced rendering, flow field |
-| 3d | Tier 4: Animation | 25-28 | Skeletal animation + state machine, VAT loader + renderer |
-| 3e | Tier 5: Vehicles | 29-32 | Vehicle physics, mount/dismount, LOD system |
+| 3b | Tier 2: Production Foundations | — | **DONE (v0.1.4)** Dynamic instance buffer, safe entity lifecycle, entity pooling, particle system, runtime queries, event subscription |
+| 3b.5 | Tier 2.5: Physics & Scene API | 13-16 | Physics impulse/velocity, entity.get_tag, scene.load, collider materials, CCD, camera shake, render debug HUD |
+| 3c | Tier 3: GPU Scale | 17-22 | GPU compute entity system, neighbor grid, instanced rendering, flow field |
+| 3d | Tier 4: Animation | 23-26 | Skeletal animation + state machine, VAT loader + renderer |
+| 3e | Tier 5: Vehicles | 27-30 | Vehicle physics, mount/dismount, LOD system |
 
 **Phase 4: HAVOC — Proof Game (Built by Game Developer Using Engine)**
 
 HAVOC is built entirely in YAML + Lua + SLANG using the engine systems from Phase 3. It validates that the engine APIs are sufficient for a AAA-scale horde survival game. No Rust code is written for HAVOC — if Rust is needed, that's a missing engine system.
 
-A HAVOC prototype was already built during Tier 1 development using only CPU entities and Lua-side simulation. It validated the gameplay loop (driving, killing, leveling, upgrading) but hit hard limits: 256-entity ceiling, deferred destroy crashes, no VFX. Tier 2 removes these walls. The full HAVOC rebuild on Tier 2+ will prove nAIVE is a production engine, not just a prototyping tool.
+A HAVOC prototype was already built during Tier 1 development using only CPU entities and Lua-side simulation. It validated the gameplay loop (driving, killing, leveling, upgrading) but hit hard limits: 256-entity ceiling, deferred destroy crashes, no VFX. Tier 2 (now complete) removed these walls. The full HAVOC rebuild on Tier 2.5+ will prove nAIVE is a production engine, not just a prototyping tool.
 
 | Weeks | Deliverable | Engine Systems Exercised |
 |-------|------------|------------------------|
-| 33-34 | HAVOC core: arena scene, player controller, horde (pooled + particles) | Tier 1 (health, hitscan, third-person camera) + Tier 2 (pooling, particles, dynamic buffer, events) |
-| 35-36 | HAVOC GPU horde: 50K goblin swarm, wave progression, 5 weapon types | Tier 3 (GPU entities, flow field) + Tier 4 (skeletal anim for player, VAT for horde) |
-| 37-38 | HAVOC vehicles + polish: 2 vehicles, LOD, 10-wave campaign | Tier 5 (vehicles, mount/dismount, LOD) |
+| 31-32 | HAVOC core: arena scene, player controller, horde (pooled + particles) | Tier 1 (health, hitscan, third-person camera) + Tier 2 (pooling, particles, dynamic buffer, events) + Tier 2.5 (impulse, velocity, CCD) |
+| 33-34 | HAVOC GPU horde: 50K goblin swarm, wave progression, 5 weapon types | Tier 3 (GPU entities, flow field) + Tier 4 (skeletal anim for player, VAT for horde) |
+| 35-36 | HAVOC vehicles + polish: 2 vehicles, LOD, 10-wave campaign | Tier 5 (vehicles, mount/dismount, LOD) |
 
 ---
 

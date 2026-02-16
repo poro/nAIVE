@@ -24,6 +24,7 @@ fn main() {
 
         // naive run [--scene X]
         Some(naive_client::cli::Command::Run { scene }) => {
+            let hud = args.hud;
             let cwd = std::env::current_dir().expect("Failed to get current directory");
             let args = match naive_client::project_config::find_config(&cwd) {
                 Some(config_path) => {
@@ -41,6 +42,7 @@ fn main() {
                     if scene.is_some() {
                         cli_args.scene = scene.clone();
                     }
+                    cli_args.hud = hud;
                     cli_args
                 }
                 None => {
@@ -177,7 +179,8 @@ fn main() {
                         }
                     };
                     tracing::info!("Auto-detected project: {} v{}", config.name, config.version);
-                    let cli_args = naive_client::project_config::to_cli_args(&config, project_root);
+                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root);
+                    cli_args.hud = args.hud;
                     run_engine(cli_args);
                     return;
                 }

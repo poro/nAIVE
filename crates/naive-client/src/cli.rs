@@ -26,6 +26,10 @@ pub struct CliArgs {
     /// Path to the command socket for external control
     #[arg(long, default_value = "/tmp/naive-runtime.sock")]
     pub socket: String,
+
+    /// Show the render debug HUD on startup
+    #[arg(long, global = true)]
+    pub hud: bool,
 }
 
 #[derive(Subcommand, Debug)]

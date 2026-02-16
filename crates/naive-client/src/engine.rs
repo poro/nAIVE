@@ -97,6 +97,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(args: CliArgs) -> Self {
         let project_root = PathBuf::from(&args.project);
+        let show_hud = args.hud;
         Self {
             args,
             gpu: None,
@@ -131,7 +132,10 @@ impl Engine {
             lua_event_listeners: HashMap::new(),
             next_lua_listener_id: 0,
             lua_listener_id_map: HashMap::new(),
-            render_debug: crate::pipeline::RenderDebugState::default(),
+            render_debug: crate::pipeline::RenderDebugState {
+                show_hud,
+                ..Default::default()
+            },
         }
     }
 
