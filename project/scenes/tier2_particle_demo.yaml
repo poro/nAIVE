@@ -1,6 +1,6 @@
 name: "Tier 2 — Particle System Showcase"
 settings:
-  ambient_light: [0.05, 0.05, 0.08]
+  ambient_light: [0.15, 0.15, 0.2]
   gravity: [0, -9.81, 0]
 
 entities:
@@ -8,7 +8,7 @@ entities:
   - id: camera
     components:
       transform:
-        position: [0, 5, 15]
+        position: [0, 4, 16]
       camera:
         fov: 70
         near: 0.1
@@ -36,8 +36,8 @@ entities:
     components:
       directional_light:
         direction: [0.3, -1.0, 0.2]
-        color: [0.8, 0.85, 1.0]
-        intensity: 1.5
+        color: [0.9, 0.9, 1.0]
+        intensity: 3.0
         shadow_extent: 25.0
 
   # --- Fire emitter (center) ---
@@ -45,7 +45,8 @@ entities:
     tags: [emitter, fire]
     components:
       transform:
-        position: [0, 0.5, 0]
+        position: [0, 1, 0]
+        scale: [1.5, 1.5, 1.5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/inferno_lava.yaml
@@ -66,8 +67,8 @@ entities:
     tags: [emitter, magic]
     components:
       transform:
-        position: [-6, 0.5, 0]
-        scale: [0.6, 0.6, 0.6]
+        position: [-6, 1, 0]
+        scale: [1.2, 1.2, 1.2]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/neon_cyan.yaml
@@ -88,8 +89,8 @@ entities:
     tags: [emitter, poison]
     components:
       transform:
-        position: [6, 1.5, 0]
-        scale: [0.8, 0.8, 0.8]
+        position: [6, 1, 0]
+        scale: [1.2, 1.2, 1.2]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/neon_green.yaml
@@ -110,8 +111,7 @@ entities:
     tags: [emitter, sparkle]
     components:
       transform:
-        position: [-4, 2, -6]
-        scale: [0.4, 0.4, 0.4]
+        position: [-3, 1, -5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/neon_gold.yaml
@@ -132,8 +132,7 @@ entities:
     tags: [emitter, void]
     components:
       transform:
-        position: [4, 2, -6]
-        scale: [0.5, 0.5, 0.5]
+        position: [3, 1, -5]
       mesh_renderer:
         mesh: procedural:sphere
         material: assets/materials/neon_purple.yaml
@@ -149,15 +148,15 @@ entities:
         color_end: [0.2, 0.0, 0.5, 0.0]
         gravity_scale: -0.5
 
-  # --- Ambient lights ---
+  # --- Point lights near each emitter ---
   - id: fire_light
     components:
       transform:
         position: [0, 3, 0]
       point_light:
         color: [1, 0.5, 0.1]
-        intensity: 10
-        range: 15
+        intensity: 15
+        range: 20
 
   - id: magic_light
     components:
@@ -165,8 +164,8 @@ entities:
         position: [-6, 3, 0]
       point_light:
         color: [0.2, 0.6, 1]
-        intensity: 8
-        range: 12
+        intensity: 12
+        range: 15
 
   - id: poison_light
     components:
@@ -174,5 +173,14 @@ entities:
         position: [6, 3, 0]
       point_light:
         color: [0.2, 1, 0.2]
-        intensity: 6
-        range: 10
+        intensity: 10
+        range: 15
+
+  - id: back_light
+    components:
+      transform:
+        position: [0, 4, -5]
+      point_light:
+        color: [0.8, 0.6, 1]
+        intensity: 10
+        range: 15

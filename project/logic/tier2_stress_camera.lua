@@ -15,9 +15,10 @@ function update(dt)
     local z = math.cos(angle) * self.radius
     entity.set_position(_entity_string_id, x, self.height, z)
 
-    -- Look at origin
-    local yaw = math.deg(angle + math.pi)
-    entity.set_rotation(_entity_string_id, -20, yaw, 0)
+    -- Look at origin (atan2(x,z) pattern from gallery/cosmic cameras)
+    local yaw = math.deg(math.atan2(x, z))
+    local pitch = -math.deg(math.atan2(self.height, self.radius))
+    entity.set_rotation(_entity_string_id, pitch, yaw, 0)
 
     -- HUD
     ui.text(20, 20, "TIER 2 STRESS TEST", 28, 1, 0.6, 0.2, 1)
