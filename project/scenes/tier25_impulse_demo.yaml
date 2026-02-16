@@ -1,0 +1,188 @@
+name: "Tier 2.5 — Impulse & Force Demo"
+
+settings:
+  ambient_light: [0.15, 0.15, 0.2]
+  gravity: [0.0, -9.81, 0.0]
+
+entities:
+  # --- Floor ---
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.5, 0]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [15, 0.5, 15]
+        restitution: 0.3
+        friction: 0.8
+
+  # --- Dynamic Spheres ---
+  - id: ball_1
+    tags: [ball]
+    components:
+      transform:
+        position: [-6, 1.5, -5]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:sphere"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "dynamic"
+        mass: 2.0
+      collider:
+        shape: "sphere"
+        radius: 0.5
+        restitution: 0.5
+        friction: 0.5
+
+  - id: ball_2
+    tags: [ball]
+    components:
+      transform:
+        position: [-2, 1.5, -5]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:sphere"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "dynamic"
+        mass: 2.0
+      collider:
+        shape: "sphere"
+        radius: 0.5
+        restitution: 0.5
+        friction: 0.5
+
+  - id: ball_3
+    tags: [ball]
+    components:
+      transform:
+        position: [2, 1.5, -5]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:sphere"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "dynamic"
+        mass: 2.0
+      collider:
+        shape: "sphere"
+        radius: 0.5
+        restitution: 0.5
+        friction: 0.5
+
+  - id: ball_4
+    tags: [ball]
+    components:
+      transform:
+        position: [6, 1.5, -5]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:sphere"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "dynamic"
+        mass: 2.0
+      collider:
+        shape: "sphere"
+        radius: 0.5
+        restitution: 0.5
+        friction: 0.5
+
+  # --- Label pedestals (static cubes under each ball) ---
+  - id: pedestal_1
+    components:
+      transform:
+        position: [-6, 0.15, -5]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.8, 0.15, 0.8]
+
+  - id: pedestal_2
+    components:
+      transform:
+        position: [-2, 0.15, -5]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.8, 0.15, 0.8]
+
+  - id: pedestal_3
+    components:
+      transform:
+        position: [2, 0.15, -5]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.8, 0.15, 0.8]
+
+  - id: pedestal_4
+    components:
+      transform:
+        position: [6, 0.15, -5]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.8, 0.15, 0.8]
+
+  # --- Player ---
+  - id: player
+    components:
+      transform:
+        position: [0, 1, 5]
+        rotation: [0, 0, 0]
+      camera:
+        fov: 75.0
+        near: 0.1
+        far: 200.0
+        mode: "third_person"
+        distance: 6.0
+        height_offset: 2.0
+        pitch_limits: [-45, 60]
+      character_controller:
+        move_speed: 5.0
+        sprint_multiplier: 1.8
+        jump_impulse: 7.0
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      script:
+        source: "logic/tier25_impulse_demo.lua"
+
+  # --- Lighting ---
+  - id: sun
+    components:
+      transform:
+        position: [0, 10, 0]
+      directional_light:
+        direction: [0.3, -1.0, 0.5]
+        color: [1.0, 0.95, 0.9]
+        intensity: 1.2
+        shadow_extent: 25.0

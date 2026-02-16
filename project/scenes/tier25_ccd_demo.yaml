@@ -1,0 +1,116 @@
+name: "Tier 2.5 — CCD Demo"
+
+settings:
+  ambient_light: [0.12, 0.12, 0.15]
+  gravity: [0.0, -9.81, 0.0]
+
+entities:
+  # --- Floor ---
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.5, 0]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [20, 0.5, 20]
+        friction: 0.8
+
+  # --- Thin wall ---
+  - id: wall
+    tags: [wall]
+    components:
+      transform:
+        position: [0, 2, -8]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [6, 2, 0.05]
+        restitution: 0.1
+
+  # --- Target behind wall ---
+  - id: target_1
+    tags: [target]
+    components:
+      transform:
+        position: [0, 1.5, -12]
+        scale: [2, 2, 2]
+      mesh_renderer:
+        mesh: "procedural:sphere"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "sphere"
+        radius: 1.0
+
+  # --- Launch markers ---
+  - id: marker_ccd
+    components:
+      transform:
+        position: [-2, 0.1, 0]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.5, 0.1, 0.5]
+
+  - id: marker_no_ccd
+    components:
+      transform:
+        position: [2, 0.1, 0]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.5, 0.1, 0.5]
+
+  # --- Player ---
+  - id: player
+    components:
+      transform:
+        position: [0, 1, 6]
+      camera:
+        fov: 75.0
+        near: 0.1
+        far: 200.0
+        mode: "third_person"
+        distance: 8.0
+        height_offset: 3.0
+        pitch_limits: [-45, 60]
+      character_controller:
+        move_speed: 5.0
+        sprint_multiplier: 1.8
+        jump_impulse: 7.0
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      script:
+        source: "logic/tier25_ccd_demo.lua"
+
+  # --- Lighting ---
+  - id: sun
+    components:
+      transform:
+        position: [0, 10, 0]
+      directional_light:
+        direction: [0.2, -1.0, 0.4]
+        color: [1.0, 0.95, 0.9]
+        intensity: 1.2
+        shadow_extent: 30.0

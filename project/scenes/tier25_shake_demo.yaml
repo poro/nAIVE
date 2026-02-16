@@ -1,0 +1,122 @@
+name: "Tier 2.5 — Camera Shake Demo"
+
+settings:
+  ambient_light: [0.12, 0.1, 0.1]
+  gravity: [0.0, -9.81, 0.0]
+
+entities:
+  # --- Floor ---
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.5, 0]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [15, 0.5, 15]
+        friction: 0.8
+
+  # --- Barrels ---
+  - id: barrel_1
+    tags: [barrel]
+    components:
+      transform:
+        position: [-5, 0.8, -4]
+      mesh_renderer:
+        mesh: "procedural:sphere"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "dynamic"
+        mass: 5.0
+      collider:
+        shape: "sphere"
+        radius: 0.8
+        restitution: 0.3
+
+  - id: barrel_2
+    tags: [barrel]
+    components:
+      transform:
+        position: [0, 0.8, -6]
+      mesh_renderer:
+        mesh: "procedural:sphere"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "dynamic"
+        mass: 5.0
+      collider:
+        shape: "sphere"
+        radius: 0.8
+        restitution: 0.3
+
+  - id: barrel_3
+    tags: [barrel]
+    components:
+      transform:
+        position: [5, 0.8, -3]
+      mesh_renderer:
+        mesh: "procedural:sphere"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "dynamic"
+        mass: 5.0
+      collider:
+        shape: "sphere"
+        radius: 0.8
+        restitution: 0.3
+
+  # --- Particle emitter for explosion VFX (placed off-screen, bursts spawned at barrel positions) ---
+  - id: explosion_fx
+    components:
+      transform:
+        position: [0, -100, 0]
+      particle_emitter:
+        max_particles: 200
+        spawn_rate: 0
+        lifetime: [0.3, 0.8]
+        initial_speed: [3.0, 8.0]
+        direction: [0, 1, 0]
+        spread: 180
+        size: [0.3, 0.05]
+        color_start: [1.0, 0.6, 0.1, 1.0]
+        color_end: [1.0, 0.1, 0.0, 0.0]
+        gravity_scale: -0.5
+        enabled: false
+
+  # --- Player ---
+  - id: player
+    components:
+      transform:
+        position: [0, 1, 5]
+      camera:
+        fov: 75.0
+        near: 0.1
+        far: 200.0
+        mode: "third_person"
+        distance: 6.0
+        height_offset: 2.0
+        pitch_limits: [-45, 60]
+      character_controller:
+        move_speed: 5.0
+        sprint_multiplier: 1.8
+        jump_impulse: 7.0
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      script:
+        source: "logic/tier25_shake_demo.lua"
+
+  # --- Lighting ---
+  - id: sun
+    components:
+      transform:
+        position: [0, 10, 0]
+      directional_light:
+        direction: [0.3, -1.0, 0.4]
+        color: [1.0, 0.9, 0.8]
+        intensity: 1.0
+        shadow_extent: 25.0

@@ -1,0 +1,161 @@
+name: "Tier 2.5 — Scene B (Red Room)"
+
+settings:
+  ambient_light: [0.2, 0.08, 0.08]
+  gravity: [0.0, -9.81, 0.0]
+
+entities:
+  # --- Floor ---
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.5, 0]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [8, 0.5, 8]
+        friction: 0.8
+
+  # --- Walls ---
+  - id: wall_back
+    components:
+      transform:
+        position: [0, 3, -8]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [8, 3, 0.3]
+
+  - id: wall_left
+    components:
+      transform:
+        position: [-8, 3, 0]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.3, 3, 8]
+
+  - id: wall_right
+    components:
+      transform:
+        position: [8, 3, 0]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.3, 3, 8]
+
+  - id: wall_front
+    components:
+      transform:
+        position: [0, 3, 8]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [8, 3, 0.3]
+
+  # --- Portal ---
+  - id: portal
+    tags: [portal, scene_b]
+    components:
+      transform:
+        position: [0, 1.5, -6]
+      mesh_renderer:
+        mesh: "procedural:sphere"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "sphere"
+        radius: 1.0
+        is_trigger: true
+
+  # --- Decorative cubes ---
+  - id: decor_1
+    components:
+      transform:
+        position: [-4, 1, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.5, 0.5, 0.5]
+
+  - id: decor_2
+    components:
+      transform:
+        position: [4, 1, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [0.5, 0.5, 0.5]
+
+  # --- Player ---
+  - id: player
+    tags: [scene_b]
+    components:
+      transform:
+        position: [0, 1, 4]
+      camera:
+        fov: 75.0
+        near: 0.1
+        far: 100.0
+        mode: "third_person"
+        distance: 5.0
+        height_offset: 2.0
+        pitch_limits: [-45, 60]
+      character_controller:
+        move_speed: 5.0
+        sprint_multiplier: 1.8
+        jump_impulse: 7.0
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      script:
+        source: "logic/tier25_scene_load.lua"
+
+  # --- Red lighting ---
+  - id: light_red
+    components:
+      transform:
+        position: [0, 5, 0]
+      point_light:
+        color: [1.0, 0.3, 0.2]
+        intensity: 15.0
+        range: 20.0
+
+  - id: sun
+    components:
+      transform:
+        position: [0, 10, 0]
+      directional_light:
+        direction: [0.2, -1.0, 0.3]
+        color: [1.0, 0.6, 0.5]
+        intensity: 0.6
+        shadow_extent: 20.0
