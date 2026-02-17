@@ -1153,6 +1153,22 @@ impl Engine {
             }
         }
 
+        // Process dynamic spawns (bouncing physics objects)
+        let dyn_spawns: Vec<_> = self.entity_commands.dynamic_spawns.drain(..).collect();
+        for cmd in &dyn_spawns {
+            if let (Some(scene_world), Some(physics_world)) = (&mut self.scene_world, &mut self.physics_world) {
+                crate::world::spawn_dynamic_entity(
+                    scene_world,
+                    cmd,
+                    &gpu.device,
+                    &self.project_root,
+                    &mut self.mesh_cache,
+                    &mut self.material_cache,
+                    physics_world,
+                );
+            }
+        }
+
         // Process pool operations
         let pool_ops: Vec<_> = self.entity_commands.pool_ops.drain(..).collect();
         for op in pool_ops {

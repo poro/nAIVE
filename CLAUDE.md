@@ -10,7 +10,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 - **Scripting:** Lua 5.4 (mlua)
 - **ECS:** hecs
 - **Audio:** kira
-- **Current version:** 0.1.7
+- **Current version:** 0.1.8
 
 ## Workspace Crates
 

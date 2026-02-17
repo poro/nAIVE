@@ -934,6 +934,29 @@ impl ScriptRuntime {
         }).map_err(|e| e.to_string())?;
         entity_table.set("spawn_projectile", spawn_proj_fn).map_err(|e| e.to_string())?;
 
+        // entity.spawn_dynamic(mesh, material, x, y, z, vx, vy, vz, radius, mass, restitution, friction, lifetime)
+        // Spawns a dynamic rigid body that bounces and persists (no destroy-on-hit).
+        let spawn_dyn_fn = self.lua.create_function(move |_, (mesh, material, x, y, z, vx, vy, vz, radius, mass, restitution, friction, lifetime): (String, String, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32)| {
+            let cmd = unsafe { &mut *cmd_ptr };
+            cmd.dynamic_counter += 1;
+            let id = format!("dyn_{}", cmd.dynamic_counter);
+            cmd.dynamic_spawns.push(crate::world::DynamicSpawnCommand {
+                id,
+                mesh,
+                material,
+                position: [x, y, z],
+                velocity: [vx, vy, vz],
+                scale: [1.0, 1.0, 1.0],
+                radius,
+                mass,
+                restitution,
+                friction,
+                lifetime,
+            });
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        entity_table.set("spawn_dynamic", spawn_dyn_fn).map_err(|e| e.to_string())?;
+
         // entity.destroy_by_prefix(prefix) - bulk destroy all entities whose ID starts with prefix
         let destroy_prefix_fn = self.lua.create_function(move |_, prefix: String| {
             let sw = unsafe { &*scene_world_ptr };

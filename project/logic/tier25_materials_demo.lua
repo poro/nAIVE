@@ -1,136 +1,118 @@
 -- Tier 2.5 Demo: Collider Materials (Restitution & Friction)
--- Balls drop onto surfaces with varying restitution (left side).
--- Balls slide down a ramp with varying friction (right side).
--- Press 1 to drop bounce balls, Press 2 to spawn ramp balls.
-
-local bounce_x = { -8, -4, 0, 4, 8 }
-local bounce_rest = { 0.0, 0.25, 0.5, 0.75, 1.0 }
-local bounce_pads = { "bounce_pad_0", "bounce_pad_25", "bounce_pad_50", "bounce_pad_75", "bounce_pad_100" }
-
-local friction_vals = { 0.0, 0.25, 0.5, 0.75, 1.0 }
-local ramp_lane_x = { -8, -4, 0, 4, 8 }
+-- Pyramid with increasing restitution from base to top.
+-- Press 1 to release a wave of balls from above.
+-- Balls accumulate — watch them bounce differently off each layer.
 
 function init()
-    self.bounce_gen = 0
-    self.ramp_gen = 0
-    self.time = 0
-    self.auto_timer = 0
+    self.ball_count = 0
+    self.wave = 0
 
-    -- Color bounce pads by restitution (blue = low, red = high)
-    for i, pad_id in ipairs(bounce_pads) do
-        local t = (i - 1) / 4.0
-        entity.set_base_color(pad_id, t, 0.2, 1.0 - t)
+    -- Color pyramid layers by restitution: blue(dead) → green → yellow → red(super bouncy)
+    -- Layer 1 (base) — r=0.0 — dark blue
+    for i = 0, 4 do
+        entity.set_base_color("pyr_base_" .. i, 0.1, 0.15, 0.5)
     end
+    -- Layer 2 — r=0.3 — teal
+    for i = 0, 3 do
+        entity.set_base_color("pyr_mid1_" .. i, 0.1, 0.4, 0.4)
+    end
+    -- Layer 3 — r=0.6 — green
+    for i = 0, 2 do
+        entity.set_base_color("pyr_mid2_" .. i, 0.2, 0.6, 0.15)
+    end
+    -- Layer 4 — r=0.85 — orange
+    entity.set_base_color("pyr_top1_0", 0.8, 0.5, 0.1)
+    entity.set_base_color("pyr_top1_1", 0.8, 0.5, 0.1)
+    -- Cap — r=1.0 — bright red
+    entity.set_base_color("pyr_cap", 0.9, 0.15, 0.1)
+    entity.set_emission("pyr_cap", 1.0, 0.2, 0.1)
 
-    -- Color the ramp
-    entity.set_base_color("ramp", 0.3, 0.3, 0.35)
-    entity.set_metallic("ramp", 0.2)
+    -- Floor
+    entity.set_base_color("floor", 0.45, 0.45, 0.48)
 end
 
 function update(dt)
-    self.time = self.time + dt
-    self.auto_timer = self.auto_timer + dt
-
-    -- Auto-spawn bounce balls every 3 seconds, or press 1
-    local spawn_bounce = input.just_pressed("slot1") or self.auto_timer > 3.0
-
-    if spawn_bounce then
-        if self.auto_timer > 3.0 then self.auto_timer = 0 end
-        self.bounce_gen = self.bounce_gen + 1
-
-        for i = 1, 5 do
-            local bid = "bounce_" .. self.bounce_gen .. "_" .. i
-            entity.spawn(
-                bid,
+    -- Press 1: Release a wave of balls
+    if input.just_pressed("slot1") then
+        self.wave = self.wave + 1
+        local count = 15
+        for i = 1, count do
+            self.ball_count = self.ball_count + 1
+            local ox = -4 + (i - 1) * (8 / (count - 1))
+            local oy = 12 + math.random() * 3
+            local oz = -4 + (math.random() - 0.5) * 4
+            entity.spawn_dynamic(
                 "procedural:sphere",
                 "assets/materials/default.yaml",
-                bounce_x[i], 8, -6,
-                0.4, 0.4, 0.4
+                ox, oy, oz,          -- position
+                0, -0.5, 0,          -- velocity: gentle downward
+                0.3,                 -- radius
+                0.5,                 -- mass
+                0.7,                 -- restitution (bouncy)
+                0.3,                 -- friction
+                60.0                 -- lifetime
             )
-            -- Ball restitution matches the pad it drops onto
-            physics.set_restitution(bid, bounce_rest[i])
-            -- Color the ball to match its pad
-            local t = (i - 1) / 4.0
-            entity.set_base_color(bid, t, 0.2, 1.0 - t)
         end
+
+        -- Particle burst for visual flair
+        particles.spawn_burst(0, 12, -4, 40, {
+            speed_min = 1, speed_max = 4,
+            lifetime_min = 0.3, lifetime_max = 0.8,
+            dir_y = -1, spread = 120,
+            size_start = 0.15, size_end = 0.02,
+            r = 1, g = 0.8, b = 0.3, a = 1,
+            gravity_scale = 1,
+        })
     end
 
-    -- Press 2: Spawn balls at top of ramp with different friction
+    -- Press 2: Big wave (50 balls)
     if input.just_pressed("slot2") then
-        self.ramp_gen = self.ramp_gen + 1
-
-        for i = 1, 5 do
-            local rid = "ramp_" .. self.ramp_gen .. "_" .. i
-            entity.spawn(
-                rid,
+        self.wave = self.wave + 1
+        local count = 50
+        for i = 1, count do
+            self.ball_count = self.ball_count + 1
+            local ox = -5 + math.random() * 10
+            local oy = 10 + math.random() * 6
+            local oz = -6 + math.random() * 4
+            entity.spawn_dynamic(
                 "procedural:sphere",
                 "assets/materials/default.yaml",
-                ramp_lane_x[i], 6, 4,
-                0.4, 0.4, 0.4
+                ox, oy, oz,
+                (math.random() - 0.5) * 0.5,
+                -0.3,
+                (math.random() - 0.5) * 0.5,
+                0.3,                 -- radius
+                0.5,                 -- mass
+                0.7,                 -- restitution
+                0.3,                 -- friction
+                60.0                 -- lifetime
             )
-            physics.set_friction(rid, friction_vals[i])
-            -- Color: green = low friction (slippery), yellow = high friction (grippy)
-            local t = (i - 1) / 4.0
-            entity.set_base_color(rid, 0.2 + 0.8 * t, 0.9 - 0.5 * t, 0.1)
-        end
-    end
-
-    -- Clean up balls that fall off
-    for gen = 1, self.bounce_gen do
-        for i = 1, 5 do
-            local bid = "bounce_" .. gen .. "_" .. i
-            if entity.exists(bid) then
-                local x, y, z = entity.get_position(bid)
-                if y < -3 then entity.destroy(bid) end
-            end
-        end
-    end
-    for gen = 1, self.ramp_gen do
-        for i = 1, 5 do
-            local rid = "ramp_" .. gen .. "_" .. i
-            if entity.exists(rid) then
-                local x, y, z = entity.get_position(rid)
-                if y < -3 then entity.destroy(rid) end
-            end
         end
     end
 
     -- Draw HUD
     local sw = ui.screen_width()
-    local sh = ui.screen_height()
 
     ui.text(sw * 0.5 - 130, 20, "MATERIAL PROPERTIES DEMO", 24, 1, 1, 1, 1)
 
-    ui.rect(15, 55, 330, 75, 0, 0, 0, 0.6)
-    ui.text(20, 60, "1: Drop bounce balls (auto every 3s)", 16, 0.8, 0.8, 0.8, 1)
-    ui.text(20, 82, "2: Spawn ramp balls (friction test)", 16, 0.8, 0.8, 0.8, 1)
-    ui.text(20, 106, "Restitution: 0.0 (blue) to 1.0 (red)", 14, 0.6, 0.6, 0.6, 1)
+    ui.rect(15, 55, 320, 95, 0, 0, 0, 0.6)
+    ui.text(20, 60, "1: Drop 15 balls", 16, 0.8, 0.8, 0.8, 1)
+    ui.text(20, 82, "2: Drop 50 balls", 16, 0.8, 0.8, 0.8, 1)
+    ui.text(20, 104, string.format("Balls: %d  Waves: %d", self.ball_count, self.wave), 16, 0.3, 1.0, 0.3, 1)
+    ui.text(20, 128, "Pyramid: blue(dead) -> red(super bouncy)", 12, 0.6, 0.6, 0.6, 1)
 
-    -- Restitution labels over each pad
-    for i, pad_id in ipairs(bounce_pads) do
-        local px, py, pz = entity.get_position(pad_id)
-        local sx, sy, vis = camera.world_to_screen(px, py + 0.8, pz)
+    -- Layer labels
+    local labels = {
+        { x = 0, y = 5.5, text = "r=1.0", r = 0.9, g = 0.2, b = 0.1 },
+        { x = 0, y = 4.3, text = "r=0.85", r = 0.8, g = 0.5, b = 0.1 },
+        { x = 0, y = 3.3, text = "r=0.6", r = 0.2, g = 0.6, b = 0.15 },
+        { x = 0, y = 2.3, text = "r=0.3", r = 0.1, g = 0.4, b = 0.4 },
+        { x = 0, y = 1.3, text = "r=0.0", r = 0.1, g = 0.15, b = 0.5 },
+    }
+    for _, l in ipairs(labels) do
+        local sx, sy, vis = camera.world_to_screen(6, l.y, -4)
         if vis then
-            ui.text(sx - 15, sy, string.format("%.2f", bounce_rest[i]), 12, 1, 1, 1, 0.8)
+            ui.text(sx, sy, l.text, 12, l.r, l.g, l.b, 0.9)
         end
-    end
-
-    -- Friction labels
-    local ramp_label_z = 12
-    for i = 1, 5 do
-        local sx, sy, vis = camera.world_to_screen(ramp_lane_x[i], 1, ramp_label_z)
-        if vis then
-            ui.text(sx - 20, sy, string.format("f=%.2f", friction_vals[i]), 12, 1, 1, 1, 0.8)
-        end
-    end
-
-    -- Section labels
-    local bsx, bsy, bvis = camera.world_to_screen(0, 9.5, -6)
-    if bvis then
-        ui.text(bsx - 40, bsy, "RESTITUTION", 16, 0.5, 0.5, 1.0, 1)
-    end
-    local rsx, rsy, rvis = camera.world_to_screen(0, 7, 8)
-    if rvis then
-        ui.text(rsx - 25, rsy, "FRICTION", 16, 0.5, 1.0, 0.5, 1)
     end
 end

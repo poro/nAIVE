@@ -1,15 +1,16 @@
 name: "Tier 2.5 — Material Properties Demo"
 
 settings:
-  ambient_light: [0.15, 0.15, 0.18]
+  ambient_light: [0.25, 0.25, 0.3]
   gravity: [0.0, -9.81, 0.0]
 
 entities:
-  # --- Main floor ---
+  # --- Ground plane ---
   - id: floor
     components:
       transform:
         position: [0, -0.5, 0]
+        scale: [60, 1, 60]
       mesh_renderer:
         mesh: "procedural:cube"
         material: "assets/materials/default.yaml"
@@ -17,17 +18,16 @@ entities:
         body_type: "static"
       collider:
         shape: "box"
-        half_extents: [25, 0.5, 20]
-        friction: 0.5
+        half_extents: [30, 0.5, 30]
+        restitution: 0.3
+        friction: 0.6
 
-  # --- RESTITUTION SECTION: 5 platforms at different bounce levels ---
-  # Each platform is a static box; balls drop onto them.
-
-  - id: bounce_pad_0
-    tags: [bounce_pad]
+  # --- Pyramid layer 1 (base, 5x5) — low restitution (dead bounce) ---
+  - id: pyr_base_0
+    tags: [pyramid]
     components:
       transform:
-        position: [-8, 0.15, -6]
+        position: [-4, 0.5, -4]
       mesh_renderer:
         mesh: "procedural:cube"
         material: "assets/materials/default.yaml"
@@ -35,15 +35,15 @@ entities:
         body_type: "static"
       collider:
         shape: "box"
-        half_extents: [1.2, 0.15, 1.2]
+        half_extents: [1, 0.5, 1]
         restitution: 0.0
-        friction: 0.5
+        friction: 0.8
 
-  - id: bounce_pad_25
-    tags: [bounce_pad]
+  - id: pyr_base_1
+    tags: [pyramid]
     components:
       transform:
-        position: [-4, 0.15, -6]
+        position: [-2, 0.5, -4]
       mesh_renderer:
         mesh: "procedural:cube"
         material: "assets/materials/default.yaml"
@@ -51,15 +51,15 @@ entities:
         body_type: "static"
       collider:
         shape: "box"
-        half_extents: [1.2, 0.15, 1.2]
-        restitution: 0.25
-        friction: 0.5
+        half_extents: [1, 0.5, 1]
+        restitution: 0.0
+        friction: 0.8
 
-  - id: bounce_pad_50
-    tags: [bounce_pad]
+  - id: pyr_base_2
+    tags: [pyramid]
     components:
       transform:
-        position: [0, 0.15, -6]
+        position: [0, 0.5, -4]
       mesh_renderer:
         mesh: "procedural:cube"
         material: "assets/materials/default.yaml"
@@ -67,15 +67,15 @@ entities:
         body_type: "static"
       collider:
         shape: "box"
-        half_extents: [1.2, 0.15, 1.2]
-        restitution: 0.5
-        friction: 0.5
+        half_extents: [1, 0.5, 1]
+        restitution: 0.0
+        friction: 0.8
 
-  - id: bounce_pad_75
-    tags: [bounce_pad]
+  - id: pyr_base_3
+    tags: [pyramid]
     components:
       transform:
-        position: [4, 0.15, -6]
+        position: [2, 0.5, -4]
       mesh_renderer:
         mesh: "procedural:cube"
         material: "assets/materials/default.yaml"
@@ -83,15 +83,15 @@ entities:
         body_type: "static"
       collider:
         shape: "box"
-        half_extents: [1.2, 0.15, 1.2]
-        restitution: 0.75
-        friction: 0.5
+        half_extents: [1, 0.5, 1]
+        restitution: 0.0
+        friction: 0.8
 
-  - id: bounce_pad_100
-    tags: [bounce_pad]
+  - id: pyr_base_4
+    tags: [pyramid]
     components:
       transform:
-        position: [8, 0.15, -6]
+        position: [4, 0.5, -4]
       mesh_renderer:
         mesh: "procedural:cube"
         material: "assets/materials/default.yaml"
@@ -99,38 +99,194 @@ entities:
         body_type: "static"
       collider:
         shape: "box"
-        half_extents: [1.2, 0.15, 1.2]
+        half_extents: [1, 0.5, 1]
+        restitution: 0.0
+        friction: 0.8
+
+  # --- Pyramid layer 2 (4 blocks) — medium-low restitution ---
+  - id: pyr_mid1_0
+    tags: [pyramid]
+    components:
+      transform:
+        position: [-3, 1.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
+        restitution: 0.3
+        friction: 0.6
+
+  - id: pyr_mid1_1
+    tags: [pyramid]
+    components:
+      transform:
+        position: [-1, 1.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
+        restitution: 0.3
+        friction: 0.6
+
+  - id: pyr_mid1_2
+    tags: [pyramid]
+    components:
+      transform:
+        position: [1, 1.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
+        restitution: 0.3
+        friction: 0.6
+
+  - id: pyr_mid1_3
+    tags: [pyramid]
+    components:
+      transform:
+        position: [3, 1.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
+        restitution: 0.3
+        friction: 0.6
+
+  # --- Pyramid layer 3 (3 blocks) — medium restitution ---
+  - id: pyr_mid2_0
+    tags: [pyramid]
+    components:
+      transform:
+        position: [-2, 2.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
+        restitution: 0.6
+        friction: 0.4
+
+  - id: pyr_mid2_1
+    tags: [pyramid]
+    components:
+      transform:
+        position: [0, 2.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
+        restitution: 0.6
+        friction: 0.4
+
+  - id: pyr_mid2_2
+    tags: [pyramid]
+    components:
+      transform:
+        position: [2, 2.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
+        restitution: 0.6
+        friction: 0.4
+
+  # --- Pyramid layer 4 (2 blocks) — high restitution ---
+  - id: pyr_top1_0
+    tags: [pyramid]
+    components:
+      transform:
+        position: [-1, 3.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
+        restitution: 0.85
+        friction: 0.2
+
+  - id: pyr_top1_1
+    tags: [pyramid]
+    components:
+      transform:
+        position: [1, 3.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
+        restitution: 0.85
+        friction: 0.2
+
+  # --- Pyramid cap (1 block) — maximum restitution ---
+  - id: pyr_cap
+    tags: [pyramid]
+    components:
+      transform:
+        position: [0, 4.5, -4]
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
+      rigid_body:
+        body_type: "static"
+      collider:
+        shape: "box"
+        half_extents: [1, 0.5, 1]
         restitution: 1.0
-        friction: 0.5
+        friction: 0.1
 
-  # --- FRICTION SECTION: Tilted ramp with 5 lanes ---
-  - id: ramp
-    tags: [ramp]
+  # --- Player ---
+  - id: player
     components:
       transform:
-        position: [0, 3, 8]
-        rotation: [15, 0, 0]
-      mesh_renderer:
-        mesh: "procedural:cube"
-        material: "assets/materials/default.yaml"
-      rigid_body:
-        body_type: "static"
-      collider:
-        shape: "box"
-        half_extents: [12, 0.15, 6]
-        friction: 0.5
-
-  # --- Controller (camera + script) ---
-  - id: controller
-    components:
-      transform:
-        position: [0, 12, 15]
-        rotation: [-30, 180, 0]
+        position: [0, 3, 10]
       camera:
-        fov: 60.0
+        fov: 70.0
         near: 0.1
         far: 200.0
-        mode: "first_person"
+        mode: "third_person"
+        distance: 8.0
+        height_offset: 4.0
+        pitch_limits: [-60, 60]
+      character_controller:
+        move_speed: 6.0
+        sprint_multiplier: 2.0
+        jump_impulse: 7.0
+      mesh_renderer:
+        mesh: "procedural:cube"
+        material: "assets/materials/default.yaml"
       script:
         source: "logic/tier25_materials_demo.lua"
 
@@ -143,4 +299,4 @@ entities:
         direction: [0.2, -1.0, 0.3]
         color: [1.0, 0.97, 0.92]
         intensity: 1.3
-        shadow_extent: 35.0
+        shadow_extent: 60.0

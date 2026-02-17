@@ -24,6 +24,8 @@ pub struct EntityCommandQueue {
     pub visibility_updates: Vec<(String, bool)>,
     pub projectile_spawns: Vec<ProjectileSpawnCommand>,
     pub projectile_counter: u64,
+    pub dynamic_spawns: Vec<DynamicSpawnCommand>,
+    pub dynamic_counter: u64,
     pub pool_ops: Vec<PoolOp>,
     pub pending_scene_load: Option<String>,
 }
@@ -50,6 +52,20 @@ pub struct ProjectileSpawnCommand {
     pub scale: [f32; 3],
 }
 
+pub struct DynamicSpawnCommand {
+    pub id: String,
+    pub mesh: String,
+    pub material: String,
+    pub position: [f32; 3],
+    pub velocity: [f32; 3],
+    pub scale: [f32; 3],
+    pub radius: f32,
+    pub mass: f32,
+    pub restitution: f32,
+    pub friction: f32,
+    pub lifetime: f32,
+}
+
 impl EntityCommandQueue {
     pub fn new() -> Self {
         Self::default()
@@ -61,6 +77,7 @@ impl EntityCommandQueue {
         self.scale_updates.clear();
         self.visibility_updates.clear();
         self.projectile_spawns.clear();
+        self.dynamic_spawns.clear();
         self.pool_ops.clear();
         self.pending_scene_load = None;
     }
@@ -574,6 +591,95 @@ pub fn spawn_projectile_entity(
 
     // Set initial velocity via PhysicsWorld helper
     physics_world.set_linvel(rb_handle, velocity, !cmd.gravity);
+
+    let rb_comp = physics::RigidBody {
+        handle: rb_handle,
+        body_type: physics::PhysicsBodyType::Dynamic,
+    };
+    let col_comp = physics::Collider {
+        handle: col_handle,
+        shape,
+        is_trigger: false,
+    };
+    let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
+    true
+}
+
+/// Spawn a dynamic physics entity at runtime (no CollisionDamage — it bounces and persists).
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_dynamic_entity(
+    scene_world: &mut SceneWorld,
+    cmd: &DynamicSpawnCommand,
+    device: &wgpu::Device,
+    project_root: &Path,
+    mesh_cache: &mut MeshCache,
+    material_cache: &mut MaterialCache,
+    physics_world: &mut PhysicsWorld,
+) -> bool {
+    if scene_world.entity_registry.contains_key(&cmd.id) {
+        tracing::warn!("spawn_dynamic_entity: id '{}' already exists", cmd.id);
+        return false;
+    }
+
+    let mesh_handle = match mesh_cache.get_or_load(device, project_root, &cmd.mesh) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("spawn_dynamic_entity: mesh '{}' failed: {}", cmd.mesh, e);
+            return false;
+        }
+    };
+    let material_handle = match material_cache.get_or_load(device, project_root, &cmd.material) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("spawn_dynamic_entity: material '{}' failed: {}", cmd.material, e);
+            return false;
+        }
+    };
+
+    let position = glam::Vec3::from(cmd.position);
+    let velocity = glam::Vec3::from(cmd.velocity);
+
+    let transform = Transform {
+        position,
+        scale: glam::Vec3::from(cmd.scale),
+        dirty: true,
+        ..Default::default()
+    };
+    let mesh_renderer = crate::components::MeshRenderer {
+        mesh_handle,
+        material_handle,
+    };
+    let entity_id_comp = crate::components::EntityId(cmd.id.clone());
+    let tags = crate::components::Tags(vec!["dynamic".to_string()]);
+    let projectile = crate::components::Projectile {
+        damage: 0.0,
+        lifetime: cmd.lifetime,
+        age: 0.0,
+        owner_id: String::new(),
+    };
+
+    let entity = scene_world.world.spawn((
+        entity_id_comp,
+        tags,
+        transform,
+        mesh_renderer,
+        projectile,
+    ));
+    scene_world.entity_registry.insert(cmd.id.clone(), entity);
+
+    let shape = PhysicsShape::Sphere { radius: cmd.radius };
+    let (rb_handle, col_handle) = physics_world.add_dynamic_body(
+        entity,
+        position,
+        glam::Quat::IDENTITY,
+        shape.clone(),
+        cmd.mass,
+        cmd.restitution,
+        cmd.friction,
+        false, // no CCD needed for slow bouncing objects
+    );
+
+    physics_world.set_linvel(rb_handle, velocity, false);
 
     let rb_comp = physics::RigidBody {
         handle: rb_handle,
