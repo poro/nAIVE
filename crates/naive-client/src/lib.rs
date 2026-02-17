@@ -11,6 +11,7 @@ pub mod build;
 pub mod camera;
 pub mod cli;
 pub mod command;
+pub mod demos;
 pub mod dev_log;
 pub mod engine;
 pub mod font;

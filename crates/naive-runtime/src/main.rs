@@ -186,6 +186,20 @@ fn main() {
             return;
         }
 
+        // naive demo [selector] / naive demos [selector]
+        Some(naive_client::cli::Command::Demo { selector })
+        | Some(naive_client::cli::Command::Demos { selector }) => {
+            match naive_client::demos::run_demo(selector.as_deref()) {
+                Some(demo_args) => {
+                    run_engine(demo_args);
+                }
+                None => {
+                    // User quit the menu
+                }
+            }
+            return;
+        }
+
         // No subcommand: auto-detect or legacy mode
         None => {
             let cwd = std::env::current_dir().expect("Failed to get current directory");

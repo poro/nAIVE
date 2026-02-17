@@ -60,6 +60,16 @@ pub enum Command {
     Publish,
     /// Submit dev.log as a GitHub issue for engine feedback
     SubmitLog,
+    /// Run a built-in engine demo
+    Demo {
+        /// Demo number or name (omit for interactive selection)
+        selector: Option<String>,
+    },
+    /// List and run built-in engine demos
+    Demos {
+        /// Demo number or name (omit for interactive selection)
+        selector: Option<String>,
+    },
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
