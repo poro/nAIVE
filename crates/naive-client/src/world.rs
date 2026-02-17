@@ -639,9 +639,11 @@ pub fn spawn_dynamic_entity(
     let position = glam::Vec3::from(cmd.position);
     let velocity = glam::Vec3::from(cmd.velocity);
 
+    // Scale visual mesh to match physics radius (procedural sphere has radius 0.5)
+    let visual_scale = cmd.radius / 0.5;
     let transform = Transform {
         position,
-        scale: glam::Vec3::from(cmd.scale),
+        scale: glam::Vec3::splat(visual_scale),
         dirty: true,
         ..Default::default()
     };
@@ -680,6 +682,11 @@ pub fn spawn_dynamic_entity(
     );
 
     physics_world.set_linvel(rb_handle, velocity, false);
+
+    // Prevent physics engine from putting bouncing bodies to sleep mid-air
+    if let Some(body) = physics_world.rigid_body_set.get_mut(rb_handle) {
+        body.activation_mut().normalized_linear_threshold = -1.0; // negative = never sleep
+    }
 
     let rb_comp = physics::RigidBody {
         handle: rb_handle,
