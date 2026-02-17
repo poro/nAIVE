@@ -32,6 +32,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/scripting.rs` | Lua API registration (physics, entity, camera, scene, events) |
 | `crates/naive-client/src/renderer.rs` | wgpu render pipeline, instance buffers, particles |
 | `crates/naive-client/src/test_runner.rs` | Headless test runner for `naive test` CLI command |
+| `crates/naive-client/src/dev_log.rs` | `naive submit-log` — POST dev.log as GitHub Issue |
 
 ## Architecture Patterns
 

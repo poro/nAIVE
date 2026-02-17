@@ -161,6 +161,31 @@ fn main() {
             return;
         }
 
+        // naive submit-log
+        Some(naive_client::cli::Command::SubmitLog) => {
+            let cwd = std::env::current_dir().expect("Failed to get current directory");
+            let config_path = match naive_client::project_config::find_config(&cwd) {
+                Some(p) => p,
+                None => {
+                    eprintln!("Error: No naive.yaml found. Run from a project directory.");
+                    std::process::exit(1);
+                }
+            };
+            let project_root = config_path.parent().unwrap();
+            let config = match naive_client::project_config::load_config(&config_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = naive_client::dev_log::submit_dev_log(&config, project_root) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+            return;
+        }
+
         // No subcommand: auto-detect or legacy mode
         None => {
             let cwd = std::env::current_dir().expect("Failed to get current directory");

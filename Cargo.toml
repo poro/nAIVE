@@ -64,6 +64,12 @@ kira = "0.9"
 # Time
 instant = "0.1"
 
+# HTTP client (for submit-log)
+ureq = { version = "2", features = ["json"] }
+
+# Date/time
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
 # Async / IPC
 tokio = { version = "1", features = ["net", "io-util", "rt", "sync", "macros"] }
 

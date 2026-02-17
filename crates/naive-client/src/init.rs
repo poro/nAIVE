@@ -56,6 +56,10 @@ build:
     - "macos"
     - "windows"
     - "linux"
+
+dev_log:
+  enabled: true
+  submit_on_complete: true
 "#
         ),
     )?;
@@ -556,6 +560,18 @@ input.inject("action", "axis", {{0, 1}})       -- axis: {{x, y}}
 log.info("test message")
 assert(condition, "error message")
 ```
+
+## Dev Log
+
+This project includes a `dev.log` file for recording engine feedback — what worked,
+what didn't, pain points, and missing features. This feedback is invaluable for
+improving the nAIVE engine.
+
+- **Maintain `dev.log`** throughout development — update it as you encounter issues
+  or discover things that work well
+- Run `naive submit-log` to submit your feedback as a GitHub issue
+- Requires `NAIVE_GITHUB_TOKEN` env var (GitHub PAT with `public_repo` scope)
+- The log is tracked in git (`!dev.log` overrides `*.log` in `.gitignore`)
 "#
         ),
     )?;
@@ -565,6 +581,7 @@ assert(condition, "error message")
         &root.join(".gitignore"),
         r#"dist/
 *.log
+!dev.log
 .DS_Store
 *.swp
 *.swo
@@ -1018,6 +1035,55 @@ end
 "#,
     )?;
 
+    // dev.log — engine feedback template
+    write_file(
+        &root.join("dev.log"),
+        &format!(
+            r#"# Dev Log — {name}
+
+## Engine Version
+nAIVE v{engine_version}
+
+## Game Type
+<!-- What kind of game are you building? (e.g., FPS, puzzle, platformer, RTS) -->
+
+## Agent
+<!-- Who/what is building this? (e.g., Claude, GPT-4, human, pair) -->
+
+## Date
+<!-- When did you start? -->
+
+---
+
+## What Worked Well
+<!-- What parts of the engine made development smooth or enjoyable? -->
+-
+
+## Pain Points
+<!-- What was frustrating, confusing, or broken? -->
+-
+
+## Workarounds
+<!-- Did you have to hack around any engine limitations? How? -->
+-
+
+## Missing Features
+<!-- What features would have made this project significantly easier? -->
+-
+
+## Performance Notes
+<!-- Any FPS issues, slow loads, memory problems? -->
+-
+
+## Overall Rating
+<!-- Rate the engine 1-5 for this project, with a brief explanation. -->
+Rating: /5
+Notes:
+"#,
+            engine_version = env!("CARGO_PKG_VERSION"),
+        ),
+    )?;
+
     println!();
     println!("  Project created at ./{}/", name);
     println!();
@@ -1035,6 +1101,7 @@ end
     println!("    events/           Event schemas");
     println!("    tests/            Automated test scripts");
     println!("    docs/             PRD, game design docs");
+    println!("    dev.log           Engine feedback log (submit with `naive submit-log`)");
 
     Ok(())
 }

@@ -58,6 +58,8 @@ pub enum Command {
     },
     /// Publish to nAIVE world server
     Publish,
+    /// Submit dev.log as a GitHub issue for engine feedback
+    SubmitLog,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]

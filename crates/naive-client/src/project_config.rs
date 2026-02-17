@@ -20,6 +20,8 @@ pub struct NaiveConfig {
     pub test: TestConfig,
     #[serde(default)]
     pub build: BuildConfig,
+    #[serde(default)]
+    pub dev_log: DevLogConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -31,6 +33,23 @@ pub struct TestConfig {
 #[derive(Debug, Default, Deserialize)]
 pub struct BuildConfig {
     pub targets: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DevLogConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub submit_on_complete: bool,
+}
+
+impl Default for DevLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            submit_on_complete: false,
+        }
+    }
 }
 
 fn default_engine() -> String {
