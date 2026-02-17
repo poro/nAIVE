@@ -18,8 +18,10 @@
     <pre class="mermaid">
 graph TB
     subgraph CLI["CLI Layer"]
-        CLAP["clap CLI Parser<br/>--scene --pipeline --project"]
+        CLAP["clap CLI Parser<br/>init | run | test | build | demo | submit-log"]
         MAIN["main.rs<br/>Entry Point"]
+        DEMO_CMD["Demo Browser<br/>demos.rs — 14 embedded demos"]
+        DEVLOG_CMD["Submit Log<br/>dev_log.rs — GitHub Issues API"]
     end
 
     subgraph ENGINE["Engine Core (engine.rs)"]
@@ -142,8 +144,25 @@ graph TB
         TW["TweenSystem<br/>property animation"]
     end
 
+    subgraph FEEDBACK["Dev Feedback Loop"]
+        DEVLOG["dev.log<br/>structured feedback template"]
+        GITHUB["GitHub Issues API<br/>ureq POST"]
+        LABEL["dev-log label<br/>searchable record"]
+    end
+
+    subgraph DEMOS["Demo System"]
+        REGISTRY["DemoEntry Registry<br/>14 demos × 6 categories"]
+        EMBED["include_str! Embedded<br/>scenes + Lua + materials"]
+        TMPDIR["$TMPDIR/naive-demo/<br/>extraction target"]
+        MENU["Interactive Menu<br/>ANSI + stdin"]
+    end
+
     CLAP --> MAIN
-    MAIN --> EL
+    MAIN -->|"run"| EL
+    MAIN -->|"demo"| DEMO_CMD
+    MAIN -->|"submit-log"| DEVLOG_CMD
+    DEMO_CMD -->|"extract + CliArgs"| EL
+    DEVLOG_CMD -->|"POST dev.log"| GITHUB
 
     EL -->|"WindowEvent"| IS
     EL -->|"DeviceEvent"| IS
@@ -214,6 +233,13 @@ graph TB
 
     SYNTH --> IS
 
+    REGISTRY --> EMBED
+    EMBED -->|"write to disk"| TMPDIR
+    MENU -->|"select demo"| REGISTRY
+
+    DEVLOG -->|"naive submit-log"| GITHUB
+    GITHUB --> LABEL
+
     classDef core fill:#e94560,stroke:#0f3460,color:#fff
     classDef ecs fill:#0f3460,stroke:#e94560,color:#fff
     classDef render fill:#533483,stroke:#e94560,color:#fff
@@ -221,6 +247,8 @@ graph TB
     classDef input fill:#1e8449,stroke:#fff,color:#fff
     classDef event fill:#b7950b,stroke:#fff,color:#000
     classDef ui fill:#7b2d8e,stroke:#e94560,color:#fff
+    classDef feedback fill:#c0392b,stroke:#fff,color:#fff
+    classDef demo fill:#2980b9,stroke:#fff,color:#fff
 
     class EL,DT,PAUSE core
     class SW,TRANSFORM,MESH_R,PL,PLAYER,CAM,SCRIPT_C,CC,GS,TAGS,HIDDEN,MAT_OVR ecs
@@ -229,6 +257,8 @@ graph TB
     class IS,BINDINGS,SYNTH,CURSOR input
     class EB,SCHEMA,EMIT event
     class FONT,UI_R,UI_TEXT,UI_RECT,UI_FLASH,ENT_CMD ui
+    class DEVLOG,GITHUB,LABEL,DEVLOG_CMD feedback
+    class REGISTRY,EMBED,TMPDIR,MENU,DEMO_CMD demo
     </pre>
   </div>
 
@@ -394,48 +424,158 @@ flowchart LR
     </pre>
   </div>
 
-  <h2>Relic Game Entity Map</h2>
+  <h2>CLI Command Flow</h2>
   <div class="diagram">
     <pre class="mermaid">
-graph TD
-    subgraph Room["Dungeon Room 16×5×16"]
-        FLOOR["floor<br/>stone cube"]
-        CEIL["ceiling<br/>stone cube"]
-        WN["wall_north"]
-        WS["wall_south"]
-        WE["wall_east"]
-        WW["wall_west"]
+flowchart TB
+    USER["User / AI Agent"] -->|"naive ..."| CLI["clap Parser"]
+
+    CLI -->|"init name"| INIT["create_project()<br/>Scaffold dirs, YAML, Lua,<br/>CLAUDE.md, dev.log"]
+    CLI -->|"run [--scene]"| RUN["Load naive.yaml<br/>→ run_engine()"]
+    CLI -->|"test [file]"| TEST["test_runner<br/>Headless Lua tests"]
+    CLI -->|"build [--target]"| BUILD["bundle_project()<br/>Standalone distribution"]
+    CLI -->|"demo [selector]"| DEMO["demos.rs"]
+    CLI -->|"submit-log"| SUBMIT["dev_log.rs"]
+    CLI -->|"publish"| PUB["publish.rs<br/>World server"]
+
+    DEMO -->|"no selector"| MENU["Interactive Menu<br/>ANSI terminal"]
+    DEMO -->|"number"| LOOKUP["Lookup by index"]
+    DEMO -->|"name"| FUZZY["Fuzzy match slug/name"]
+
+    MENU --> EXTRACT
+    LOOKUP --> EXTRACT
+    FUZZY --> EXTRACT
+
+    EXTRACT["Extract to $TMPDIR<br/>scenes + Lua + materials"] -->|"CliArgs"| ENGINE["run_engine()"]
+
+    SUBMIT -->|"Read dev.log"| VALIDATE["Validate content<br/>+ NAIVE_GITHUB_TOKEN"]
+    VALIDATE -->|"POST"| GHAPI["GitHub Issues API<br/>poro/nAIVE/issues"]
+    GHAPI -->|"Created"| RECORD["Append submission<br/>record to dev.log"]
+
+    style INIT fill:#27ae60,color:#fff
+    style RUN fill:#e94560,color:#fff
+    style TEST fill:#2980b9,color:#fff
+    style DEMO fill:#2980b9,color:#fff
+    style SUBMIT fill:#c0392b,color:#fff
+    style ENGINE fill:#e94560,color:#fff
+    style GHAPI fill:#c0392b,color:#fff
+    </pre>
+  </div>
+
+  <h2>Dev Feedback Loop — Engine Evolution</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+    subgraph SCAFFOLD["Project Scaffold"]
+        INIT2["naive init my-game"]
+        DEVLOG2["dev.log template<br/>What Worked / Pain Points<br/>Workarounds / Missing Features"]
+        CLAUDE_MD["CLAUDE.md<br/>Instructs AI agents<br/>to maintain dev.log"]
     end
 
-    subgraph Gameplay["Interactive Entities"]
-        PLAYER["player<br/>Camera + CharacterController<br/>player_fps.lua"]
-        GATE["gate<br/>door_swing.lua<br/>E to open"]
-        GUARDIAN["guardian<br/>guardian.lua<br/>patrol → chase → attack"]
-        RELIC["relic<br/>relic_pickup.lua<br/>E to collect → win"]
+    subgraph DEV["Development Phase"]
+        AGENT["AI Agent<br/>(Claude, GPT, etc.)"]
+        GAME["Game Code<br/>YAML + Lua"]
+        LOG_WRITE["Update dev.log<br/>as issues arise"]
     end
 
-    subgraph Decor["Decoration"]
-        T1["torch_01<br/>torch_flicker.lua"]
-        T2["torch_02"]
-        T3["torch_03"]
-        T4["torch_04"]
-        P1["pillar_01"]
-        P2["pillar_02"]
-        P3["pillar_03"]
-        P4["pillar_04"]
-        PED["pedestal"]
+    subgraph SUBMIT2["Submission"]
+        CLI2["naive submit-log"]
+        POST2["POST to GitHub<br/>Issues API"]
+        ISSUE["GitHub Issue<br/>[Dev Log] my-game<br/>label: dev-log"]
     end
 
-    PLAYER -->|"interact"| GATE
-    PLAYER -->|"attack"| GUARDIAN
-    PLAYER -->|"interact"| RELIC
-    GUARDIAN -->|"guards"| RELIC
-    RELIC -->|"sits on"| PED
+    subgraph TRIAGE["Engine Triage"]
+        REVIEW["Review dev-log issues"]
+        PATTERN["Identify patterns<br/>across projects"]
+        ROADMAP["Update engine<br/>roadmap priorities"]
+    end
 
-    style PLAYER fill:#e94560,color:#fff
-    style GUARDIAN fill:#1e8449,color:#fff
-    style RELIC fill:#b7950b,color:#000
-    style GATE fill:#784212,color:#fff
+    subgraph ENGINE2["Engine Release"]
+        FIX["Fix pain points<br/>Add missing features"]
+        RELEASE["New nAIVE version"]
+    end
+
+    INIT2 --> DEVLOG2
+    INIT2 --> CLAUDE_MD
+    CLAUDE_MD -->|"AI reads instructions"| AGENT
+    AGENT --> GAME
+    AGENT --> LOG_WRITE
+    LOG_WRITE --> DEVLOG2
+
+    DEVLOG2 -->|"naive submit-log"| CLI2
+    CLI2 --> POST2
+    POST2 --> ISSUE
+
+    ISSUE --> REVIEW
+    REVIEW --> PATTERN
+    PATTERN --> ROADMAP
+
+    ROADMAP --> FIX
+    FIX --> RELEASE
+    RELEASE -->|"Updated engine<br/>+ demo catalog"| INIT2
+
+    style INIT2 fill:#27ae60,color:#fff
+    style AGENT fill:#2980b9,color:#fff
+    style ISSUE fill:#c0392b,color:#fff
+    style RELEASE fill:#e94560,color:#fff
+    style PATTERN fill:#b7950b,color:#000
+    </pre>
+  </div>
+
+  <h2>Demo Browser — Embedded Content Architecture</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TB
+    subgraph COMPILE["Compile Time"]
+        SRC_SCENES["project/scenes/*.yaml"]
+        SRC_LUA["project/logic/*.lua"]
+        SRC_MAT["project/assets/materials/*.yaml"]
+        SRC_PIPE["project/pipelines/render.yaml"]
+        SRC_INPUT["project/input/bindings.yaml"]
+
+        INCLUDE["include_str!()<br/>Rust compile-time embedding"]
+
+        SRC_SCENES --> INCLUDE
+        SRC_LUA --> INCLUDE
+        SRC_MAT --> INCLUDE
+        SRC_PIPE --> INCLUDE
+        SRC_INPUT --> INCLUDE
+
+        INCLUDE --> BINARY["naive binary<br/>~278KB embedded text"]
+    end
+
+    subgraph RUNTIME["Runtime — naive demo"]
+        BINARY --> SELECT["User selects demo<br/>#3 or 'particles'"]
+        SELECT --> ENTRY["DemoEntry<br/>slug + scene + scripts + materials"]
+        ENTRY --> EXTRACT2["Extract to $TMPDIR/naive-demo/"]
+
+        EXTRACT2 --> T_SCENE["scenes/demo.yaml"]
+        EXTRACT2 --> T_LUA["logic/*.lua"]
+        EXTRACT2 --> T_MAT["assets/materials/*.yaml"]
+        EXTRACT2 --> T_PIPE["pipelines/render.yaml"]
+        EXTRACT2 --> T_INPUT["input/bindings.yaml"]
+
+        T_SCENE --> ENGINE3["Engine loads<br/>project from temp dir"]
+        T_LUA --> ENGINE3
+        T_MAT --> ENGINE3
+        T_PIPE --> ENGINE3
+        T_INPUT --> ENGINE3
+    end
+
+    subgraph FALLBACKS["Engine Fallbacks"]
+        WGSL2["Hardcoded WGSL<br/>shader fallbacks"]
+        PROC["Procedural meshes<br/>cube + sphere"]
+        AUDIO2["Missing audio<br/>graceful no-op"]
+
+        ENGINE3 -.->|"no .slang files"| WGSL2
+        ENGINE3 -.->|"no .gltf files"| PROC
+        ENGINE3 -.->|"no .ogg files"| AUDIO2
+    end
+
+    style BINARY fill:#2980b9,color:#fff
+    style ENGINE3 fill:#e94560,color:#fff
+    style WGSL2 fill:#533483,color:#fff
+    style PROC fill:#533483,color:#fff
     </pre>
   </div>
 
