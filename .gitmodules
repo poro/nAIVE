@@ -1,0 +1,3 @@
+[submodule "tools/game-asset-mcp"]
+	path = tools/game-asset-mcp
+	url = https://github.com/MubarakHAlketbi/game-asset-mcp.git
