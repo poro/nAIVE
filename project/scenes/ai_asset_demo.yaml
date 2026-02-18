@@ -1,0 +1,88 @@
+name: "AI Asset Demo — Toy Car"
+settings:
+  ambient_light: [0.2, 0.2, 0.25]
+  gravity: [0, -9.81, 0]
+
+entities:
+  # === Player (FPS Camera) ===
+  - id: player
+    components:
+      transform:
+        position: [0, 1.5, 3]
+      camera:
+        fov: 50
+        near: 0.1
+        far: 200
+        role: main
+      character_controller:
+        move_speed: 5.0
+        sprint_multiplier: 1.8
+        jump_impulse: 7.0
+        step_height: 0.3
+        height: 1.8
+        radius: 0.4
+
+  # === Floor ===
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.25, 0]
+        scale: [20, 0.2, 20]
+      mesh_renderer:
+        mesh: procedural:cube
+        material: assets/materials/stone.yaml
+      collider:
+        shape: box
+        half_extents: [10, 0.1, 10]
+        friction: 0.5
+
+  # === Turntable pedestal ===
+  - id: pedestal
+    components:
+      transform:
+        position: [0, -0.05, 0]
+        scale: [3, 0.2, 3]
+      mesh_renderer:
+        mesh: procedural:cube
+        material: assets/materials/default.yaml
+
+  # === 3D Model: KhronosGroup ToyCar GLB ===
+  - id: showcase_model
+    tags: [ai_generated]
+    components:
+      transform:
+        position: [0, 0.1, 0]
+        scale: [1, 1, 1]
+      mesh_renderer:
+        mesh: assets/meshes/generated_3d.glb
+        material: assets/materials/default.yaml
+      script:
+        source: logic/ai_asset_turntable.lua
+
+  # === Lighting ===
+  - id: key_light
+    components:
+      transform:
+        position: [4, 5, 4]
+      point_light:
+        color: [1.0, 0.95, 0.9]
+        intensity: 60.0
+        range: 25.0
+
+  - id: fill_light
+    components:
+      transform:
+        position: [-4, 3, -2]
+      point_light:
+        color: [0.6, 0.7, 1.0]
+        intensity: 25.0
+        range: 20.0
+
+  - id: rim_light
+    components:
+      transform:
+        position: [0, 4, -5]
+      point_light:
+        color: [1.0, 1.0, 1.0]
+        intensity: 30.0
+        range: 20.0

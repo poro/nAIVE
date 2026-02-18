@@ -52,6 +52,40 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | Tier 3 | GPU Scale (50K+ GPU compute entities, neighbor-grid collisions, flow field) | Planned |
 | Tier 4 | Animation & Polish (skeletal animation, VAT, UI) | Planned |
 
+## AI Asset Generation
+
+Text-to-3D pipeline: prompt → FLUX.1 (2D) → Hunyuan3D (3D GLB) → engine.
+
+### Environment Variables (`.env`)
+
+| Variable | Purpose |
+|----------|---------|
+| `SLANG_DIR` | Path to vendored SLANG SDK (`vendor`) |
+| `GATEWAY_URL` | Self-hosted GPU server URL (primary 3D gen backend) |
+| `GATEWAY_KEY` | API key for GPU server |
+| `HF_TOKEN` | HuggingFace API token (fallback 3D gen + 2D image gen) |
+| `MODEL_SPACE` | HuggingFace Space for 3D generation |
+| `MESHY_API_KEY` | Meshy AI API key (alternative 3D gen) |
+
+**Never commit `.env`** — it contains secrets. Use `.env.example` as a template.
+
+### MCP Servers (`.mcp.json`)
+
+| Server | Tool | Purpose |
+|--------|------|---------|
+| `game-asset-generator` | `tools/game-asset-mcp/src/index.js` | Text→2D→3D asset pipeline |
+| `meshy-ai` | `meshy-ai-mcp-server` (npx) | Meshy AI 3D generation |
+| `blender` | `blender-mcp` (uvx) | Blender scene manipulation |
+
+### Test Script
+
+```sh
+source .env
+cd tools/game-asset-mcp
+node test_generate.js "red sports car"
+# Outputs: project/assets/meshes/generated_2d.png, generated_3d.glb
+```
+
 ## Building
 
 ```sh

@@ -131,12 +131,75 @@ my-game/
 - Built-in entity pooling — `entity.pool_acquire()` / `entity.pool_release()`
 - CPU particle simulation (GPU billboard rendering TBD)
 
+### AI Asset Generation
+- Text-to-3D pipeline: prompt → 2D image (FLUX.1) → 3D mesh (Hunyuan3D) → engine
+- Self-hosted GPU server support (H100/A100 via gateway API)
+- HuggingFace Spaces fallback for cloud-based generation
+- MCP server for AI agent-driven asset creation
+- Automatic smooth normal generation for AI-generated meshes
+- glTF/GLB import with vertex color support
+
 ### Infrastructure
 - MCP command socket for AI agent control
 - Headless test runner for automated playtesting
 - Event bus with YAML schema validation
 - Spatial audio (Kira)
 - File watching with hot-reload for scenes, scripts, shaders, materials
+
+---
+
+## AI Asset Generation
+
+nAIVE can generate 3D game assets from text prompts using AI. The pipeline is:
+
+```
+"red sports car" → FLUX.1 (2D image) → Hunyuan3D (3D GLB mesh) → nAIVE engine
+```
+
+### Setup
+
+1. Copy the environment file and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+2. Configure at least one generation backend:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `GATEWAY_URL` | Your GPU server URL (e.g. `http://localhost:8000`) | For self-hosted |
+| `GATEWAY_KEY` | API key for your GPU server | For self-hosted |
+| `HF_TOKEN` | HuggingFace API token ([get one](https://huggingface.co/settings/tokens)) | For HF Spaces |
+| `MODEL_SPACE` | HF Space for 3D generation (e.g. `your-username/Hunyuan3D-2mini-Turbo`) | For HF Spaces |
+
+The gateway (self-hosted GPU) is tried first; HuggingFace Spaces is the fallback.
+
+3. If using a self-hosted server, open an SSH tunnel:
+
+```bash
+ssh -L 8000:localhost:8000 -p 2222 ubuntu@<your-server-ip>
+```
+
+### Generate assets
+
+```bash
+source .env
+cd tools/game-asset-mcp
+node test_generate.js "red sports car"
+```
+
+This saves `generated_2d.png` and `generated_3d.glb` into `project/assets/meshes/`.
+
+### MCP Servers
+
+nAIVE uses [MCP (Model Context Protocol)](https://modelcontextprotocol.io) servers to let AI agents generate assets. Configure them in `.mcp.json`:
+
+| Server | Purpose | Required env vars |
+|--------|---------|-------------------|
+| `game-asset-generator` | Text-to-3D asset pipeline | `HF_TOKEN`, `MODEL_SPACE`, `GATEWAY_URL`, `GATEWAY_KEY` |
+| `meshy-ai` | Meshy AI 3D generation | `MESHY_API_KEY` |
+| `blender` | Blender scene manipulation | None |
 
 ---
 

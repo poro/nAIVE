@@ -242,6 +242,14 @@ impl ScriptRuntime {
         }).map_err(|e| e.to_string())?;
         input_table.set("mouse_delta", mouse_delta_fn).map_err(|e| e.to_string())?;
 
+        // input.scroll_delta() -> (dx, dy) — scroll wheel delta this frame
+        let scroll_delta_fn = self.lua.create_function(move |_, ()| {
+            let input = unsafe { &*input_ptr };
+            let delta = input.scroll_delta();
+            Ok((delta.x, delta.y))
+        }).map_err(|e| e.to_string())?;
+        input_table.set("scroll_delta", scroll_delta_fn).map_err(|e| e.to_string())?;
+
         // input.any_just_pressed() -> bool
         let any_pressed_fn = self.lua.create_function(move |_, ()| {
             let input = unsafe { &*input_ptr };

@@ -1,0 +1,9 @@
+[env]
+# SLANG SDK root — used by shader-slang-sys build script to find headers & libs.
+# Points to the vendored SLANG distribution at <project>/vendor/.
+SLANG_DIR = { value = "vendor", relative = true }
+
+[target.aarch64-apple-darwin]
+# Add vendor/lib to the runtime library search path (rpath) so the binary
+# can find libslang-compiler and other SLANG shared libraries at runtime.
+rustflags = ["-C", "link-arg=-Wl,-rpath,/Users/mollila1/Documents/src/nAIVE/vendor/lib"]

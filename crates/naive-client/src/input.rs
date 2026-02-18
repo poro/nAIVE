@@ -132,6 +132,8 @@ pub struct InputState {
     mouse_buttons_just_released: HashSet<MouseButton>,
     // Mouse motion accumulated this frame
     mouse_delta: Vec2,
+    // Scroll wheel delta accumulated this frame (x=horizontal, y=vertical)
+    scroll_delta: Vec2,
     // Cursor position
     cursor_position: Vec2,
     // Whether the cursor is captured (for FPS camera)
@@ -154,6 +156,7 @@ impl InputState {
             mouse_buttons_just_pressed: HashSet::new(),
             mouse_buttons_just_released: HashSet::new(),
             mouse_delta: Vec2::ZERO,
+            scroll_delta: Vec2::ZERO,
             cursor_position: Vec2::ZERO,
             cursor_captured: false,
             synthetic_keys_pressed: HashSet::new(),
@@ -170,6 +173,7 @@ impl InputState {
         self.mouse_buttons_just_pressed.clear();
         self.mouse_buttons_just_released.clear();
         self.mouse_delta = Vec2::ZERO;
+        self.scroll_delta = Vec2::ZERO;
 
         // Apply synthetic inputs
         for key in self.synthetic_keys_pressed.drain() {
@@ -223,6 +227,19 @@ impl InputState {
             },
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_position = Vec2::new(position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                match delta {
+                    winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                        self.scroll_delta.x += x;
+                        self.scroll_delta.y += y;
+                    }
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                        // Normalize pixel deltas to ~line units
+                        self.scroll_delta.x += pos.x as f32 / 120.0;
+                        self.scroll_delta.y += pos.y as f32 / 120.0;
+                    }
+                }
             }
             _ => {}
         }
@@ -357,6 +374,11 @@ impl InputState {
     /// Get raw mouse delta this frame.
     pub fn mouse_delta(&self) -> Vec2 {
         self.mouse_delta
+    }
+
+    /// Get scroll wheel delta this frame (y > 0 = scroll up).
+    pub fn scroll_delta(&self) -> Vec2 {
+        self.scroll_delta
     }
 
     /// Get cursor position.

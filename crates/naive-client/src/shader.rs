@@ -327,6 +327,7 @@ struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) tex_coords: vec2<f32>,
+    @location(3) color: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -334,6 +335,7 @@ struct VertexOutput {
     @location(0) world_normal: vec3<f32>,
     @location(1) world_pos: vec3<f32>,
     @location(2) tex_coords: vec2<f32>,
+    @location(3) vertex_color: vec4<f32>,
 };
 
 @vertex
@@ -344,6 +346,7 @@ fn vs_main(model: VertexInput) -> VertexOutput {
     out.world_normal = normalize((draw.normal_matrix * vec4<f32>(model.normal, 0.0)).xyz);
     out.world_pos = world_pos.xyz;
     out.tex_coords = model.tex_coords;
+    out.vertex_color = model.color;
     return out;
 }
 
@@ -356,8 +359,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ndotl = max(dot(in.world_normal, light_dir), 0.0);
     let ndoth = max(dot(in.world_normal, half_vec), 0.0);
 
-    let diffuse_color = draw.base_color.rgb * (1.0 - draw.metallic);
-    let F0 = mix(vec3<f32>(0.04), draw.base_color.rgb, draw.metallic);
+    let base = draw.base_color.rgb * in.vertex_color.rgb;
+    let diffuse_color = base * (1.0 - draw.metallic);
+    let F0 = mix(vec3<f32>(0.04), base, draw.metallic);
 
     let ambient = vec3<f32>(0.03, 0.03, 0.04);
     let diffuse = diffuse_color * (ambient + ndotl * 0.85);
@@ -554,6 +558,7 @@ struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) tex_coords: vec2<f32>,
+    @location(3) color: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -561,6 +566,7 @@ struct VertexOutput {
     @location(0) world_normal: vec3<f32>,
     @location(1) world_pos: vec3<f32>,
     @location(2) tex_coords: vec2<f32>,
+    @location(3) vertex_color: vec4<f32>,
 };
 
 struct GBufferOutput {
@@ -577,13 +583,14 @@ fn vs_main(model: VertexInput) -> VertexOutput {
     out.world_normal = normalize((draw.normal_matrix * vec4<f32>(model.normal, 0.0)).xyz);
     out.world_pos = world_pos.xyz;
     out.tex_coords = model.tex_coords;
+    out.vertex_color = model.color;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> GBufferOutput {
     var out: GBufferOutput;
-    out.albedo = vec4<f32>(draw.base_color.rgb, draw.roughness);
+    out.albedo = vec4<f32>(draw.base_color.rgb * in.vertex_color.rgb, draw.roughness);
     out.normal = vec4<f32>(in.world_normal * 0.5 + 0.5, draw.metallic);
     out.emission = vec4<f32>(draw.emission.rgb, 0.0);
     return out;
@@ -1510,7 +1517,7 @@ struct DrawUniforms {
 @group(1) @binding(0) var<uniform> draw: DrawUniforms;
 
 @vertex
-fn vs_main(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) tex_coords: vec2<f32>) -> @builtin(position) vec4<f32> {
+fn vs_main(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) tex_coords: vec2<f32>, @location(3) color: vec4<f32>) -> @builtin(position) vec4<f32> {
     let world_pos = shadow.light_view_projection * draw.model_matrix * vec4<f32>(position, 1.0);
     return world_pos;
 }

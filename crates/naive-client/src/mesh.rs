@@ -39,11 +39,12 @@ pub struct Vertex3D {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub tex_coords: [f32; 2],
+    pub color: [f32; 4],
 }
 
 impl Vertex3D {
-    const ATTRIBS: [wgpu::VertexAttribute; 3] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
+    const ATTRIBS: [wgpu::VertexAttribute; 4] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
 
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -119,6 +120,8 @@ impl MeshCache {
 }
 
 /// Load a glTF file and create GPU buffers.
+/// Merges all nodes/meshes/primitives into a single draw call,
+/// applying each node's world transform to positions and normals.
 fn load_gltf(
     device: &wgpu::Device,
     project_root: &Path,
@@ -137,63 +140,171 @@ fn load_gltf(
 
     let (document, buffers, _images) = gltf::import(&full_path)?;
 
-    let mesh = document.meshes().next().ok_or(MeshError::NoMeshes)?;
-    let primitive = mesh.primitives().next().ok_or(MeshError::NoPrimitives)?;
+    let mut all_vertices: Vec<Vertex3D> = Vec::new();
+    let mut all_indices: Vec<u32> = Vec::new();
+    let mut total_primitives = 0u32;
 
-    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+    // Walk every node in every scene, applying world transforms
+    for scene in document.scenes() {
+        for node in scene.nodes() {
+            collect_node_meshes(
+                &node,
+                glam::Mat4::IDENTITY,
+                &buffers,
+                &mut all_vertices,
+                &mut all_indices,
+                &mut total_primitives,
+            );
+        }
+    }
 
-    let positions: Vec<[f32; 3]> = reader
-        .read_positions()
-        .ok_or(MeshError::NoPositions)?
-        .collect();
+    if all_vertices.is_empty() {
+        return Err(MeshError::NoMeshes);
+    }
 
-    let normals: Vec<[f32; 3]> = reader
-        .read_normals()
-        .map(|n| n.collect())
-        .unwrap_or_else(|| generate_flat_normals(&positions));
-
-    let tex_coords: Vec<[f32; 2]> = reader
-        .read_tex_coords(0)
-        .map(|t| t.into_f32().collect())
-        .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
-
-    let vertices: Vec<Vertex3D> = positions
-        .iter()
-        .enumerate()
-        .map(|(i, pos)| Vertex3D {
-            position: *pos,
-            normal: normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
-            tex_coords: tex_coords.get(i).copied().unwrap_or([0.0, 0.0]),
-        })
-        .collect();
-
-    let indices: Vec<u32> = if let Some(read_indices) = reader.read_indices() {
-        read_indices.into_u32().collect()
-    } else {
-        // Generate sequential indices if none provided
-        (0..vertices.len() as u32).collect()
-    };
+    tracing::info!(
+        "glTF '{}': merged {} primitives, {} verts, {} indices",
+        mesh_path,
+        total_primitives,
+        all_vertices.len(),
+        all_indices.len()
+    );
 
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("Mesh VB: {}", mesh_path)),
-        contents: bytemuck::cast_slice(&vertices),
+        contents: bytemuck::cast_slice(&all_vertices),
         usage: wgpu::BufferUsages::VERTEX,
     });
 
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("Mesh IB: {}", mesh_path)),
-        contents: bytemuck::cast_slice(&indices),
+        contents: bytemuck::cast_slice(&all_indices),
         usage: wgpu::BufferUsages::INDEX,
     });
 
     Ok(GpuMesh {
         vertex_buffer,
         index_buffer,
-        index_count: indices.len() as u32,
+        index_count: all_indices.len() as u32,
     })
 }
 
-/// Generate flat normals from triangle positions (every 3 vertices).
+/// Recursively walk a glTF node tree, collecting mesh primitives with
+/// accumulated world transforms.
+fn collect_node_meshes(
+    node: &gltf::Node,
+    parent_transform: glam::Mat4,
+    buffers: &[gltf::buffer::Data],
+    vertices: &mut Vec<Vertex3D>,
+    indices: &mut Vec<u32>,
+    prim_count: &mut u32,
+) {
+    let local = glam::Mat4::from_cols_array_2d(&node.transform().matrix());
+    let world = parent_transform * local;
+    // Normal matrix: inverse-transpose of upper-left 3x3
+    let normal_mat = glam::Mat3::from_mat4(world).inverse().transpose();
+
+    if let Some(mesh) = node.mesh() {
+        for primitive in mesh.primitives() {
+            let reader = primitive.reader(|buf| Some(&buffers[buf.index()]));
+
+            let positions: Vec<[f32; 3]> = match reader.read_positions() {
+                Some(p) => p.collect(),
+                None => continue,
+            };
+
+            let tex_coords: Vec<[f32; 2]> = reader
+                .read_tex_coords(0)
+                .map(|t| t.into_f32().collect())
+                .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
+
+            let colors: Vec<[f32; 4]> = reader
+                .read_colors(0)
+                .map(|c| c.into_rgba_f32().collect())
+                .unwrap_or_else(|| vec![[1.0, 1.0, 1.0, 1.0]; positions.len()]);
+
+            // Collect indices first so we can use them for normal generation
+            let prim_indices: Vec<u32> = if let Some(read_indices) = reader.read_indices() {
+                read_indices.into_u32().collect()
+            } else {
+                (0..positions.len() as u32).collect()
+            };
+
+            let normals: Vec<[f32; 3]> = reader
+                .read_normals()
+                .map(|n| n.collect())
+                .unwrap_or_else(|| {
+                    if !prim_indices.is_empty() {
+                        generate_smooth_normals(&positions, &prim_indices)
+                    } else {
+                        generate_flat_normals(&positions)
+                    }
+                });
+
+            let base_vertex = vertices.len() as u32;
+
+            for (i, pos) in positions.iter().enumerate() {
+                let p = world.transform_point3(glam::Vec3::from(*pos));
+                let n = normal_mat
+                    * glam::Vec3::from(normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]));
+                vertices.push(Vertex3D {
+                    position: p.to_array(),
+                    normal: n.normalize_or_zero().to_array(),
+                    tex_coords: tex_coords.get(i).copied().unwrap_or([0.0, 0.0]),
+                    color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
+                });
+            }
+
+            for idx in &prim_indices {
+                indices.push(base_vertex + idx);
+            }
+
+            *prim_count += 1;
+        }
+    }
+
+    // Recurse into children
+    for child in node.children() {
+        collect_node_meshes(&child, world, buffers, vertices, indices, prim_count);
+    }
+}
+
+/// Generate smooth normals by accumulating face normals at each vertex using the index buffer.
+fn generate_smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
+    let mut normals = vec![glam::Vec3::ZERO; positions.len()];
+
+    // Accumulate face normals at each vertex
+    for tri in indices.chunks_exact(3) {
+        let i0 = tri[0] as usize;
+        let i1 = tri[1] as usize;
+        let i2 = tri[2] as usize;
+        if i0 < positions.len() && i1 < positions.len() && i2 < positions.len() {
+            let v0 = glam::Vec3::from(positions[i0]);
+            let v1 = glam::Vec3::from(positions[i1]);
+            let v2 = glam::Vec3::from(positions[i2]);
+            let face_normal = (v1 - v0).cross(v2 - v0);
+            // Weight by face area (unnormalized cross product magnitude)
+            normals[i0] += face_normal;
+            normals[i1] += face_normal;
+            normals[i2] += face_normal;
+        }
+    }
+
+    // Normalize
+    normals
+        .iter()
+        .map(|n| {
+            let normalized = n.normalize_or_zero();
+            if normalized == glam::Vec3::ZERO {
+                [0.0, 1.0, 0.0]
+            } else {
+                normalized.to_array()
+            }
+        })
+        .collect()
+}
+
+/// Generate flat normals for non-indexed geometry (every 3 consecutive vertices form a triangle).
 fn generate_flat_normals(positions: &[[f32; 3]]) -> Vec<[f32; 3]> {
     let mut normals = vec![[0.0f32, 1.0, 0.0]; positions.len()];
     for chunk in (0..positions.len()).step_by(3) {
@@ -234,6 +345,7 @@ fn create_procedural_sphere(device: &wgpu::Device, radius: f32, rings: u32, sect
                 position: [radius * nx, radius * ny, radius * nz],
                 normal: [nx, ny, nz],
                 tex_coords: [sector as f32 / sectors as f32, ring as f32 / rings as f32],
+                color: [1.0, 1.0, 1.0, 1.0],
             });
         }
     }
@@ -278,35 +390,35 @@ fn create_procedural_cube(device: &wgpu::Device) -> GpuMesh {
     #[rustfmt::skip]
     let vertices: Vec<Vertex3D> = vec![
         // Front face (z = 0.5)
-        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [0.0, 1.0] },
-        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [1.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [1.0, 0.0] },
-        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [0.0, 0.0] },
+        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
         // Back face (z = -0.5)
-        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [0.0, 1.0] },
-        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [1.0, 1.0] },
-        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [1.0, 0.0] },
-        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [0.0, 0.0] },
+        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
         // Top face (y = 0.5)
-        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [0.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [1.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [1.0, 0.0] },
-        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [0.0, 0.0] },
+        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
         // Bottom face (y = -0.5)
-        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [0.0, 1.0] },
-        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [1.0, 1.0] },
-        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [1.0, 0.0] },
-        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [0.0, 0.0] },
+        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
         // Right face (x = 0.5)
-        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [0.0, 1.0] },
-        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [1.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [1.0, 0.0] },
-        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [0.0, 0.0] },
+        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
         // Left face (x = -0.5)
-        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [0.0, 1.0] },
-        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [1.0, 1.0] },
-        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [1.0, 0.0] },
-        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [0.0, 0.0] },
+        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
     ];
 
     #[rustfmt::skip]

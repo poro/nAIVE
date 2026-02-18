@@ -19,7 +19,7 @@ struct DrawUniforms {
 [[vk::binding(0, 1)]] ConstantBuffer<DrawUniforms> draw;
 
 [shader("vertex")]
-float4 vs_main(float3 position : POSITION, float3 normal : NORMAL, float2 texCoords : TEXCOORD0) : SV_Position {
+float4 vs_main(float3 position : POSITION, float3 normal : NORMAL, float2 texCoords : TEXCOORD0, float4 color : COLOR0) : SV_Position {
     return mul(shadow.light_view_projection, mul(draw.model_matrix, float4(position, 1.0)));
 }
 

@@ -18,6 +18,7 @@ struct VertexInput {
     float3 position : POSITION;
     float3 normal   : NORMAL;
     float2 texCoord : TEXCOORD0;
+    float4 color    : COLOR0;
 };
 
 struct VertexOutput {
@@ -25,6 +26,7 @@ struct VertexOutput {
     float3 worldNormal  : NORMAL;
     float3 worldPos     : TEXCOORD0;
     float2 texCoord     : TEXCOORD1;
+    float4 vertexColor  : COLOR0;
 };
 
 struct GBufferOutput {
@@ -41,13 +43,14 @@ VertexOutput vs_main(VertexInput input) {
     output.worldNormal = normalize(mul(draw.normal_matrix, float4(input.normal, 0.0)).xyz);
     output.worldPos = worldPos.xyz;
     output.texCoord = input.texCoord;
+    output.vertexColor = input.color;
     return output;
 }
 
 [shader("fragment")]
 GBufferOutput fs_main(VertexOutput input) {
     GBufferOutput output;
-    output.albedo = float4(draw.base_color.rgb, draw.roughness);
+    output.albedo = float4(draw.base_color.rgb * input.vertexColor.rgb, draw.roughness);
     output.normal = float4(input.worldNormal * 0.5 + 0.5, draw.metallic);
     output.emission = float4(draw.emission.rgb, 0.0);
     return output;
