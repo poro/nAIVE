@@ -33,7 +33,8 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/renderer.rs` | wgpu render pipeline, instance buffers, particles |
 | `crates/naive-client/src/test_runner.rs` | Headless test runner for `naive test` CLI command |
 | `crates/naive-client/src/dev_log.rs` | `naive submit-log` — POST dev.log as GitHub Issue |
-| `crates/naive-client/src/demos.rs` | `naive demo` — 14 embedded demos with interactive browser |
+| `crates/naive-client/src/demos.rs` | `naive demo` — 15 embedded demos with interactive browser |
+| `crates/naive-client/src/editor_camera.rs` | Free fly camera for `naive edit` editor mode |
 
 ## Architecture Patterns
 
@@ -85,6 +86,84 @@ cd tools/game-asset-mcp
 node test_generate.js "red sports car"
 # Outputs: project/assets/meshes/generated_2d.png, generated_3d.glb
 ```
+
+## Editor Mode (`naive edit`)
+
+AI-powered scene editor. Opens a 3D viewport with a free fly camera and a command socket. Claude Code is the AI brain — the user talks to Claude Code in the terminal, Claude Code sends commands to the running engine via MCP.
+
+### Usage
+
+```sh
+naive edit                           # Opens editor with default scene (ground + light)
+naive edit --scene scenes/my.yaml    # Opens editor with an existing scene
+```
+
+### Controls
+
+- **WASD** — Move camera (hold right-click for mouse look)
+- **Right-click + mouse** — Look around
+- **Space / Ctrl** — Move up / down
+- **Shift** — 3x speed boost
+- **Scroll wheel** — Adjust movement speed
+
+### MCP Tools for Scene Editing
+
+When the editor is running, Claude Code can use these MCP tools via `naive_mcp`:
+
+| Tool | Description |
+|------|-------------|
+| `naive_spawn_entity` | Spawn entity with mesh, lights, camera. Use `mesh_renderer` component with `procedural:cube`, `procedural:sphere`, or GLB paths |
+| `naive_destroy_entity` | Remove an entity by ID |
+| `naive_modify_entity` | Modify transform, light properties on existing entities |
+| `naive_list_entities` | List all entities with IDs and tags |
+| `naive_query_entity` | Get detailed component data for an entity |
+| `naive_save_scene` | Serialize current scene to YAML file |
+| `naive_get_scene_yaml` | Get current scene as YAML string (for understanding context) |
+| `naive_set_camera` | Move/orient the editor camera (position, yaw, pitch, look_at) |
+| `naive_editor_status` | Get editor mode info, entity count, camera position |
+
+### Procedural Meshes
+
+Available via `mesh_renderer.mesh`:
+- `procedural:cube` — Unit cube
+- `procedural:sphere` — Unit sphere (32x32 segments)
+
+### Procedural Materials
+
+Available via `mesh_renderer.material`:
+- `procedural:default` — Default gray material
+- Or any YAML material file path (e.g., `assets/materials/red.yaml`)
+
+### Example: Spawn 50 Falling Balls
+
+Claude Code can execute a sequence of `naive_spawn_entity` calls to create entities in the running editor:
+
+```json
+{"cmd": "spawn_entity", "entity_id": "ball_1", "components": {
+  "transform": {"position": [0, 20, 0], "scale": [0.5, 0.5, 0.5]},
+  "mesh_renderer": {"mesh": "procedural:sphere", "material": "procedural:default"}
+}}
+```
+
+### GDD-to-Game Workflow
+
+When building games from a GDD (Game Design Document), Claude Code can:
+
+1. **Read the GDD** to understand the game concept, entities, and mechanics
+2. **Generate 3D assets** using `game-asset-mcp` (text → 2D image → 3D GLB via Hunyuan/Meshy)
+3. **Build YAML scenes** defining entity layout, lights, cameras
+4. **Write Lua scripts** for gameplay logic (physics, input, events)
+5. **Use `naive edit`** to iteratively build and test the scene live
+6. **Save the scene** with `naive_save_scene` for persistence
+7. **Run the game** with `naive run` to test full gameplay
+
+### Asset Generation Integration
+
+Claude Code triggers 3D generation via `game-asset-mcp` (configured in `.mcp.json`):
+- Routes to local GPU server (Hunyuan on H100) via `GATEWAY_URL`/`GATEWAY_KEY`
+- Falls back to HuggingFace Spaces via `HF_TOKEN`
+- Alternative: `meshy-ai` MCP for Meshy AI generation
+- Generated GLB files saved to `project/assets/meshes/`, then spawned in editor
 
 ## Building
 

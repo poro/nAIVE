@@ -29,6 +29,7 @@ v4.0's engine was a renderer with scripting and physics. v5.0 adds the systems n
 - **Gameplay primitives (DONE v0.1.2)** — health/damage, hitscan, projectiles, collision damage, third-person camera. Tier 1 complete.
 - **Production foundations (DONE v0.1.4)** — dynamic GPU instance buffer (no more 256-entity ceiling), entity pooling, particle system, runtime entity queries, event subscription. Tier 2 complete.
 - **Physics & scene API (DONE v0.1.7)** — physics impulse/velocity, collider materials, CCD, scene loading, camera shake, render debug HUD, 5 demo scenes. Tier 2.5 complete. Informed by Angry Birds dev log feedback.
+- **Scene-to-splat beautification pipeline** — build a level with simple meshes, one-click convert to photorealistic Gaussian Splats via World Labs/Marble while keeping simple colliders for physics. Decouples gameplay geometry from visual representation.
 - **GPU compute entity simulation** — 50,000+ physics-driven entities on the GPU. nAIVE's answer to Unreal's Niagara, but for gameplay entities, not just particles.
 - **Vertex Animation Textures (VAT)** — baked skeletal animation sampled on the GPU for massive instanced rendering
 - **Skeletal animation system** — glTF skinned meshes, animation state machines, blend trees
@@ -236,6 +237,8 @@ pub trait NaivePlugin: Send + Sync {
 | `naive/scene/modify` | Add/remove/update entities |
 | `naive/nl/compile` | Natural language → YAML + Lua |
 | `naive/generate/splat` | Text description → Gaussian splat (Gen-3DGS) |
+| `naive/scene/beautify` | Export scene geometry → send to World Labs/Marble → import as splat overlay |
+| `naive/scene/export_glb` | Export current scene meshes as combined GLB file |
 | `naive/plugin/list` | List loaded plugins |
 | `naive/plugin/swap` | Hot-swap a plugin at runtime |
 | `naive/render/pipeline` | Query or modify the render pipeline YAML |
@@ -430,7 +433,7 @@ The client renders one tick behind the server (configurable). Extrapolation fall
 | Shader Pipeline | Done | SLANG → WGSL, YAML-defined render pipeline DAG |
 | Procedural Meshes | Done | Sphere, cube, plane at runtime |
 
-16 demo scenes exercising all systems. 20 features DONE.
+17 demo scenes exercising all systems. 20 features DONE.
 
 ### Tier 1 Gameplay Primitives (v0.1.2)
 
@@ -478,7 +481,113 @@ Text descriptions → 3D Gaussian splat assets:
 | High | ~500K | 1-3min | Excellent |
 | Cinematic | ~2M | 5-15min | Photorealistic |
 
-### 6.3 Neural Render Passes
+### 6.3 Scene-to-Splat Beautification Pipeline (NEW in v5.0)
+
+The most transformative AI workflow in nAIVE: build a level with simple meshes, then "beautify" it into a photorealistic Gaussian Splat representation in one step — while keeping the original collision geometry for physics.
+
+**The Insight:** Gameplay geometry and visual representation don't need to be the same. A level built with `procedural:cube` and `procedural:sphere` primitives is fast to prototype and perfect for Rapier3D physics — but ugly. A Gaussian Splat of the same level is photorealistic — but can't do physics. nAIVE uses both simultaneously: simple colliders for gameplay, splats for visuals.
+
+**Pipeline:**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  SCENE BEAUTIFICATION PIPELINE                                      │
+│                                                                      │
+│  1. Build scene        Claude Code + naive edit                     │
+│     (procedural         ┌──────────────────┐                        │
+│      meshes, GLBs)      │ YAML scene with  │                        │
+│                         │ cubes, spheres,  │                        │
+│                         │ GLB meshes       │                        │
+│                         └────────┬─────────┘                        │
+│                                  │                                   │
+│  2. Export geometry              ▼                                   │
+│     (scene → GLB)       ┌──────────────────┐                        │
+│                         │ Combined GLB     │                        │
+│                         │ (all meshes      │                        │
+│                         │  merged)         │                        │
+│                         └────────┬─────────┘                        │
+│                                  │                                   │
+│  3. Generate splat               ▼                                   │
+│     (GLB → World Labs   ┌──────────────────┐                        │
+│      / Marble API)      │ Gaussian Splat   │                        │
+│                         │ (.ply file)      │                        │
+│                         └────────┬─────────┘                        │
+│                                  │                                   │
+│  4. Hybrid render                ▼                                   │
+│                         ┌──────────────────┐                        │
+│                         │ Splat: visuals   │                        │
+│                         │ Meshes: physics  │                        │
+│                         │ (invisible)      │                        │
+│                         └──────────────────┘                        │
+│                                                                      │
+│  MCP: naive/scene/beautify                                          │
+│  CLI:  naive beautify [--scene scenes/my.yaml]                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Why this matters:**
+
+| Traditional Workflow | nAIVE Beautification |
+|---|---|
+| Artist models every asset in Blender/Maya | AI builds scene from prompts in minutes |
+| Textures hand-painted or procedurally generated | Entire scene converted to photorealistic splat |
+| Physics mesh = render mesh (expensive) | Physics mesh = simple colliders (fast) |
+| Style change requires re-authoring all assets | Style change = re-run beautify with different params |
+| Level iteration: days | Level iteration: minutes |
+
+**Dual-representation scene format:**
+
+```yaml
+entities:
+  - id: castle_wall
+    components:
+      transform:
+        position: [0, 0, 0]
+        scale: [10, 5, 1]
+      # Physics — invisible simple collider
+      mesh_renderer:
+        mesh: procedural:cube
+        material: procedural:default
+        visible: false
+      collider:
+        shape: box
+        half_extents: [5, 2.5, 0.5]
+      rigid_body:
+        type: fixed
+
+  - id: castle_wall_visual
+    components:
+      transform:
+        position: [0, 0, 0]
+      # Visuals — photorealistic splat, no physics
+      splat_renderer:
+        splat: assets/splats/castle_beautified.ply
+        scale: 1.0
+```
+
+**Supported beautification backends:**
+
+| Backend | Method | Quality | Speed |
+|---------|--------|---------|-------|
+| World Labs / Marble | GLB → 3DGS via geometry-conditioned generation | Photorealistic | 1-5 min |
+| Local GPU (Hunyuan3D) | GLB → multi-view → 3DGS | Good | 2-10 min |
+| Gen-3DGS (per-entity) | Text prompt → individual splat per entity | Variable | 15-30s each |
+
+**MCP workflow (Claude Code as the editor):**
+
+```
+User:  "Make this level look photorealistic"
+Claude Code:
+  → naive_get_scene_yaml()          # Read current scene
+  → naive_export_scene_glb()        # Export combined geometry
+  → world_labs_beautify(glb)        # Send to Marble API
+  → naive_import_splat(ply)         # Load result into scene
+  → naive_save_scene()              # Persist dual-representation scene
+```
+
+This workflow was validated externally by Bitmagic (Jani Penttinen, Feb 2026) using a voxel game level → GLB → World Labs/Marble → Gaussian Splat pipeline, producing photorealistic playable environments from simple block geometry. nAIVE's architecture — YAML scenes, MCP tools, existing splat renderer, and AI asset pipeline — makes this a natural extension rather than a new system.
+
+### 6.4 Neural Render Passes
 
 Portions of the render pipeline replaced with differentiable, trainable neural networks:
 
@@ -1143,7 +1252,7 @@ Snake Sweeper was built by Claude Code (Opus 4.6) in a single session using only
 | Weeks | Deliverable |
 |-------|------------|
 | 5-6 | NL Compiler v1 via Claude API MCP tool |
-| 7-8 | Gen-3DGS preview tier: text → Gaussian splat |
+| 7-8 | Gen-3DGS preview tier: text → Gaussian splat. Scene beautification pipeline: scene → GLB → World Labs/Marble → splat overlay |
 | 9-10 | Neural shader prototype: style transfer pass |
 | 11-12 | WebGPU/WASM browser build |
 
@@ -1309,7 +1418,7 @@ The CLAUDE.md generated by `naive init` instructs AI agents to maintain the dev.
 
 ## 20. Built-in Demo Browser — `naive demo` (NEW in v5.0)
 
-The engine ships with 14 curated demos embedded directly in the binary. No project directory, no downloads, no setup — `naive demo` works from anywhere.
+The engine ships with 15 curated demos embedded directly in the binary. No project directory, no downloads, no setup — `naive demo` works from anywhere.
 
 ### 20.1 The Problem
 
@@ -1346,6 +1455,7 @@ naive demo particles    # Fuzzy match by name
 | 12 | titan | Worlds | Colosseum of Light — architectural showcase |
 | 13 | stress | Stress | 300+ dynamic entities |
 | 14 | lifecycle | Stress | Entity spawn, destroy, pool, query, events |
+| 15 | splats | Visual | Gaussian splatting — procedural galaxy nebula |
 
 ### 20.5 Technical Details
 
@@ -1404,7 +1514,7 @@ naive demo particles    # Fuzzy match by name
 | Language | Rust | C# | C++/Blueprints | GDScript/C# |
 | World format | YAML + Lua | Proprietary | Proprietary | tscn (text) |
 | AI-generatable | **Native** | Limited | No | Partial |
-| Gaussian splatting | **Native** | Plugin | Plugin | No |
+| Gaussian splatting | **Native + beautify pipeline** | Plugin | Plugin | No |
 | GPU entity sim (50K+) | **Native** | VFX Graph | **Niagara** | No |
 | Hot-reload | <200ms | 5-60s | 10-30s | 1-3s |
 | MCP / AI control | **Native** | No | No | No |

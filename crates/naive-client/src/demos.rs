@@ -296,6 +296,20 @@ static DEMOS: &[DemoEntry] = &[
             ("tier2_pickup_bob.lua", include_str!("../../../project/logic/tier2_pickup_bob.lua")),
         ],
     },
+    // -- Visual (Gaussian Splatting) --
+    DemoEntry {
+        number: 15,
+        slug: "splats",
+        name: "Gaussian Splatting",
+        description: "Procedural galaxy nebula with 5K+ splats",
+        category: "Visual",
+        scene_filename: "cosmic_splats.yaml",
+        scene_content: include_str!("../../../project/scenes/cosmic_splats.yaml"),
+        scripts: &[
+            ("cosmic_camera.lua", include_str!("../../../project/logic/cosmic_camera.lua")),
+            ("float_bob.lua", include_str!("../../../project/logic/float_bob.lua")),
+        ],
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -323,6 +337,7 @@ pub fn run_demo(selector: Option<&str>) -> Option<CliArgs> {
         project: project_root.to_string_lossy().to_string(),
         socket: "/tmp/naive-runtime.sock".to_string(),
         hud: false,
+        editor_mode: false,
     })
 }
 
