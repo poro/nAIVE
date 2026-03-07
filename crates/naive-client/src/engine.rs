@@ -524,18 +524,20 @@ impl Engine {
         }
 
         // Call init on all scripts (collect first to release world borrow before Lua runs)
-        if let Some(sw) = &self.scene_world {
-            let mut sw = sw.borrow_mut();
-            let uninit_entities: Vec<hecs::Entity> = sw.world.query::<&Script>()
-                .iter()
+        let uninit_entities: Vec<hecs::Entity> = if let Some(sw) = &self.scene_world {
+            let sw = sw.borrow();
+            let mut query = sw.world.query::<&Script>();
+            query.iter()
                 .filter(|(_, script)| !script.initialized)
                 .map(|(entity, _)| entity)
-                .collect();
-            for entity in uninit_entities {
-                script_runtime.call_init(entity);
-            }
-            // Mark all as initialized
+                .collect()
+        } else {
+            vec![]
+        };
+        for entity in uninit_entities {
+            script_runtime.call_init(entity);
         }
+        // Mark all as initialized
         if let Some(sw) = &self.scene_world {
             let mut sw = sw.borrow_mut();
             for (_entity, script) in sw.world.query::<&mut Script>().iter() {
@@ -1935,14 +1937,18 @@ let mut scene_world = scene_world.borrow_mut();
             }
         }
 
-        // Call init on all scripts
-        if let (Some(sw), Some(sr)) = (&self.scene_world, &self.script_runtime) {
+        // Call init on all scripts (collect first to release world borrow before Lua runs)
+        let uninit: Vec<hecs::Entity> = if let Some(sw) = &self.scene_world {
             let sw = sw.borrow();
-            let uninit: Vec<hecs::Entity> = sw.world.query::<&Script>()
-                .iter()
+            let mut query = sw.world.query::<&Script>();
+            query.iter()
                 .filter(|(_, s)| !s.initialized)
                 .map(|(e, _)| e)
-                .collect();
+                .collect()
+        } else {
+            vec![]
+        };
+        if let Some(sr) = &self.script_runtime {
             for entity in uninit {
                 sr.call_init(entity);
             }
@@ -3036,11 +3042,11 @@ impl ApplicationHandler for Engine {
                         if let (Some(scene_world), Some(script_runtime)) =
                             (&self.scene_world, &self.script_runtime)
                         {
-                            let sw = scene_world.borrow();
-                            let scripted: Vec<hecs::Entity> = sw.world
-                                .query::<&Script>().iter()
-                                .map(|(e, _)| e)
-                                .collect();
+                            let scripted: Vec<hecs::Entity> = {
+                                let sw = scene_world.borrow();
+                                let mut query = sw.world.query::<&Script>();
+                                query.iter().map(|(e, _)| e).collect()
+                            };
                             for entity in scripted {
                                 script_runtime.call_update(entity, dt);
                             }
