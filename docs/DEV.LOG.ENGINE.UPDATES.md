@@ -84,7 +84,7 @@ When a developer runs `naive init my-game`, the scaffold creates three interconn
 # Dev Log — my-game
 
 ## Engine Version
-nAIVE v0.1.10
+nAIVE v0.1.11
 
 ## Game Type
 <!-- What kind of game? (FPS, puzzle, platformer, RTS) -->
@@ -259,7 +259,7 @@ The created GitHub Issue contains:
 
 ```
 **Project:** my-game v0.1.0
-**Engine:** nAIVE v0.1.10
+**Engine:** nAIVE v0.1.11
 **Submitted:** 2026-02-17 14:30
 
 ---
