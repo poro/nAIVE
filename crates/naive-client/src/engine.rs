@@ -2897,23 +2897,17 @@ impl ApplicationHandler for Engine {
 
                 // Handle Escape to toggle cursor capture (skip in editor mode)
                 if !self.args.editor_mode {
-                    if let Some(input) = &self.input_state {
-                        let mut input = input.borrow_mut();
+                    if let Some(input_rc) = &self.input_state {
+                        let mut input = input_rc.borrow_mut();
                         if input.key_held(KeyCode::Escape) {
                             if let Some(gpu) = &self.gpu {
                                 let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::None);
                                 gpu.window.set_cursor_visible(true);
                             }
-                            if let Some(input) = &self.input_state {
-                                let mut input = input.borrow_mut();
-                                input.cursor_captured = false;
-                            }
+                            input.cursor_captured = false;
                         }
-                    }
 
-                    // Handle mouse click or any movement key to capture cursor
-                    if let Some(input) = &self.input_state {
-                        let mut input = input.borrow_mut();
+                        // Handle mouse click or any movement key to capture cursor
                         if !input.cursor_captured {
                             let should_capture = input.just_pressed("attack")
                                 || input.just_pressed("move_forward")
@@ -2929,10 +2923,7 @@ impl ApplicationHandler for Engine {
                                         .or_else(|_| gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Confined));
                                     gpu.window.set_cursor_visible(false);
                                 }
-                                if let Some(input) = &self.input_state {
-                                    let mut input = input.borrow_mut();
-                                    input.cursor_captured = true;
-                                }
+                                input.cursor_captured = true;
                             }
                         }
                     }
@@ -3066,34 +3057,36 @@ impl ApplicationHandler for Engine {
                         let flushed_events = self.event_bus.borrow_mut().flush();
                         if let Some(script_runtime) = &self.script_runtime {
                             for event in &flushed_events {
-                                if let Some(listeners) = self.lua_event_listeners.borrow().get(&event.event_type) {
-                                    for key in listeners {
-                                        if let Ok(func) = script_runtime.lua.registry_value::<mlua::Function>(key) {
-                                            let lua = &script_runtime.lua;
-                                            if let Ok(tbl) = lua.create_table() {
-                                                let _ = tbl.set("type", event.event_type.clone());
-                                                if let Ok(data_tbl) = lua.create_table() {
-                                                    for (k, v) in &event.data {
-                                                        match v {
-                                                            serde_json::Value::Number(n) => {
-                                                                if let Some(f) = n.as_f64() {
-                                                                    let _ = data_tbl.set(k.as_str(), f);
-                                                                }
+                                let listener_keys: Vec<_> = self.lua_event_listeners.borrow()
+                                    .get(&event.event_type)
+                                    .map(|keys| keys.iter().map(|k| script_runtime.lua.registry_value::<mlua::Function>(k)).collect())
+                                    .unwrap_or_default();
+                                for func_result in listener_keys {
+                                    if let Ok(func) = func_result {
+                                        let lua = &script_runtime.lua;
+                                        if let Ok(tbl) = lua.create_table() {
+                                            let _ = tbl.set("type", event.event_type.clone());
+                                            if let Ok(data_tbl) = lua.create_table() {
+                                                for (k, v) in &event.data {
+                                                    match v {
+                                                        serde_json::Value::Number(n) => {
+                                                            if let Some(f) = n.as_f64() {
+                                                                let _ = data_tbl.set(k.as_str(), f);
                                                             }
-                                                            serde_json::Value::String(s) => {
-                                                                let _ = data_tbl.set(k.as_str(), s.as_str());
-                                                            }
-                                                            serde_json::Value::Bool(b) => {
-                                                                let _ = data_tbl.set(k.as_str(), *b);
-                                                            }
-                                                            _ => {}
                                                         }
+                                                        serde_json::Value::String(s) => {
+                                                            let _ = data_tbl.set(k.as_str(), s.as_str());
+                                                        }
+                                                        serde_json::Value::Bool(b) => {
+                                                            let _ = data_tbl.set(k.as_str(), *b);
+                                                        }
+                                                        _ => {}
                                                     }
-                                                    let _ = tbl.set("data", data_tbl);
                                                 }
-                                                if let Err(e) = func.call::<()>(tbl) {
-                                                    tracing::error!("Lua event listener error: {}", e);
-                                                }
+                                                let _ = tbl.set("data", data_tbl);
+                                            }
+                                            if let Err(e) = func.call::<()>(tbl) {
+                                                tracing::error!("Lua event listener error: {}", e);
                                             }
                                         }
                                     }
