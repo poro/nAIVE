@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use glam::Vec3;
 use mlua::prelude::*;
@@ -12,6 +14,19 @@ use crate::input::InputState;
 use crate::physics::PhysicsWorld;
 use crate::ui::UiRenderer;
 use crate::world::{EntityCommandQueue, EntityPoolManager, PoolOp, ProjectileSpawnCommand, SceneWorld};
+
+// Shared reference types for safe Lua closure captures.
+pub type SharedSceneWorld = Rc<RefCell<SceneWorld>>;
+pub type SharedPhysicsWorld = Rc<RefCell<PhysicsWorld>>;
+pub type SharedInputState = Rc<RefCell<InputState>>;
+pub type SharedEntityCommandQueue = Rc<RefCell<EntityCommandQueue>>;
+pub type SharedEntityPoolManager = Rc<RefCell<EntityPoolManager>>;
+pub type SharedUiRenderer = Rc<RefCell<UiRenderer>>;
+pub type SharedBitmapFont = Rc<RefCell<BitmapFont>>;
+pub type SharedCameraShakeState = Rc<RefCell<CameraShakeState>>;
+pub type SharedEventBus = Rc<RefCell<EventBus>>;
+pub type SharedAudioSystem = Rc<RefCell<AudioSystem>>;
+pub type SharedParticleSystem = Rc<RefCell<crate::particles::ParticleSystem>>;
 
 /// Script component attached to entities.
 #[derive(Debug, Clone)]
@@ -217,43 +232,43 @@ impl ScriptRuntime {
     }
 
     /// Register input API functions that read from the input state.
-    pub fn register_input_api(&self, input_ptr: *const InputState) -> Result<(), String> {
+    pub fn register_input_api(&self, input: SharedInputState) -> Result<(), String> {
         let globals = self.lua.globals();
 
         // input.pressed(action) -> bool
         let input_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
+        let input_rc = input.clone();
         let pressed_fn = self.lua.create_function(move |_, action: String| {
-            let input = unsafe { &*input_ptr };
-            Ok(input.pressed(&action))
+            Ok(input_rc.borrow().pressed(&action))
         }).map_err(|e| e.to_string())?;
         input_table.set("pressed", pressed_fn).map_err(|e| e.to_string())?;
 
+        let input_rc = input.clone();
         let just_pressed_fn = self.lua.create_function(move |_, action: String| {
-            let input = unsafe { &*input_ptr };
-            Ok(input.just_pressed(&action))
+            Ok(input_rc.borrow().just_pressed(&action))
         }).map_err(|e| e.to_string())?;
         input_table.set("just_pressed", just_pressed_fn).map_err(|e| e.to_string())?;
 
+        let input_rc = input.clone();
         let mouse_delta_fn = self.lua.create_function(move |_, ()| {
-            let input = unsafe { &*input_ptr };
-            let delta = input.mouse_delta();
+            let delta = input_rc.borrow().mouse_delta();
             Ok((delta.x, delta.y))
         }).map_err(|e| e.to_string())?;
         input_table.set("mouse_delta", mouse_delta_fn).map_err(|e| e.to_string())?;
 
         // input.scroll_delta() -> (dx, dy) — scroll wheel delta this frame
+        let input_rc = input.clone();
         let scroll_delta_fn = self.lua.create_function(move |_, ()| {
-            let input = unsafe { &*input_ptr };
-            let delta = input.scroll_delta();
+            let delta = input_rc.borrow().scroll_delta();
             Ok((delta.x, delta.y))
         }).map_err(|e| e.to_string())?;
         input_table.set("scroll_delta", scroll_delta_fn).map_err(|e| e.to_string())?;
 
         // input.any_just_pressed() -> bool
+        let input_rc = input.clone();
         let any_pressed_fn = self.lua.create_function(move |_, ()| {
-            let input = unsafe { &*input_ptr };
-            Ok(input.any_just_pressed())
+            Ok(input_rc.borrow().any_just_pressed())
         }).map_err(|e| e.to_string())?;
         input_table.set("any_just_pressed", any_pressed_fn).map_err(|e| e.to_string())?;
 
@@ -264,15 +279,15 @@ impl ScriptRuntime {
     /// Register physics API functions.
     pub fn register_physics_api(
         &self,
-        physics_ptr: *mut PhysicsWorld,
-        scene_world_ptr: *const SceneWorld,
+        physics: SharedPhysicsWorld,
+        scene_world: SharedSceneWorld,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let physics_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
+        let pw = physics.clone();
         let raycast_fn = self.lua.create_function(move |_, (ox, oy, oz, dx, dy, dz, max_dist): (f32, f32, f32, f32, f32, f32, f32)| {
-            let physics = unsafe { &*physics_ptr };
-            match physics.raycast(Vec3::new(ox, oy, oz), Vec3::new(dx, dy, dz), max_dist) {
+            match pw.borrow().raycast(Vec3::new(ox, oy, oz), Vec3::new(dx, dy, dz), max_dist) {
                 Some((_entity, distance, normal)) => {
                     Ok((true, distance, normal.x, normal.y, normal.z))
                 }
@@ -282,17 +297,17 @@ impl ScriptRuntime {
         physics_table.set("raycast", raycast_fn).map_err(|e| e.to_string())?;
 
         // physics.hitscan(ox, oy, oz, dx, dy, dz, range) -> (hit, entity_id, distance, hx, hy, hz, nx, ny, nz)
+        let pw = physics.clone(); let sw = scene_world.clone();
         let hitscan_fn = self.lua.create_function(move |_, (ox, oy, oz, dx, dy, dz, range): (f32, f32, f32, f32, f32, f32, f32)| {
-            let physics = unsafe { &*physics_ptr };
-            let sw = unsafe { &*scene_world_ptr };
-            match physics.raycast_detailed(
+            let pw = pw.borrow();
+            let sw = sw.borrow();
+            match pw.raycast_detailed(
                 Vec3::new(ox, oy, oz),
                 Vec3::new(dx, dy, dz),
                 range,
                 None,
             ) {
                 Some((entity, distance, hit_point, normal)) => {
-                    // Reverse lookup: entity -> string ID
                     let entity_id = sw.entity_registry
                         .iter()
                         .find(|(_, &e)| e == entity)
@@ -306,12 +321,13 @@ impl ScriptRuntime {
         physics_table.set("hitscan", hitscan_fn).map_err(|e| e.to_string())?;
 
         // physics.apply_impulse(id, fx, fy, fz)
+        let pw = physics.clone(); let sw = scene_world.clone();
         let apply_impulse_fn = self.lua.create_function(move |_, (id, fx, fy, fz): (String, f32, f32, f32)| {
-            let physics = unsafe { &mut *physics_ptr };
-            let sw = unsafe { &*scene_world_ptr };
+            let mut pw = pw.borrow_mut();
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
-                    physics.apply_impulse(rb.handle, Vec3::new(fx, fy, fz));
+                    pw.apply_impulse(rb.handle, Vec3::new(fx, fy, fz));
                 }
             }
             Ok(())
@@ -319,12 +335,13 @@ impl ScriptRuntime {
         physics_table.set("apply_impulse", apply_impulse_fn).map_err(|e| e.to_string())?;
 
         // physics.apply_force(id, fx, fy, fz)
+        let pw = physics.clone(); let sw = scene_world.clone();
         let apply_force_fn = self.lua.create_function(move |_, (id, fx, fy, fz): (String, f32, f32, f32)| {
-            let physics = unsafe { &mut *physics_ptr };
-            let sw = unsafe { &*scene_world_ptr };
+            let mut pw = pw.borrow_mut();
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
-                    physics.apply_force(rb.handle, Vec3::new(fx, fy, fz));
+                    pw.apply_force(rb.handle, Vec3::new(fx, fy, fz));
                 }
             }
             Ok(())
@@ -332,12 +349,13 @@ impl ScriptRuntime {
         physics_table.set("apply_force", apply_force_fn).map_err(|e| e.to_string())?;
 
         // physics.set_velocity(id, vx, vy, vz)
+        let pw = physics.clone(); let sw = scene_world.clone();
         let set_velocity_fn = self.lua.create_function(move |_, (id, vx, vy, vz): (String, f32, f32, f32)| {
-            let physics = unsafe { &mut *physics_ptr };
-            let sw = unsafe { &*scene_world_ptr };
+            let mut pw = pw.borrow_mut();
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
-                    physics.set_linvel(rb.handle, Vec3::new(vx, vy, vz), false);
+                    pw.set_linvel(rb.handle, Vec3::new(vx, vy, vz), false);
                 }
             }
             Ok(())
@@ -345,12 +363,13 @@ impl ScriptRuntime {
         physics_table.set("set_velocity", set_velocity_fn).map_err(|e| e.to_string())?;
 
         // physics.get_velocity(id) -> vx, vy, vz
+        let pw = physics.clone(); let sw = scene_world.clone();
         let get_velocity_fn = self.lua.create_function(move |_, id: String| {
-            let physics = unsafe { &*physics_ptr };
-            let sw = unsafe { &*scene_world_ptr };
+            let pw = pw.borrow();
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
-                    if let Some(v) = physics.get_linvel(rb.handle) {
+                    if let Some(v) = pw.get_linvel(rb.handle) {
                         return Ok((v.x, v.y, v.z));
                     }
                 }
@@ -360,12 +379,13 @@ impl ScriptRuntime {
         physics_table.set("get_velocity", get_velocity_fn).map_err(|e| e.to_string())?;
 
         // physics.set_restitution(id, value)
+        let pw = physics.clone(); let sw = scene_world.clone();
         let set_restitution_fn = self.lua.create_function(move |_, (id, value): (String, f32)| {
-            let physics = unsafe { &mut *physics_ptr };
-            let sw = unsafe { &*scene_world_ptr };
+            let mut pw = pw.borrow_mut();
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
-                    physics.set_restitution(rb.handle, value);
+                    pw.set_restitution(rb.handle, value);
                 }
             }
             Ok(())
@@ -373,12 +393,13 @@ impl ScriptRuntime {
         physics_table.set("set_restitution", set_restitution_fn).map_err(|e| e.to_string())?;
 
         // physics.set_friction(id, value)
+        let pw = physics.clone(); let sw = scene_world.clone();
         let set_friction_fn = self.lua.create_function(move |_, (id, value): (String, f32)| {
-            let physics = unsafe { &mut *physics_ptr };
-            let sw = unsafe { &*scene_world_ptr };
+            let mut pw = pw.borrow_mut();
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
-                    physics.set_friction(rb.handle, value);
+                    pw.set_friction(rb.handle, value);
                 }
             }
             Ok(())
@@ -390,13 +411,14 @@ impl ScriptRuntime {
     }
 
     /// Register entity manipulation API (get/set position, rotation, light).
-    pub fn register_entity_api(&self, scene_world_ptr: *mut SceneWorld) -> Result<(), String> {
+    pub fn register_entity_api(&self, scene_world: SharedSceneWorld) -> Result<(), String> {
         let globals = self.lua.globals();
         let entity_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
         // entity.get_position(entity_string_id) -> x, y, z
+        let sw = scene_world.clone();
         let get_pos_fn = self.lua.create_function(move |_, id: String| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(transform) = sw.world.get::<&Transform>(entity) {
                     return Ok((transform.position.x, transform.position.y, transform.position.z));
@@ -407,8 +429,9 @@ impl ScriptRuntime {
         entity_table.set("get_position", get_pos_fn).map_err(|e| e.to_string())?;
 
         // entity.set_position(entity_string_id, x, y, z)
+        let sw = scene_world.clone();
         let set_pos_fn = self.lua.create_function(move |_, (id, x, y, z): (String, f32, f32, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut transform) = sw.world.get::<&mut Transform>(entity) {
                     transform.position = glam::Vec3::new(x, y, z);
@@ -420,8 +443,9 @@ impl ScriptRuntime {
         entity_table.set("set_position", set_pos_fn).map_err(|e| e.to_string())?;
 
         // entity.get_rotation(entity_string_id) -> pitch_deg, yaw_deg, roll_deg
+        let sw = scene_world.clone();
         let get_rot_fn = self.lua.create_function(move |_, id: String| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(transform) = sw.world.get::<&Transform>(entity) {
                     let (yaw_rad, pitch_rad, roll_rad) =
@@ -434,15 +458,17 @@ impl ScriptRuntime {
         entity_table.set("get_rotation", get_rot_fn).map_err(|e| e.to_string())?;
 
         // entity.exists(entity_string_id) -> bool
+        let sw = scene_world.clone();
         let exists_fn = self.lua.create_function(move |_, id: String| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             Ok(sw.entity_registry.contains_key(&id))
         }).map_err(|e| e.to_string())?;
         entity_table.set("exists", exists_fn).map_err(|e| e.to_string())?;
 
         // entity.set_rotation(entity_string_id, pitch_deg, yaw_deg, roll_deg)
+        let sw = scene_world.clone();
         let set_rot_fn = self.lua.create_function(move |_, (id, pitch, yaw, roll): (String, f32, f32, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut transform) = sw.world.get::<&mut Transform>(entity) {
                     transform.rotation = crate::world::euler_degrees_to_quat([pitch, yaw, roll]);
@@ -454,8 +480,9 @@ impl ScriptRuntime {
         entity_table.set("set_rotation", set_rot_fn).map_err(|e| e.to_string())?;
 
         // entity.set_light(entity_string_id, intensity)
+        let sw = scene_world.clone();
         let set_light_fn = self.lua.create_function(move |_, (id, intensity): (String, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut light) = sw.world.get::<&mut PointLight>(entity) {
                     light.intensity = intensity;
@@ -466,8 +493,9 @@ impl ScriptRuntime {
         entity_table.set("set_light", set_light_fn).map_err(|e| e.to_string())?;
 
         // entity.set_light_color(entity_string_id, r, g, b)
+        let sw = scene_world.clone();
         let set_light_color_fn = self.lua.create_function(move |_, (id, r, g, b): (String, f32, f32, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut light) = sw.world.get::<&mut PointLight>(entity) {
                     light.color = glam::Vec3::new(r, g, b);
@@ -478,8 +506,9 @@ impl ScriptRuntime {
         entity_table.set("set_light_color", set_light_color_fn).map_err(|e| e.to_string())?;
 
         // entity.set_emission(entity_string_id, r, g, b)
+        let sw = scene_world.clone();
         let set_emission_fn = self.lua.create_function(move |_, (id, r, g, b): (String, f32, f32, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 let has_override = sw.world.get::<&MaterialOverride>(entity).is_ok();
                 if has_override {
@@ -498,8 +527,9 @@ impl ScriptRuntime {
         entity_table.set("set_emission", set_emission_fn).map_err(|e| e.to_string())?;
 
         // entity.set_roughness(entity_string_id, value)
+        let sw = scene_world.clone();
         let set_roughness_fn = self.lua.create_function(move |_, (id, value): (String, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 let has_override = sw.world.get::<&MaterialOverride>(entity).is_ok();
                 if has_override {
@@ -518,8 +548,9 @@ impl ScriptRuntime {
         entity_table.set("set_roughness", set_roughness_fn).map_err(|e| e.to_string())?;
 
         // entity.set_metallic(entity_string_id, value)
+        let sw = scene_world.clone();
         let set_metallic_fn = self.lua.create_function(move |_, (id, value): (String, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 let has_override = sw.world.get::<&MaterialOverride>(entity).is_ok();
                 if has_override {
@@ -538,8 +569,9 @@ impl ScriptRuntime {
         entity_table.set("set_metallic", set_metallic_fn).map_err(|e| e.to_string())?;
 
         // entity.set_base_color(entity_string_id, r, g, b)
+        let sw = scene_world.clone();
         let set_base_color_fn = self.lua.create_function(move |_, (id, r, g, b): (String, f32, f32, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 let has_override = sw.world.get::<&MaterialOverride>(entity).is_ok();
                 if has_override {
@@ -558,8 +590,9 @@ impl ScriptRuntime {
         entity_table.set("set_base_color", set_base_color_fn).map_err(|e| e.to_string())?;
 
         // entity.get_health(id) -> current, max
+        let sw = scene_world.clone();
         let get_health_fn = self.lua.create_function(move |_, id: String| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(health) = sw.world.get::<&Health>(entity) {
                     return Ok((health.current, health.max));
@@ -570,8 +603,9 @@ impl ScriptRuntime {
         entity_table.set("get_health", get_health_fn).map_err(|e| e.to_string())?;
 
         // entity.set_health(id, current, max)
+        let sw = scene_world.clone();
         let set_health_fn = self.lua.create_function(move |_, (id, current, max): (String, f32, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
                     health.current = current;
@@ -583,8 +617,9 @@ impl ScriptRuntime {
         entity_table.set("set_health", set_health_fn).map_err(|e| e.to_string())?;
 
         // entity.damage(id, amount) -> new_current
+        let sw = scene_world.clone();
         let damage_fn = self.lua.create_function(move |_, (id, amount): (String, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
                     health.current = (health.current - amount).max(0.0);
@@ -596,8 +631,9 @@ impl ScriptRuntime {
         entity_table.set("damage", damage_fn).map_err(|e| e.to_string())?;
 
         // entity.heal(id, amount) -> new_current
+        let sw = scene_world.clone();
         let heal_fn = self.lua.create_function(move |_, (id, amount): (String, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
                     health.current = (health.current + amount).min(health.max);
@@ -609,8 +645,9 @@ impl ScriptRuntime {
         entity_table.set("heal", heal_fn).map_err(|e| e.to_string())?;
 
         // entity.is_alive(id) -> bool
+        let sw = scene_world.clone();
         let is_alive_fn = self.lua.create_function(move |_, id: String| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(health) = sw.world.get::<&Health>(entity) {
                     return Ok(health.current > 0.0 && !health.dead);
@@ -621,8 +658,9 @@ impl ScriptRuntime {
         entity_table.set("is_alive", is_alive_fn).map_err(|e| e.to_string())?;
 
         // entity.has_tag(id, tag) -> bool
+        let sw = scene_world.clone();
         let has_tag_fn = self.lua.create_function(move |_, (id, tag): (String, String)| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(tags) = sw.world.get::<&Tags>(entity) {
                     return Ok(tags.0.contains(&tag));
@@ -633,8 +671,9 @@ impl ScriptRuntime {
         entity_table.set("has_tag", has_tag_fn).map_err(|e| e.to_string())?;
 
         // entity.add_tag(id, tag)
+        let sw = scene_world.clone();
         let add_tag_fn = self.lua.create_function(move |_, (id, tag): (String, String)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut tags) = sw.world.get::<&mut Tags>(entity) {
                     if !tags.0.contains(&tag) {
@@ -647,8 +686,9 @@ impl ScriptRuntime {
         entity_table.set("add_tag", add_tag_fn).map_err(|e| e.to_string())?;
 
         // entity.remove_tag(id, tag)
+        let sw = scene_world.clone();
         let remove_tag_fn = self.lua.create_function(move |_, (id, tag): (String, String)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut tags) = sw.world.get::<&mut Tags>(entity) {
                     tags.0.retain(|t| t != &tag);
@@ -659,8 +699,9 @@ impl ScriptRuntime {
         entity_table.set("remove_tag", remove_tag_fn).map_err(|e| e.to_string())?;
 
         // entity.get_tag(id) -> first tag string or nil
+        let sw = scene_world.clone();
         let get_tag_fn = self.lua.create_function(move |_, id: String| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(tags) = sw.world.get::<&Tags>(entity) {
                     if let Some(first) = tags.0.first() {
@@ -673,8 +714,9 @@ impl ScriptRuntime {
         entity_table.set("get_tag", get_tag_fn).map_err(|e| e.to_string())?;
 
         // entity.get_tags(id) -> table of all tags
+        let sw = scene_world.clone();
         let get_tags_fn = self.lua.create_function(move |lua, id: String| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             let result = lua.create_table()?;
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(tags) = sw.world.get::<&Tags>(entity) {
@@ -693,8 +735,9 @@ impl ScriptRuntime {
         let scene_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
         // scene.find_by_tag(tag) -> {entity_id1, entity_id2, ...}
+        let sw = scene_world.clone();
         let find_by_tag_fn = self.lua.create_function(move |lua, tag: String| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             let result = lua.create_table()?;
             let mut idx = 1;
             for (_entity, (tags, entity_id)) in sw.world.query::<(&Tags, &EntityId)>().iter() {
@@ -708,8 +751,9 @@ impl ScriptRuntime {
         scene_table.set("find_by_tag", find_by_tag_fn).map_err(|e| e.to_string())?;
 
         // scene.find_by_tags(tag1, tag2, ...) -> entities with ALL specified tags
+        let sw = scene_world.clone();
         let find_by_tags_fn = self.lua.create_function(move |lua, tags_arg: LuaMultiValue| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             let required_tags: Vec<String> = tags_arg.into_iter().filter_map(|v| {
                 if let LuaValue::String(s) = v { Some(s.to_string_lossy().to_string()) } else { None }
             }).collect();
@@ -732,17 +776,18 @@ impl ScriptRuntime {
     /// Register event bus API (events.emit, events.on, events.off).
     pub fn register_event_api(
         &self,
-        event_bus_ptr: *mut EventBus,
-        lua_listeners_ptr: *mut HashMap<String, Vec<mlua::RegistryKey>>,
-        next_id_ptr: *mut u64,
-        id_map_ptr: *mut HashMap<u64, (String, usize)>,
+        event_bus: SharedEventBus,
+        lua_listeners: Rc<RefCell<HashMap<String, Vec<mlua::RegistryKey>>>>,
+        next_listener_id: Rc<RefCell<u64>>,
+        listener_id_map: Rc<RefCell<HashMap<u64, (String, usize)>>>,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let events_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
         // events.emit(event_type, data_table)
+        let bus = event_bus.clone();
         let emit_fn = self.lua.create_function(move |_, (event_type, data): (String, LuaTable)| {
-            let bus = unsafe { &mut *event_bus_ptr };
+            let mut bus = bus.borrow_mut();
             let mut map = HashMap::new();
             for pair in data.pairs::<String, LuaValue>() {
                 if let Ok((key, val)) = pair {
@@ -764,10 +809,13 @@ impl ScriptRuntime {
         events_table.set("emit", emit_fn).map_err(|e| e.to_string())?;
 
         // events.on(event_type, callback) -> listener_id
+        let listeners = lua_listeners.clone();
+        let next_id = next_listener_id.clone();
+        let id_map = listener_id_map.clone();
         let on_fn = self.lua.create_function(move |lua, (event_type, callback): (String, LuaFunction)| {
-            let listeners = unsafe { &mut *lua_listeners_ptr };
-            let next_id = unsafe { &mut *next_id_ptr };
-            let id_map = unsafe { &mut *id_map_ptr };
+            let mut listeners = listeners.borrow_mut();
+            let mut next_id = next_id.borrow_mut();
+            let mut id_map = id_map.borrow_mut();
 
             let owned_key = lua.create_registry_value(callback)
                 .map_err(|e| mlua::Error::external(e))?;
@@ -784,9 +832,11 @@ impl ScriptRuntime {
         events_table.set("on", on_fn).map_err(|e| e.to_string())?;
 
         // events.off(listener_id) - remove a listener
+        let listeners = lua_listeners.clone();
+        let id_map = listener_id_map.clone();
         let off_fn = self.lua.create_function(move |_, listener_id: u64| {
-            let listeners: &mut HashMap<String, Vec<mlua::RegistryKey>> = unsafe { &mut *lua_listeners_ptr };
-            let id_map: &mut HashMap<u64, (String, usize)> = unsafe { &mut *id_map_ptr };
+            let mut listeners = listeners.borrow_mut();
+            let mut id_map = id_map.borrow_mut();
 
             if let Some((event_type, index)) = id_map.remove(&listener_id) {
                 if let Some(list) = listeners.get_mut(&event_type) {
@@ -810,14 +860,15 @@ impl ScriptRuntime {
     }
 
     /// Register audio API functions that control the audio system from Lua.
-    pub fn register_audio_api(&self, audio_ptr: *mut AudioSystem, project_root: PathBuf) -> Result<(), String> {
+    pub fn register_audio_api(&self, audio_system: SharedAudioSystem, project_root: PathBuf) -> Result<(), String> {
         let globals = self.lua.globals();
         let audio_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
         // audio.play_sfx(id, path, volume)
         let root1 = project_root.clone();
+        let audio = audio_system.clone();
         let play_sfx_fn = self.lua.create_function(move |_, (id, path, volume): (String, String, f32)| {
-            let audio = unsafe { &mut *audio_ptr };
+            let mut audio = audio.borrow_mut();
             if let Err(e) = audio.play_sfx(&id, &root1, &path, volume) {
                 tracing::error!("[Lua] audio.play_sfx error: {}", e);
             }
@@ -827,8 +878,9 @@ impl ScriptRuntime {
 
         // audio.play_music(path, volume, fade_in_secs)
         let root2 = project_root.clone();
+        let audio = audio_system.clone();
         let play_music_fn = self.lua.create_function(move |_, (path, volume, fade_in): (String, f32, f32)| {
-            let audio = unsafe { &mut *audio_ptr };
+            let mut audio = audio.borrow_mut();
             if let Err(e) = audio.play_music(&root2, &path, volume, fade_in) {
                 tracing::error!("[Lua] audio.play_music error: {}", e);
             }
@@ -837,16 +889,18 @@ impl ScriptRuntime {
         audio_table.set("play_music", play_music_fn).map_err(|e| e.to_string())?;
 
         // audio.stop_sound(id, fade_out_secs)
+        let audio = audio_system.clone();
         let stop_sound_fn = self.lua.create_function(move |_, (id, fade_out): (String, f32)| {
-            let audio = unsafe { &mut *audio_ptr };
+            let mut audio = audio.borrow_mut();
             audio.stop_sound(&id, fade_out);
             Ok(())
         }).map_err(|e| e.to_string())?;
         audio_table.set("stop_sound", stop_sound_fn).map_err(|e| e.to_string())?;
 
         // audio.stop_music(fade_out_secs)
+        let audio = audio_system.clone();
         let stop_music_fn = self.lua.create_function(move |_, fade_out: f32| {
-            let audio = unsafe { &mut *audio_ptr };
+            let mut audio = audio.borrow_mut();
             audio.stop_music(fade_out);
             Ok(())
         }).map_err(|e| e.to_string())?;
@@ -860,16 +914,17 @@ impl ScriptRuntime {
     /// that are deferred via the EntityCommandQueue.
     pub fn register_entity_command_api(
         &self,
-        scene_world_ptr: *mut SceneWorld,
-        cmd_ptr: *mut EntityCommandQueue,
-        pool_mgr_ptr: *mut EntityPoolManager,
+        scene_world: SharedSceneWorld,
+        cmd_queue: SharedEntityCommandQueue,
+        pool_manager: SharedEntityPoolManager,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let entity_table: LuaTable = globals.get("entity").map_err(|e| e.to_string())?;
 
         // entity.spawn(id, mesh, material, x, y, z, sx, sy, sz)
+        let cmd = cmd_queue.clone();
         let spawn_fn = self.lua.create_function(move |_, (id, mesh, mat, x, y, z, sx, sy, sz): (String, String, String, f32, f32, f32, f32, f32, f32)| {
-            let cmd = unsafe { &mut *cmd_ptr };
+            let mut cmd = cmd.borrow_mut();
             cmd.spawns.push(crate::world::SpawnCommand {
                 id, mesh, material: mat,
                 position: [x, y, z],
@@ -880,16 +935,18 @@ impl ScriptRuntime {
         entity_table.set("spawn", spawn_fn).map_err(|e| e.to_string())?;
 
         // entity.destroy(id)
+        let cmd = cmd_queue.clone();
         let destroy_fn = self.lua.create_function(move |_, id: String| {
-            let cmd = unsafe { &mut *cmd_ptr };
+            let mut cmd = cmd.borrow_mut();
             cmd.destroys.push(id);
             Ok(())
         }).map_err(|e| e.to_string())?;
         entity_table.set("destroy", destroy_fn).map_err(|e| e.to_string())?;
 
         // entity.set_scale(id, sx, sy, sz)
+        let sw = scene_world.clone();
         let set_scale_fn = self.lua.create_function(move |_, (id, sx, sy, sz): (String, f32, f32, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut transform) = sw.world.get::<&mut Transform>(entity) {
                     transform.scale = glam::Vec3::new(sx, sy, sz);
@@ -901,8 +958,9 @@ impl ScriptRuntime {
         entity_table.set("set_scale", set_scale_fn).map_err(|e| e.to_string())?;
 
         // entity.get_scale(id) -> sx, sy, sz
+        let sw = scene_world.clone();
         let get_scale_fn = self.lua.create_function(move |_, id: String| {
-            let sw = unsafe { &*scene_world_ptr };
+            let sw = sw.borrow();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(transform) = sw.world.get::<&Transform>(entity) {
                     return Ok((transform.scale.x, transform.scale.y, transform.scale.z));
@@ -913,16 +971,18 @@ impl ScriptRuntime {
         entity_table.set("get_scale", get_scale_fn).map_err(|e| e.to_string())?;
 
         // entity.set_visible(id, visible)
+        let cmd = cmd_queue.clone();
         let set_vis_fn = self.lua.create_function(move |_, (id, visible): (String, bool)| {
-            let cmd = unsafe { &mut *cmd_ptr };
+            let mut cmd = cmd.borrow_mut();
             cmd.visibility_updates.push((id, visible));
             Ok(())
         }).map_err(|e| e.to_string())?;
         entity_table.set("set_visible", set_vis_fn).map_err(|e| e.to_string())?;
 
         // entity.spawn_projectile(owner_id, mesh, material, ox, oy, oz, dx, dy, dz, speed, damage, lifetime, gravity)
+        let cmd = cmd_queue.clone();
         let spawn_proj_fn = self.lua.create_function(move |_, (owner_id, mesh, material, ox, oy, oz, dx, dy, dz, speed, damage, lifetime, gravity): (String, String, String, f32, f32, f32, f32, f32, f32, f32, f32, f32, bool)| {
-            let cmd = unsafe { &mut *cmd_ptr };
+            let mut cmd = cmd.borrow_mut();
             cmd.projectile_counter += 1;
             let id = format!("proj_{}", cmd.projectile_counter);
             cmd.projectile_spawns.push(ProjectileSpawnCommand {
@@ -944,8 +1004,9 @@ impl ScriptRuntime {
 
         // entity.spawn_dynamic(mesh, material, x, y, z, vx, vy, vz, radius, mass, restitution, friction, lifetime)
         // Spawns a dynamic rigid body that bounces and persists (no destroy-on-hit).
+        let cmd = cmd_queue.clone();
         let spawn_dyn_fn = self.lua.create_function(move |_, (mesh, material, x, y, z, vx, vy, vz, radius, mass, restitution, friction, lifetime): (String, String, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32)| {
-            let cmd = unsafe { &mut *cmd_ptr };
+            let mut cmd = cmd.borrow_mut();
             cmd.dynamic_counter += 1;
             let id = format!("dyn_{}", cmd.dynamic_counter);
             cmd.dynamic_spawns.push(crate::world::DynamicSpawnCommand {
@@ -966,9 +1027,11 @@ impl ScriptRuntime {
         entity_table.set("spawn_dynamic", spawn_dyn_fn).map_err(|e| e.to_string())?;
 
         // entity.destroy_by_prefix(prefix) - bulk destroy all entities whose ID starts with prefix
+        let sw = scene_world.clone();
+        let cmd = cmd_queue.clone();
         let destroy_prefix_fn = self.lua.create_function(move |_, prefix: String| {
-            let sw = unsafe { &*scene_world_ptr };
-            let cmd = unsafe { &mut *cmd_ptr };
+            let sw = sw.borrow();
+            let mut cmd = cmd.borrow_mut();
             let ids: Vec<String> = sw.entity_registry.keys()
                 .filter(|id| id.starts_with(&prefix))
                 .cloned()
@@ -983,9 +1046,11 @@ impl ScriptRuntime {
         // --- Tier 2: Entity Pool API ---
 
         // entity.pool_create(name, mesh, material, count) — create pool and pre-warm
+        let cmd = cmd_queue.clone();
+        let pool_mgr = pool_manager.clone();
         let pool_create_fn = self.lua.create_function(move |_, (name, mesh, material, count): (String, String, String, u32)| {
-            let pool_mgr = unsafe { &mut *pool_mgr_ptr };
-            let cmd = unsafe { &mut *cmd_ptr };
+            let mut pool_mgr = pool_mgr.borrow_mut();
+            let mut cmd = cmd.borrow_mut();
             pool_mgr.create_pool(&name, &mesh, &material);
             // Pre-warm by spawning `count` hidden entities
             for i in 0..count {
@@ -1003,9 +1068,12 @@ impl ScriptRuntime {
         entity_table.set("pool_create", pool_create_fn).map_err(|e| e.to_string())?;
 
         // entity.pool_acquire(name) -> entity_id or nil
+        let sw = scene_world.clone();
+        let cmd = cmd_queue.clone();
+        let pool_mgr = pool_manager.clone();
         let pool_acquire_fn = self.lua.create_function(move |_, name: String| {
-            let pool_mgr = unsafe { &mut *pool_mgr_ptr };
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut pool_mgr = pool_mgr.borrow_mut();
+            let mut sw = sw.borrow_mut();
             if let Some(entity_id) = pool_mgr.try_acquire(&name) {
                 // Unhide the entity, mark as active
                 if let Some(&entity) = sw.entity_registry.get(&entity_id) {
@@ -1022,7 +1090,7 @@ impl ScriptRuntime {
                 Ok(Some(entity_id))
             } else {
                 // Pool empty — spawn a new entity
-                let cmd = unsafe { &mut *cmd_ptr };
+                let mut cmd = cmd.borrow_mut();
                 if let Some((mesh, material)) = pool_mgr.get_pool_assets(&name) {
                     let entity_id = format!("_pool_{}_{}", name, sw.entity_registry.len());
                     cmd.spawns.push(crate::world::SpawnCommand {
@@ -1042,16 +1110,18 @@ impl ScriptRuntime {
         entity_table.set("pool_acquire", pool_acquire_fn).map_err(|e| e.to_string())?;
 
         // entity.pool_release(id) — hide + return to pool
+        let cmd = cmd_queue.clone();
         let pool_release_fn = self.lua.create_function(move |_, id: String| {
-            let cmd = unsafe { &mut *cmd_ptr };
+            let mut cmd = cmd.borrow_mut();
             cmd.pool_ops.push(PoolOp::Release(id));
             Ok(())
         }).map_err(|e| e.to_string())?;
         entity_table.set("pool_release", pool_release_fn).map_err(|e| e.to_string())?;
 
         // entity.pool_size(name) -> total, available
+        let pool_mgr = pool_manager.clone();
         let pool_size_fn = self.lua.create_function(move |_, name: String| {
-            let pool_mgr = unsafe { &*pool_mgr_ptr };
+            let pool_mgr = pool_mgr.borrow();
             let (total, available) = pool_mgr.pool_size(&name);
             Ok((total as u32, available as u32))
         }).map_err(|e| e.to_string())?;
@@ -1059,8 +1129,9 @@ impl ScriptRuntime {
 
         // --- scene.load(path) — deferred scene loading ---
         let scene_table: LuaTable = globals.get("scene").map_err(|e| e.to_string())?;
+        let cmd = cmd_queue.clone();
         let scene_load_fn = self.lua.create_function(move |_, path: String| {
-            let cmd = unsafe { &mut *cmd_ptr };
+            let mut cmd = cmd.borrow_mut();
             cmd.pending_scene_load = Some(path);
             Ok(())
         }).map_err(|e| e.to_string())?;
@@ -1072,16 +1143,18 @@ impl ScriptRuntime {
     /// Register camera API (world_to_screen projection).
     pub fn register_camera_api(
         &self,
-        camera_state_ptr: *const crate::camera::CameraState,
-        config_ptr: *const wgpu::SurfaceConfiguration,
+        camera_state: Rc<RefCell<crate::camera::CameraState>>,
+        surface_config: Rc<RefCell<wgpu::SurfaceConfiguration>>,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let camera_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
         // camera.world_to_screen(x, y, z) -> sx, sy, visible
+        let cs = camera_state.clone();
+        let config = surface_config.clone();
         let w2s_fn = self.lua.create_function(move |_, (x, y, z): (f32, f32, f32)| {
-            let cs = unsafe { &*camera_state_ptr };
-            let config = unsafe { &*config_ptr };
+            let cs = cs.borrow();
+            let config = config.borrow();
             let vp = glam::Mat4::from_cols_array_2d(&cs.uniform.view_projection);
             let clip = vp * glam::Vec4::new(x, y, z, 1.0);
             if clip.w <= 0.0 {
@@ -1106,14 +1179,15 @@ impl ScriptRuntime {
     /// Register camera shake API (camera.shake).
     pub fn register_camera_shake_api(
         &self,
-        shake_ptr: *mut CameraShakeState,
+        camera_shake: SharedCameraShakeState,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let camera_table: LuaTable = globals.get("camera").map_err(|e| e.to_string())?;
 
         // camera.shake(intensity, duration)
+        let shake = camera_shake.clone();
         let shake_fn = self.lua.create_function(move |_, (intensity, duration): (f32, f32)| {
-            let shake = unsafe { &mut *shake_ptr };
+            let mut shake = shake.borrow_mut();
             shake.intensity = intensity;
             shake.duration = duration;
             shake.timer = duration;
@@ -1128,15 +1202,16 @@ impl ScriptRuntime {
     /// Register particle system API (entity emitter control + one-shot bursts).
     pub fn register_particle_api(
         &self,
-        scene_world_ptr: *mut SceneWorld,
-        particle_system_ptr: *mut crate::particles::ParticleSystem,
+        scene_world: SharedSceneWorld,
+        particle_system: SharedParticleSystem,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let entity_table: LuaTable = globals.get("entity").map_err(|e| e.to_string())?;
 
         // entity.set_emitter_enabled(id, enabled)
+        let sw = scene_world.clone();
         let set_emitter_fn = self.lua.create_function(move |_, (id, enabled): (String, bool)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut emitter) = sw.world.get::<&mut ParticleEmitter>(entity) {
                     emitter.enabled = enabled;
@@ -1147,8 +1222,9 @@ impl ScriptRuntime {
         entity_table.set("set_emitter_enabled", set_emitter_fn).map_err(|e| e.to_string())?;
 
         // entity.set_emitter_rate(id, rate)
+        let sw = scene_world.clone();
         let set_rate_fn = self.lua.create_function(move |_, (id, rate): (String, f32)| {
-            let sw = unsafe { &mut *scene_world_ptr };
+            let mut sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut emitter) = sw.world.get::<&mut ParticleEmitter>(entity) {
                     emitter.config.spawn_rate = rate;
@@ -1159,11 +1235,13 @@ impl ScriptRuntime {
         entity_table.set("set_emitter_rate", set_rate_fn).map_err(|e| e.to_string())?;
 
         // entity.burst(id, count) — spawn N particles immediately on an emitter entity
+        let sw = scene_world.clone();
+        let ps = particle_system.clone();
         let burst_fn = self.lua.create_function(move |_, (id, count): (String, u32)| {
-            let sw = unsafe { &*scene_world_ptr };
-            let ps = unsafe { &mut *particle_system_ptr };
+            let sw = sw.borrow();
+            let mut ps = ps.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
-                ps.burst_on_entity(entity, count, sw);
+                ps.burst_on_entity(entity, count, &sw);
             }
             Ok(())
         }).map_err(|e| e.to_string())?;
@@ -1173,8 +1251,9 @@ impl ScriptRuntime {
         let particles_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
         // particles.spawn_burst(x, y, z, count, config_table)
+        let ps = particle_system.clone();
         let spawn_burst_fn = self.lua.create_function(move |_, (x, y, z, count, config_tbl): (f32, f32, f32, u32, LuaTable)| {
-            let ps = unsafe { &mut *particle_system_ptr };
+            let mut ps = ps.borrow_mut();
             let config = crate::components::ParticleConfig {
                 max_particles: count * 2,
                 spawn_rate: 0.0,
@@ -1222,41 +1301,46 @@ impl ScriptRuntime {
     /// Register UI overlay API (text, rect, flash, screen dimensions).
     pub fn register_ui_api(
         &self,
-        ui_ptr: *mut UiRenderer,
-        font_ptr: *const BitmapFont,
-        config_ptr: *const wgpu::SurfaceConfiguration,
+        ui_renderer: SharedUiRenderer,
+        bitmap_font: SharedBitmapFont,
+        surface_config: Rc<RefCell<wgpu::SurfaceConfiguration>>,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let ui_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
         // ui.text(x, y, text, size, r, g, b, a)
+        let ui = ui_renderer.clone();
+        let font = bitmap_font.clone();
         let text_fn = self.lua.create_function(move |_, (x, y, text, size, r, g, b, a): (f32, f32, String, f32, f32, f32, f32, f32)| {
-            let ui = unsafe { &mut *ui_ptr };
-            let font = unsafe { &*font_ptr };
-            ui.draw_text(x, y, &text, size, [r, g, b, a], font);
+            let mut ui = ui.borrow_mut();
+            let font = font.borrow();
+            ui.draw_text(x, y, &text, size, [r, g, b, a], &font);
             Ok(())
         }).map_err(|e| e.to_string())?;
         ui_table.set("text", text_fn).map_err(|e| e.to_string())?;
 
         // ui.rect(x, y, w, h, r, g, b, a)
+        let ui = ui_renderer.clone();
         let rect_fn = self.lua.create_function(move |_, (x, y, w, h, r, g, b, a): (f32, f32, f32, f32, f32, f32, f32, f32)| {
-            let ui = unsafe { &mut *ui_ptr };
+            let mut ui = ui.borrow_mut();
             ui.draw_rect(x, y, w, h, [r, g, b, a]);
             Ok(())
         }).map_err(|e| e.to_string())?;
         ui_table.set("rect", rect_fn).map_err(|e| e.to_string())?;
 
         // ui.flash(r, g, b, a, duration)
+        let ui = ui_renderer.clone();
         let flash_fn = self.lua.create_function(move |_, (r, g, b, a, dur): (f32, f32, f32, f32, f32)| {
-            let ui = unsafe { &mut *ui_ptr };
+            let mut ui = ui.borrow_mut();
             ui.set_flash([r, g, b, a], dur);
             Ok(())
         }).map_err(|e| e.to_string())?;
         ui_table.set("flash", flash_fn).map_err(|e| e.to_string())?;
 
         // ui.text_width(text, font_size) -> pixels
+        let font = bitmap_font.clone();
         let text_width_fn = self.lua.create_function(move |_, (text, font_size): (String, f32)| {
-            let font = unsafe { &*font_ptr };
+            let font = font.borrow();
             let scale = font_size / font.glyph_h;
             let width = text.len() as f32 * font.glyph_w * scale;
             Ok(width)
@@ -1264,15 +1348,17 @@ impl ScriptRuntime {
         ui_table.set("text_width", text_width_fn).map_err(|e| e.to_string())?;
 
         // ui.screen_width() -> number
+        let config = surface_config.clone();
         let width_fn = self.lua.create_function(move |_, ()| {
-            let config = unsafe { &*config_ptr };
+            let config = config.borrow();
             Ok(config.width as f32)
         }).map_err(|e| e.to_string())?;
         ui_table.set("screen_width", width_fn).map_err(|e| e.to_string())?;
 
         // ui.screen_height() -> number
+        let config = surface_config.clone();
         let height_fn = self.lua.create_function(move |_, ()| {
-            let config = unsafe { &*config_ptr };
+            let config = config.borrow();
             Ok(config.height as f32)
         }).map_err(|e| e.to_string())?;
         ui_table.set("screen_height", height_fn).map_err(|e| e.to_string())?;
@@ -1346,6 +1432,104 @@ impl ScriptRuntime {
         if let Some(key) = self.entity_envs.remove(&entity) {
             let _ = self.lua.remove_registry_value(key);
         }
+    }
+
+    /// Register animation API (play, stop, set_state, get_state, set_speed).
+    pub fn register_animation_api(
+        &self,
+        scene_world: SharedSceneWorld,
+    ) -> Result<(), String> {
+        let globals = self.lua.globals();
+        let anim_table = self.lua.create_table().map_err(|e| e.to_string())?;
+
+        // animation.play(entity_id, state_name)
+        // state_name: "idle", "walk", "run", "attack", or custom string
+        let sw = scene_world.clone();
+        let play_fn = self.lua.create_function(move |_, (id, state): (String, String)| {
+            let mut sw = sw.borrow_mut();
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut animator) = sw.world.get::<&mut crate::components::Animator>(entity) {
+                    let anim_state = match state.as_str() {
+                        "idle" => naive_core::animation::AnimState::Idle,
+                        "walk" => naive_core::animation::AnimState::Walk,
+                        "run" => naive_core::animation::AnimState::Run,
+                        "attack" => naive_core::animation::AnimState::Attack,
+                        other => naive_core::animation::AnimState::Custom(other.to_string()),
+                    };
+                    animator.controller.play(anim_state);
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        anim_table.set("play", play_fn).map_err(|e| e.to_string())?;
+
+        // animation.stop(entity_id)
+        let sw = scene_world.clone();
+        let stop_fn = self.lua.create_function(move |_, id: String| {
+            let mut sw = sw.borrow_mut();
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut animator) = sw.world.get::<&mut crate::components::Animator>(entity) {
+                    animator.controller.stop();
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        anim_table.set("stop", stop_fn).map_err(|e| e.to_string())?;
+
+        // animation.set_speed(entity_id, speed)
+        let sw = scene_world.clone();
+        let speed_fn = self.lua.create_function(move |_, (id, speed): (String, f32)| {
+            let mut sw = sw.borrow_mut();
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut animator) = sw.world.get::<&mut crate::components::Animator>(entity) {
+                    animator.controller.speed = speed;
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        anim_table.set("set_speed", speed_fn).map_err(|e| e.to_string())?;
+
+        // animation.set_looping(entity_id, looping)
+        let sw = scene_world.clone();
+        let loop_fn = self.lua.create_function(move |_, (id, looping): (String, bool)| {
+            let mut sw = sw.borrow_mut();
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(mut animator) = sw.world.get::<&mut crate::components::Animator>(entity) {
+                    animator.controller.looping = looping;
+                }
+            }
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        anim_table.set("set_looping", loop_fn).map_err(|e| e.to_string())?;
+
+        // animation.get_state(entity_id) -> string
+        let sw = scene_world.clone();
+        let get_state_fn = self.lua.create_function(move |_, id: String| {
+            let sw = sw.borrow();
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(animator) = sw.world.get::<&crate::components::Animator>(entity) {
+                    return Ok(animator.controller.current_state.clip_name().to_string());
+                }
+            }
+            Ok("none".to_string())
+        }).map_err(|e| e.to_string())?;
+        anim_table.set("get_state", get_state_fn).map_err(|e| e.to_string())?;
+
+        // animation.get_time(entity_id) -> number
+        let sw = scene_world.clone();
+        let get_time_fn = self.lua.create_function(move |_, id: String| {
+            let sw = sw.borrow();
+            if let Some(&entity) = sw.entity_registry.get(&id) {
+                if let Ok(animator) = sw.world.get::<&crate::components::Animator>(entity) {
+                    return Ok(animator.controller.current_time);
+                }
+            }
+            Ok(0.0f32)
+        }).map_err(|e| e.to_string())?;
+        anim_table.set("get_time", get_time_fn).map_err(|e| e.to_string())?;
+
+        globals.set("animation", anim_table).map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 

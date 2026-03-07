@@ -80,6 +80,21 @@ pub enum Command {
         #[arg(long)]
         scene: Option<String>,
     },
+    /// Beautify a scene: export geometry → generate Gaussian Splat → import
+    Beautify {
+        /// Scene file to beautify
+        #[arg(long)]
+        scene: Option<String>,
+        /// Style prompt (e.g., "photorealistic", "stylized anime")
+        #[arg(long)]
+        style: Option<String>,
+        /// Output PLY path (relative to project root)
+        #[arg(long)]
+        output: Option<String>,
+        /// Use mock backend (copy existing PLY instead of calling API)
+        #[arg(long)]
+        mock: Option<String>,
+    },
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]

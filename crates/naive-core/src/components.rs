@@ -146,6 +146,23 @@ pub struct MaterialOverride {
 /// Marker component: entity is hidden from rendering.
 pub struct Hidden;
 
+/// Handle into the animation system's skeleton store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SkeletonHandle(pub usize);
+
+/// Skinned mesh component: links an entity to a skeleton for GPU skinning.
+#[derive(Debug, Clone)]
+pub struct SkinnedMesh {
+    pub skeleton_handle: SkeletonHandle,
+}
+
+/// Animator component: controls animation playback on a skinned entity.
+#[derive(Debug, Clone)]
+pub struct Animator {
+    pub skeleton_handle: SkeletonHandle,
+    pub controller: crate::animation::AnimationController,
+}
+
 /// Health component for damageable entities.
 #[derive(Debug, Clone)]
 pub struct Health {

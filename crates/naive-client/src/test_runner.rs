@@ -3,8 +3,10 @@
 //! Runs Lua test scripts that inject input, advance game time, and assert
 //! that game events occurred. No GPU or window required.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use mlua::prelude::*;
 
@@ -27,21 +29,21 @@ pub struct TestResult {
 }
 
 /// Headless test runner. Owns all game systems except GPU/rendering.
+/// Fields shared with Lua closures use Rc<RefCell<T>> for safe interior mutability.
 pub struct TestRunner {
     pub project_root: PathBuf,
-    pub scene_world: SceneWorld,
-    pub input_state: InputState,
-    pub physics_world: PhysicsWorld,
+    pub scene_world: Rc<RefCell<SceneWorld>>,
+    pub input_state: Rc<RefCell<InputState>>,
+    pub physics_world: Rc<RefCell<PhysicsWorld>>,
     pub script_runtime: ScriptRuntime,
-    pub event_bus: EventBus,
+    pub event_bus: Rc<RefCell<EventBus>>,
     pub tween_system: TweenSystem,
     pub delta_time: f32,
     pub total_time: f32,
     pub frame_count: u64,
-    // Tier 2: Lua event listener storage
-    lua_event_listeners: HashMap<String, Vec<mlua::RegistryKey>>,
-    next_lua_listener_id: u64,
-    lua_listener_id_map: HashMap<u64, (String, usize)>,
+    lua_event_listeners: Rc<RefCell<HashMap<String, Vec<mlua::RegistryKey>>>>,
+    next_lua_listener_id: Rc<RefCell<u64>>,
+    lua_listener_id_map: Rc<RefCell<HashMap<u64, (String, usize)>>>,
 }
 
 impl TestRunner {
@@ -49,18 +51,18 @@ impl TestRunner {
         let bindings = crate::input::load_bindings(project_root);
         Self {
             project_root: project_root.to_path_buf(),
-            scene_world: SceneWorld::new(),
-            input_state: InputState::new(bindings),
-            physics_world: PhysicsWorld::new(glam::Vec3::new(0.0, -9.81, 0.0)),
+            scene_world: Rc::new(RefCell::new(SceneWorld::new())),
+            input_state: Rc::new(RefCell::new(InputState::new(bindings))),
+            physics_world: Rc::new(RefCell::new(PhysicsWorld::new(glam::Vec3::new(0.0, -9.81, 0.0)))),
             script_runtime: ScriptRuntime::new(),
-            event_bus: EventBus::new(1000),
+            event_bus: Rc::new(RefCell::new(EventBus::new(1000))),
             tween_system: TweenSystem::new(),
             delta_time: 1.0 / 60.0,
             total_time: 0.0,
             frame_count: 0,
-            lua_event_listeners: HashMap::new(),
-            next_lua_listener_id: 0,
-            lua_listener_id_map: HashMap::new(),
+            lua_event_listeners: Rc::new(RefCell::new(HashMap::new())),
+            next_lua_listener_id: Rc::new(RefCell::new(0)),
+            lua_listener_id_map: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -72,15 +74,15 @@ impl TestRunner {
 
         // Set gravity from scene settings
         let gravity = glam::Vec3::from(scene.settings.gravity);
-        self.physics_world = PhysicsWorld::new(gravity);
+        *self.physics_world.borrow_mut() = PhysicsWorld::new(gravity);
 
         // Spawn entities headlessly (no GPU)
-        self.scene_world = SceneWorld::new();
-        crate::world::spawn_all_entities_headless(
-            &mut self.scene_world,
-            &scene,
-            &mut self.physics_world,
-        );
+        *self.scene_world.borrow_mut() = SceneWorld::new();
+        {
+            let mut sw = self.scene_world.borrow_mut();
+            let mut pw = self.physics_world.borrow_mut();
+            crate::world::spawn_all_entities_headless(&mut *sw, &scene, &mut *pw);
+        }
 
         // Initialize scripting
         self.script_runtime = ScriptRuntime::new();
@@ -88,49 +90,42 @@ impl TestRunner {
             return Err(format!("Failed to register script API: {}", e));
         }
 
-        // Register input API
-        let input_ptr = &self.input_state as *const InputState;
+        // Register APIs with shared Rc<RefCell<>> references
         self.script_runtime
-            .register_input_api(input_ptr)
+            .register_input_api(self.input_state.clone())
             .map_err(|e| format!("Input API: {}", e))?;
-
-        // Register physics API
-        let physics_ptr = &mut self.physics_world as *mut PhysicsWorld;
-        let sw_const_ptr = &self.scene_world as *const SceneWorld;
         self.script_runtime
-            .register_physics_api(physics_ptr, sw_const_ptr)
+            .register_physics_api(self.physics_world.clone(), self.scene_world.clone())
             .map_err(|e| format!("Physics API: {}", e))?;
-
-        // Register entity API
-        let sw_ptr = &mut self.scene_world as *mut SceneWorld;
         self.script_runtime
-            .register_entity_api(sw_ptr)
+            .register_entity_api(self.scene_world.clone())
             .map_err(|e| format!("Entity API: {}", e))?;
-
-        // Register event bus API (with Lua listener support)
-        let bus_ptr = &mut self.event_bus as *mut EventBus;
-        let listeners_ptr = &mut self.lua_event_listeners as *mut HashMap<String, Vec<mlua::RegistryKey>>;
-        let next_id_ptr = &mut self.next_lua_listener_id as *mut u64;
-        let id_map_ptr = &mut self.lua_listener_id_map as *mut HashMap<u64, (String, usize)>;
         self.script_runtime
-            .register_event_api(bus_ptr, listeners_ptr, next_id_ptr, id_map_ptr)
+            .register_event_api(
+                self.event_bus.clone(),
+                self.lua_event_listeners.clone(),
+                self.next_lua_listener_id.clone(),
+                self.lua_listener_id_map.clone(),
+            )
             .map_err(|e| format!("Event API: {}", e))?;
 
         // Load event schema
-        self.event_bus.load_schema(&self.project_root);
+        self.event_bus.borrow_mut().load_schema(&self.project_root);
 
         // Load scripts for entities
-        if let Some(scene_data) = &self.scene_world.current_scene {
-            let scene_clone = scene_data.clone();
-            for entity_def in &scene_clone.entities {
+        let scene_clone = self.scene_world.borrow().current_scene.clone();
+        if let Some(scene_data) = &scene_clone {
+            for entity_def in &scene_data.entities {
                 if let Some(script_def) = &entity_def.components.script {
-                    if let Some(&entity) = self.scene_world.entity_registry.get(&entity_def.id) {
+                    let sw = self.scene_world.borrow();
+                    if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
                         let source_path = PathBuf::from(&script_def.source);
                         let script_comp = Script {
                             source: source_path.clone(),
                             initialized: false,
                         };
-                        let _ = self.scene_world.world.insert_one(entity, script_comp);
+                        drop(sw);
+                        let _ = self.scene_world.borrow_mut().world.insert_one(entity, script_comp);
 
                         if let Err(e) = self.script_runtime.load_script(
                             entity,
@@ -153,22 +148,29 @@ impl TestRunner {
         }
 
         // Call init on all scripts (collect first to release world borrow before Lua runs)
-        let uninit: Vec<hecs::Entity> = self.scene_world.world.query::<&Script>()
-            .iter()
-            .filter(|(_, s)| !s.initialized)
-            .map(|(e, _)| e)
-            .collect();
+        let uninit: Vec<hecs::Entity> = {
+            let sw = self.scene_world.borrow();
+            let mut query = sw.world.query::<&Script>();
+            query.iter()
+                .filter(|(_, s)| !s.initialized)
+                .map(|(e, _)| e)
+                .collect()
+        };
         for entity in uninit {
             self.script_runtime.call_init(entity);
         }
-        for (_entity, script) in self.scene_world.world.query::<&mut Script>().iter() {
-            script.initialized = true;
+        {
+            let mut sw = self.scene_world.borrow_mut();
+            for (_entity, script) in sw.world.query::<&mut Script>().iter() {
+                script.initialized = true;
+            }
         }
 
         // Emit lifecycle event
         self.event_bus
+            .borrow_mut()
             .emit("lifecycle.scene_loaded", std::collections::HashMap::new());
-        self.event_bus.flush();
+        self.event_bus.borrow_mut().flush();
 
         tracing::info!("Test runner: scene loaded");
         Ok(())
@@ -179,30 +181,36 @@ impl TestRunner {
         let dt = self.delta_time;
 
         // Apply synthetic inputs
-        self.input_state.begin_frame();
+        self.input_state.borrow_mut().begin_frame();
 
         // Auto-capture cursor for FPS controller
-        self.input_state.cursor_captured = true;
+        self.input_state.borrow_mut().cursor_captured = true;
 
         // FPS controller update
         self.update_fps_controller(dt);
 
         // Update all scripts (collect first to release world borrow before Lua runs)
-        let scripted: Vec<hecs::Entity> = self.scene_world.world.query::<&Script>()
-            .iter()
-            .map(|(e, _)| e)
-            .collect();
+        let scripted: Vec<hecs::Entity> = {
+            let sw = self.scene_world.borrow();
+            let mut query = sw.world.query::<&Script>();
+            query.iter()
+                .map(|(e, _)| e)
+                .collect()
+        };
         for entity in scripted {
             self.script_runtime.call_update(entity, dt);
         }
 
         // Tick event bus and tweens
-        self.event_bus.tick(dt as f64);
-        self.event_bus.flush();
+        self.event_bus.borrow_mut().tick(dt as f64);
+        self.event_bus.borrow_mut().flush();
         let _tween_results = self.tween_system.update(dt);
 
         // Update transforms
-        crate::transform::update_transforms(&mut self.scene_world.world);
+        {
+            let mut sw = self.scene_world.borrow_mut();
+            crate::transform::update_transforms(&mut sw.world);
+        }
 
         self.total_time += dt;
         self.frame_count += 1;
@@ -223,7 +231,8 @@ impl TestRunner {
 
     /// Check if a specific event occurred in the log.
     pub fn event_occurred(&self, event_type: &str, filter: &std::collections::HashMap<String, String>) -> bool {
-        for event in self.event_bus.get_log() {
+        let eb = self.event_bus.borrow();
+        for event in eb.get_log() {
             if event.event_type == event_type {
                 if filter.is_empty() {
                     return true;
@@ -253,35 +262,37 @@ impl TestRunner {
 
     /// Get player position.
     pub fn get_entity_position(&self, entity_id: &str) -> Option<glam::Vec3> {
-        let entity = *self.scene_world.entity_registry.get(entity_id)?;
-        let transform = self.scene_world.world.get::<&Transform>(entity).ok()?;
+        let sw = self.scene_world.borrow();
+        let entity = *sw.entity_registry.get(entity_id)?;
+        let transform = sw.world.get::<&Transform>(entity).ok()?;
         Some(transform.position)
     }
 
     /// FPS controller update (replicated from engine.rs for headless).
     fn update_fps_controller(&mut self, dt: f32) {
         // Collect player data first to avoid borrow conflicts
-        let player_data: Vec<_> = self
-            .scene_world
-            .world
-            .query::<(&Player, &CharacterController, &RigidBodyComp, &ColliderComp)>()
-            .iter()
-            .map(|(entity, (player, cc, rb, col))| {
-                (
-                    entity,
-                    player.yaw,
-                    player.pitch,
-                    player.height,
-                    cc.move_speed,
-                    cc.sprint_multiplier,
-                    cc.jump_impulse,
-                    cc.grounded,
-                    cc.velocity,
-                    rb.handle,
-                    col.handle,
-                )
-            })
-            .collect();
+        let player_data: Vec<_> = {
+            let sw = self.scene_world.borrow();
+            let mut query = sw.world
+                .query::<(&Player, &CharacterController, &RigidBodyComp, &ColliderComp)>();
+            query.iter()
+                .map(|(entity, (player, cc, rb, col))| {
+                    (
+                        entity,
+                        player.yaw,
+                        player.pitch,
+                        player.height,
+                        cc.move_speed,
+                        cc.sprint_multiplier,
+                        cc.jump_impulse,
+                        cc.grounded,
+                        cc.velocity,
+                        rb.handle,
+                        col.handle,
+                    )
+                })
+                .collect()
+        };
 
         for (
             entity,
@@ -297,7 +308,7 @@ impl TestRunner {
             col_handle,
         ) in player_data
         {
-            let mouse_delta = self.input_state.mouse_delta();
+            let mouse_delta = self.input_state.borrow().mouse_delta();
             let sensitivity = 0.002;
             let new_yaw = yaw - mouse_delta.x * sensitivity;
             let new_pitch = (pitch - mouse_delta.y * sensitivity).clamp(
@@ -305,13 +316,13 @@ impl TestRunner {
                 std::f32::consts::FRAC_PI_2 - 0.01,
             );
 
-            let move_input = self.input_state.axis_2d(
+            let move_input = self.input_state.borrow().axis_2d(
                 "move_forward",
                 "move_backward",
                 "move_left",
                 "move_right",
             );
-            let speed = if self.input_state.pressed("sprint") {
+            let speed = if self.input_state.borrow().pressed("sprint") {
                 move_speed * sprint_multiplier
             } else {
                 move_speed
@@ -326,38 +337,42 @@ impl TestRunner {
             let mut vel_y = velocity.y;
             if grounded {
                 vel_y = 0.0;
-                if self.input_state.just_pressed("jump") {
+                if self.input_state.borrow().just_pressed("jump") {
                     vel_y = jump_impulse;
                 }
             }
-            vel_y += self.physics_world.gravity.y * dt;
+            vel_y += self.physics_world.borrow().gravity.y * dt;
             desired.y = vel_y * dt;
 
             let (_effective, new_grounded) =
                 self.physics_world
+                    .borrow_mut()
                     .move_character(rb_handle, col_handle, desired, dt);
 
             // Update player + character controller
-            if let Ok(mut player) = self.scene_world.world.get::<&mut Player>(entity) {
+            if let Ok(mut player) = self.scene_world.borrow_mut().world.get::<&mut Player>(entity) {
                 player.yaw = new_yaw;
                 player.pitch = new_pitch;
             }
-            if let Ok(mut cc) = self
-                .scene_world
-                .world
-                .get::<&mut CharacterController>(entity)
-            {
+            if let Ok(mut cc) = self.scene_world.borrow_mut().world.get::<&mut CharacterController>(entity) {
                 cc.grounded = new_grounded;
                 cc.velocity.y = vel_y;
             }
 
             // Sync physics → transform
-            self.physics_world.sync_to_ecs(&mut self.scene_world.world);
+            {
+                let pw = self.physics_world.borrow();
+                let mut sw = self.scene_world.borrow_mut();
+                pw.sync_to_ecs(&mut sw.world);
+            }
         }
 
-        self.physics_world.step(dt);
-        self.physics_world
-            .sync_to_ecs(&mut self.scene_world.world);
+        self.physics_world.borrow_mut().step(dt);
+        {
+            let pw = self.physics_world.borrow();
+            let mut sw = self.scene_world.borrow_mut();
+            pw.sync_to_ecs(&mut sw.world);
+        }
     }
 }
 
@@ -435,15 +450,15 @@ pub fn run_test_file(project_root: &Path, test_file: &Path) -> Vec<TestResult> {
 
 /// Run a single test function in an isolated TestRunner.
 fn run_single_test(project_root: &Path, test_source: &str, test_name: &str) -> TestResult {
-    // Each test gets a fresh TestRunner
-    let mut runner = TestRunner::new(project_root);
+    // Each test gets a fresh TestRunner, wrapped in Rc<RefCell<>> for safe sharing with Lua closures
+    let runner = Rc::new(RefCell::new(TestRunner::new(project_root)));
     let start_time = std::time::Instant::now();
 
     // Create the test Lua VM with the test API
     let test_lua = Lua::new();
 
     // Register test API functions
-    if let Err(e) = register_test_api(&test_lua, &mut runner) {
+    if let Err(e) = register_test_api(&test_lua, runner.clone()) {
         return TestResult {
             name: test_name.to_string(),
             passed: false,
@@ -471,7 +486,7 @@ fn run_single_test(project_root: &Path, test_source: &str, test_name: &str) -> T
         }
     };
 
-    let game_time = runner.total_time;
+    let game_time = runner.borrow().total_time;
     let _elapsed = start_time.elapsed();
 
     match result {
@@ -491,10 +506,9 @@ fn run_single_test(project_root: &Path, test_source: &str, test_name: &str) -> T
 }
 
 /// Register the test API into a Lua state.
-/// Uses raw pointers to the TestRunner for the API functions.
-fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
+/// Uses Rc<RefCell<TestRunner>> for safe shared access from Lua closures.
+fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), String> {
     let globals = lua.globals();
-    let runner_ptr = runner as *mut TestRunner;
 
     // log.info(msg) — test logging
     let log_table = lua.create_table().map_err(|e| e.to_string())?;
@@ -511,10 +525,10 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
 
     // scene.load(path) — load a scene
     let scene_table = lua.create_table().map_err(|e| e.to_string())?;
+    let r = runner.clone();
     let scene_load = lua
         .create_function(move |_, path: String| {
-            let runner = unsafe { &mut *runner_ptr };
-            runner
+            r.borrow_mut()
                 .load_scene(&path)
                 .map_err(|e| LuaError::RuntimeError(e))?;
             Ok(())
@@ -525,25 +539,31 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // scene.find(entity_id) -> table with :get(component) method
+    let r = runner.clone();
     let scene_find = lua
         .create_function(move |lua, id: String| {
-            let runner = unsafe { &*runner_ptr };
-            match runner.scene_world.entity_registry.get(&id) {
+            let runner = r.borrow();
+            let sw = runner.scene_world.borrow();
+            match sw.entity_registry.get(&id) {
                 Some(&_entity) => {
+                    drop(sw);
+                    drop(runner);
                     let entity_ref = lua.create_table()?;
                     entity_ref.set("id", id.clone())?;
 
                     // entity:get("transform") -> { position = { x, y, z } }
                     let id_clone = id.clone();
+                    let r2 = r.clone();
                     let get_fn = lua.create_function(move |lua, (_self_tbl, component): (LuaTable, String)| {
-                        let runner = unsafe { &*runner_ptr };
-                        let entity = match runner.scene_world.entity_registry.get(&id_clone) {
+                        let runner = r2.borrow();
+                        let sw = runner.scene_world.borrow();
+                        let entity = match sw.entity_registry.get(&id_clone) {
                             Some(&e) => e,
                             None => return Err(LuaError::RuntimeError(format!("Entity '{}' not found", id_clone))),
                         };
                         match component.as_str() {
                             "transform" => {
-                                if let Ok(t) = runner.scene_world.world.get::<&Transform>(entity) {
+                                if let Ok(t) = sw.world.get::<&Transform>(entity) {
                                     let tbl = lua.create_table()?;
                                     let pos = lua.create_table()?;
                                     pos.set("x", t.position.x)?;
@@ -556,7 +576,6 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
                                 }
                             }
                             "health" => {
-                                // Read from game table in script runtime
                                 let tbl = lua.create_table()?;
                                 tbl.set("current", 100)?; // placeholder
                                 Ok(LuaValue::Table(tbl))
@@ -580,44 +599,43 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
 
     // input.inject(action, type, value) — inject input
     let input_table = lua.create_table().map_err(|e| e.to_string())?;
+    let r = runner.clone();
     let input_inject = lua
         .create_function(move |_, (action, kind, value): (String, String, LuaValue)| {
-            let runner = unsafe { &mut *runner_ptr };
+            let runner = r.borrow_mut();
+            let mut input = runner.input_state.borrow_mut();
             match kind.as_str() {
                 "press" => {
-                    // Map action name to key name for injection
                     let key = action_to_key(&action);
-                    runner.input_state.inject_key_press(&key);
+                    input.inject_key_press(&key);
                 }
                 "release" => {
                     let key = action_to_key(&action);
-                    runner.input_state.inject_key_release(&key);
+                    input.inject_key_release(&key);
                 }
                 "axis" => {
-                    // value is a table {x, y} for movement
                     if let LuaValue::Table(tbl) = value {
                         let x: f32 = tbl.get(1).unwrap_or(0.0);
                         let y: f32 = tbl.get(2).unwrap_or(0.0);
-                        // Only release keys we're NOT pressing (avoid same-frame cancel)
                         if y > 0.0 {
-                            runner.input_state.inject_key_press("W");
-                            runner.input_state.inject_key_release("S");
+                            input.inject_key_press("W");
+                            input.inject_key_release("S");
                         } else if y < 0.0 {
-                            runner.input_state.inject_key_release("W");
-                            runner.input_state.inject_key_press("S");
+                            input.inject_key_release("W");
+                            input.inject_key_press("S");
                         } else {
-                            runner.input_state.inject_key_release("W");
-                            runner.input_state.inject_key_release("S");
+                            input.inject_key_release("W");
+                            input.inject_key_release("S");
                         }
                         if x > 0.0 {
-                            runner.input_state.inject_key_press("D");
-                            runner.input_state.inject_key_release("A");
+                            input.inject_key_press("D");
+                            input.inject_key_release("A");
                         } else if x < 0.0 {
-                            runner.input_state.inject_key_release("D");
-                            runner.input_state.inject_key_press("A");
+                            input.inject_key_release("D");
+                            input.inject_key_press("A");
                         } else {
-                            runner.input_state.inject_key_release("D");
-                            runner.input_state.inject_key_release("A");
+                            input.inject_key_release("D");
+                            input.inject_key_release("A");
                         }
                     }
                 }
@@ -634,10 +652,10 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // wait_frames(n) — advance N frames
+    let r = runner.clone();
     let wait_frames = lua
         .create_function(move |_, n: u64| {
-            let runner = unsafe { &mut *runner_ptr };
-            runner.step_frames(n);
+            r.borrow_mut().step_frames(n);
             Ok(())
         })
         .map_err(|e| e.to_string())?;
@@ -646,10 +664,10 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // wait_seconds(n) — advance N seconds of game time
+    let r = runner.clone();
     let wait_seconds = lua
         .create_function(move |_, n: f32| {
-            let runner = unsafe { &mut *runner_ptr };
-            runner.step_seconds(n);
+            r.borrow_mut().step_seconds(n);
             Ok(())
         })
         .map_err(|e| e.to_string())?;
@@ -658,19 +676,20 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // wait_for_event(event_type, timeout_seconds) — advance until event occurs
+    let r = runner.clone();
     let wait_for_event = lua
         .create_function(move |_, (event_type, timeout): (String, Option<f32>)| {
-            let runner = unsafe { &mut *runner_ptr };
             let timeout = timeout.unwrap_or(10.0);
-            let max_frames = (timeout / runner.delta_time) as u64;
+            let delta_time = r.borrow().delta_time;
+            let max_frames = (timeout / delta_time) as u64;
             let empty_filter = std::collections::HashMap::new();
             for _ in 0..max_frames {
-                if runner.event_occurred(&event_type, &empty_filter) {
+                if r.borrow().event_occurred(&event_type, &empty_filter) {
                     return Ok(true);
                 }
-                runner.step_frame();
+                r.borrow_mut().step_frame();
             }
-            Ok(runner.event_occurred(&event_type, &empty_filter))
+            Ok(r.borrow().event_occurred(&event_type, &empty_filter))
         })
         .map_err(|e| e.to_string())?;
     globals
@@ -678,13 +697,14 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // wait_until(fn, timeout) — advance until condition is true
+    let r = runner.clone();
     let wait_until_fn = lua
         .create_function(move |_, (func, timeout): (LuaFunction, Option<f32>)| {
-            let runner = unsafe { &mut *runner_ptr };
             let timeout = timeout.unwrap_or(10.0);
-            let max_frames = (timeout / runner.delta_time) as u64;
+            let delta_time = r.borrow().delta_time;
+            let max_frames = (timeout / delta_time) as u64;
             for _ in 0..max_frames {
-                runner.step_frame();
+                r.borrow_mut().step_frame();
                 if let Ok(result) = func.call::<bool>(()) {
                     if result {
                         return Ok(true);
@@ -702,9 +722,10 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // event_occurred(event_type, filter_table) -> bool
+    let r = runner.clone();
     let event_occurred_fn = lua
         .create_function(move |_, (event_type, filter): (String, Option<LuaTable>)| {
-            let runner = unsafe { &*runner_ptr };
+            let runner = r.borrow();
             let mut filter_map = std::collections::HashMap::new();
             if let Some(tbl) = filter {
                 for pair in tbl.pairs::<String, String>() {
@@ -721,9 +742,10 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // get_position(entity_id) -> x, y, z
+    let r = runner.clone();
     let get_position = lua
         .create_function(move |_, id: String| {
-            let runner = unsafe { &*runner_ptr };
+            let runner = r.borrow();
             match runner.get_entity_position(&id) {
                 Some(pos) => Ok((pos.x, pos.y, pos.z)),
                 None => Ok((0.0f32, 0.0f32, 0.0f32)),
@@ -735,10 +757,10 @@ fn register_test_api(lua: &Lua, runner: &mut TestRunner) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // get_game_value(key) -> value from the script runtime's game table
-    // Uses typed getters to extract primitives safely across Lua VMs.
+    let r = runner.clone();
     let get_game_value = lua
         .create_function(move |_, key: String| {
-            let runner = unsafe { &*runner_ptr };
+            let runner = r.borrow();
             let globals = runner.script_runtime.lua.globals();
             if let Ok(game_table) = globals.get::<LuaTable>("game") {
                 // Try integer first (player_health = 100)
@@ -774,7 +796,7 @@ fn action_to_key(action: &str) -> String {
         "move_right" | "right" => "D".to_string(),
         "jump" => "Space".to_string(),
         "sprint" => "ShiftLeft".to_string(),
-        "fire" | "attack" => "Left".to_string(), // mouse button - handled specially
+        "fire" | "attack" => "Left".to_string(),
         _ => action.to_string(),
     }
 }

@@ -32,7 +32,7 @@ impl From<gltf::Error> for MeshError {
     }
 }
 
-/// 3D vertex for mesh rendering.
+/// 3D vertex for mesh rendering (with optional skeletal animation data).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex3D {
@@ -40,11 +40,23 @@ pub struct Vertex3D {
     pub normal: [f32; 3],
     pub tex_coords: [f32; 2],
     pub color: [f32; 4],
+    /// Joint indices for skeletal animation (up to 4 influences).
+    /// For non-skinned meshes, set to [0, 0, 0, 0].
+    pub joint_indices: [u32; 4],
+    /// Joint weights for skeletal animation (up to 4 influences).
+    /// For non-skinned meshes, set to [1.0, 0.0, 0.0, 0.0].
+    pub joint_weights: [f32; 4],
 }
 
 impl Vertex3D {
-    const ATTRIBS: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
+    const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+        0 => Float32x3,  // position
+        1 => Float32x3,  // normal
+        2 => Float32x2,  // tex_coords
+        3 => Float32x4,  // color
+        4 => Uint32x4,   // joint_indices
+        5 => Float32x4   // joint_weights
+    ];
 
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -55,6 +67,12 @@ impl Vertex3D {
     }
 }
 
+/// Skinning data extracted from a glTF file.
+pub struct SkinData {
+    pub skeleton: naive_core::animation::Skeleton,
+    pub clips: Vec<naive_core::animation::AnimationClip>,
+}
+
 /// A loaded GPU mesh.
 pub struct GpuMesh {
     pub vertex_buffer: wgpu::Buffer,
@@ -62,6 +80,8 @@ pub struct GpuMesh {
     pub index_count: u32,
     /// Texture bind group for GLB albedo texture (None = no texture).
     pub texture_bind_group: Option<wgpu::BindGroup>,
+    /// Skinning data if the mesh has a skeleton and animations.
+    pub skin_data: Option<SkinData>,
 }
 
 /// Shared texture resources: bind group layout and 1x1 white fallback.
@@ -257,6 +277,23 @@ impl MeshCache {
         &self.meshes[handle.0]
     }
 
+    /// Check if a mesh has skin data.
+    pub fn has_skin(&self, handle: MeshHandle) -> bool {
+        self.meshes.get(handle.0).map(|m| m.skin_data.is_some()).unwrap_or(false)
+    }
+
+    /// Take skin data from all meshes that have it (ownership transfer).
+    /// Returns (mesh_index, SkinData) pairs.
+    pub fn take_skin_data(&mut self) -> Vec<(usize, SkinData)> {
+        let mut result = Vec::new();
+        for (i, mesh) in self.meshes.iter_mut().enumerate() {
+            if let Some(skin_data) = mesh.skin_data.take() {
+                result.push((i, skin_data));
+            }
+        }
+        result
+    }
+
     /// Get the path/name for a mesh handle (reverse lookup for serialization).
     pub fn name_for_handle(&self, handle: MeshHandle) -> Option<String> {
         for (path, &h) in &self.path_to_handle {
@@ -358,12 +395,190 @@ fn load_gltf(
         None
     };
 
+    // Extract skin and animation data
+    let skin_data = extract_skin_data(&document, &buffers);
+
     Ok(GpuMesh {
         vertex_buffer,
         index_buffer,
         index_count: all_indices.len() as u32,
         texture_bind_group,
+        skin_data,
     })
+}
+
+/// Extract skeleton and animation clip data from a glTF document.
+fn extract_skin_data(
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+) -> Option<SkinData> {
+    let skin = document.skins().next()?;
+
+    // Build joint list
+    let joint_nodes: Vec<gltf::Node> = skin.joints().collect();
+
+    // Read inverse bind matrices
+    let ibms: Vec<glam::Mat4> = skin
+        .reader(|buf| Some(&buffers[buf.index()]))
+        .read_inverse_bind_matrices()
+        .map(|iter| iter.map(|m| glam::Mat4::from_cols_array_2d(&m)).collect())
+        .unwrap_or_else(|| vec![glam::Mat4::IDENTITY; joint_nodes.len()]);
+
+    // Map node index -> joint index
+    let node_to_joint: std::collections::HashMap<usize, usize> = joint_nodes
+        .iter()
+        .enumerate()
+        .map(|(ji, node)| (node.index(), ji))
+        .collect();
+
+    // Build parent map by walking node children: if joint A has child joint B, then B's parent is A
+    let mut parent_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for node in &joint_nodes {
+        for child in node.children() {
+            if node_to_joint.contains_key(&child.index()) {
+                parent_map.insert(child.index(), node.index());
+            }
+        }
+    }
+
+    // Build joints
+    let joints: Vec<naive_core::animation::Joint> = joint_nodes
+        .iter()
+        .enumerate()
+        .map(|(i, node)| {
+            let parent = parent_map
+                .get(&node.index())
+                .and_then(|parent_node_idx| node_to_joint.get(parent_node_idx).copied());
+
+            let (t, r, s) = node.transform().decomposed();
+            let local_transform = naive_core::animation::JointTransform {
+                translation: glam::Vec3::from(t),
+                rotation: glam::Quat::from_array(r),
+                scale: glam::Vec3::from(s),
+            };
+
+            naive_core::animation::Joint {
+                name: node.name().unwrap_or("joint").to_string(),
+                parent,
+                inverse_bind_matrix: ibms.get(i).copied().unwrap_or(glam::Mat4::IDENTITY),
+                local_transform,
+            }
+        })
+        .collect();
+
+    let skeleton = naive_core::animation::Skeleton::new(joints);
+
+    // Extract animation clips
+    let clips: Vec<naive_core::animation::AnimationClip> = document
+        .animations()
+        .enumerate()
+        .map(|(anim_idx, anim)| {
+            let channels: Vec<naive_core::animation::AnimationChannel> = anim
+                .channels()
+                .filter_map(|channel| {
+                    let target = channel.target();
+                    let joint_index = node_to_joint.get(&target.node().index())?;
+
+                    let property = match target.property() {
+                        gltf::animation::Property::Translation => {
+                            naive_core::animation::ChannelProperty::Translation
+                        }
+                        gltf::animation::Property::Rotation => {
+                            naive_core::animation::ChannelProperty::Rotation
+                        }
+                        gltf::animation::Property::Scale => {
+                            naive_core::animation::ChannelProperty::Scale
+                        }
+                        _ => return None,
+                    };
+
+                    let sampler = channel.sampler();
+                    let interpolation = match sampler.interpolation() {
+                        gltf::animation::Interpolation::Step => {
+                            naive_core::animation::Interpolation::Step
+                        }
+                        gltf::animation::Interpolation::Linear => {
+                            naive_core::animation::Interpolation::Linear
+                        }
+                        gltf::animation::Interpolation::CubicSpline => {
+                            naive_core::animation::Interpolation::CubicSpline
+                        }
+                    };
+
+                    let reader = channel.reader(|buf| Some(&buffers[buf.index()]));
+                    let timestamps: Vec<f32> = reader.read_inputs()?.collect();
+
+                    let values = match property {
+                        naive_core::animation::ChannelProperty::Translation
+                        | naive_core::animation::ChannelProperty::Scale => {
+                            let outputs = reader.read_outputs()?;
+                            match outputs {
+                                gltf::animation::util::ReadOutputs::Translations(iter) => {
+                                    naive_core::animation::ChannelValues::Vec3(
+                                        iter.map(|v| glam::Vec3::from(v)).collect(),
+                                    )
+                                }
+                                gltf::animation::util::ReadOutputs::Scales(iter) => {
+                                    naive_core::animation::ChannelValues::Vec3(
+                                        iter.map(|v| glam::Vec3::from(v)).collect(),
+                                    )
+                                }
+                                _ => return None,
+                            }
+                        }
+                        naive_core::animation::ChannelProperty::Rotation => {
+                            let outputs = reader.read_outputs()?;
+                            match outputs {
+                                gltf::animation::util::ReadOutputs::Rotations(iter) => {
+                                    naive_core::animation::ChannelValues::Quat(
+                                        iter.into_f32()
+                                            .map(|v| glam::Quat::from_array(v).normalize())
+                                            .collect(),
+                                    )
+                                }
+                                _ => return None,
+                            }
+                        }
+                    };
+
+                    Some(naive_core::animation::AnimationChannel {
+                        joint_index: *joint_index,
+                        property,
+                        interpolation,
+                        timestamps,
+                        values,
+                    })
+                })
+                .collect();
+
+            let duration = channels
+                .iter()
+                .flat_map(|c| c.timestamps.last())
+                .copied()
+                .fold(0.0f32, f32::max);
+
+            naive_core::animation::AnimationClip {
+                name: anim
+                    .name()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("clip_{}", anim_idx)),
+                duration,
+                channels,
+            }
+        })
+        .collect();
+
+    if skeleton.joints.is_empty() {
+        return None;
+    }
+
+    tracing::info!(
+        "Loaded skeleton: {} joints, {} animation clips",
+        skeleton.joints.len(),
+        clips.len()
+    );
+
+    Some(SkinData { skeleton, clips })
 }
 
 /// Recursively walk a glTF node tree, collecting mesh primitives with
@@ -420,15 +635,47 @@ fn collect_node_meshes(
 
             let base_vertex = vertices.len() as u32;
 
+            // Read joint indices and weights for skinned meshes
+            let joints: Vec<[u32; 4]> = reader
+                .read_joints(0)
+                .map(|j| j.into_u16().map(|v| [v[0] as u32, v[1] as u32, v[2] as u32, v[3] as u32]).collect())
+                .unwrap_or_else(|| vec![[0, 0, 0, 0]; positions.len()]);
+
+            let weights: Vec<[f32; 4]> = reader
+                .read_weights(0)
+                .map(|w| w.into_f32().collect())
+                .unwrap_or_else(|| vec![[1.0, 0.0, 0.0, 0.0]; positions.len()]);
+
+            // For skinned meshes, don't bake world transforms (skeleton handles that).
+            // For non-skinned meshes, bake transforms as before.
+            let is_skinned = reader.read_joints(0).is_some();
+            // Re-read since we consumed the iterator above
+            let _ = is_skinned; // Use the flag from joints vec being non-default
+            let has_joints = joints.iter().any(|j| j != &[0u32, 0, 0, 0]);
+
             for (i, pos) in positions.iter().enumerate() {
-                let p = world.transform_point3(glam::Vec3::from(*pos));
-                let n = normal_mat
-                    * glam::Vec3::from(normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]));
+                let (p, n) = if has_joints {
+                    // Skinned: store local-space positions (skeleton transforms at runtime)
+                    let local_p = local.transform_point3(glam::Vec3::from(*pos));
+                    let local_n = glam::Mat3::from_mat4(local)
+                        .inverse()
+                        .transpose()
+                        * glam::Vec3::from(normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]));
+                    (local_p, local_n)
+                } else {
+                    // Non-skinned: bake world transform
+                    let p = world.transform_point3(glam::Vec3::from(*pos));
+                    let n = normal_mat
+                        * glam::Vec3::from(normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]));
+                    (p, n)
+                };
                 vertices.push(Vertex3D {
                     position: p.to_array(),
                     normal: n.normalize_or_zero().to_array(),
                     tex_coords: tex_coords.get(i).copied().unwrap_or([0.0, 0.0]),
                     color: colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]),
+                    joint_indices: joints.get(i).copied().unwrap_or([0, 0, 0, 0]),
+                    joint_weights: weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0]),
                 });
             }
 
@@ -523,6 +770,8 @@ fn create_procedural_sphere(device: &wgpu::Device, radius: f32, rings: u32, sect
                 normal: [nx, ny, nz],
                 tex_coords: [sector as f32 / sectors as f32, ring as f32 / rings as f32],
                 color: [1.0, 1.0, 1.0, 1.0],
+                joint_indices: [0, 0, 0, 0],
+                joint_weights: [1.0, 0.0, 0.0, 0.0],
             });
         }
     }
@@ -560,43 +809,46 @@ fn create_procedural_sphere(device: &wgpu::Device, radius: f32, rings: u32, sect
         index_buffer,
         index_count: indices.len() as u32,
         texture_bind_group: None,
+        skin_data: None,
     }
 }
 
 /// Create a procedural unit cube as fallback.
 fn create_procedural_cube(device: &wgpu::Device) -> GpuMesh {
+    let j = [0u32, 0, 0, 0];
+    let w = [1.0f32, 0.0, 0.0, 0.0];
     #[rustfmt::skip]
     let vertices: Vec<Vertex3D> = vec![
         // Front face (z = 0.5)
-        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [ 0.0,  0.0,  1.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
         // Back face (z = -0.5)
-        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 0.0,  0.0, -1.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
         // Top face (y = 0.5)
-        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [ 0.0,  1.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
         // Bottom face (y = -0.5)
-        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [ 0.0, -1.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
         // Right face (x = 0.5)
-        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [ 0.5, -0.5,  0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5, -0.5, -0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5,  0.5, -0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [ 0.5,  0.5,  0.5], normal: [ 1.0,  0.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
         // Left face (x = -0.5)
-        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
-        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0] },
+        Vertex3D { position: [-0.5, -0.5, -0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [-0.5, -0.5,  0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [1.0, 1.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [-0.5,  0.5,  0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [1.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
+        Vertex3D { position: [-0.5,  0.5, -0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
     ];
 
     #[rustfmt::skip]
@@ -626,5 +878,6 @@ fn create_procedural_cube(device: &wgpu::Device) -> GpuMesh {
         index_buffer,
         index_count: indices.len() as u32,
         texture_bind_group: None,
+        skin_data: None,
     }
 }

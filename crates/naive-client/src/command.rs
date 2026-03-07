@@ -171,15 +171,44 @@ pub fn handle_command(
     input_state: &mut Option<InputState>,
     paused: &mut bool,
 ) -> CommandResponse {
+    handle_command_rc(req, scene_world.as_mut(), event_bus, input_state.as_mut(), paused)
+}
+
+/// Core command dispatch that takes pre-borrowed Option refs (works with both owned and Rc<RefCell> fields).
+pub fn handle_command_rc(
+    req: &CommandRequest,
+    scene_world: Option<&mut SceneWorld>,
+    event_bus: &mut EventBus,
+    input_state: Option<&mut InputState>,
+    paused: &mut bool,
+) -> CommandResponse {
     match req.cmd.as_str() {
-        "list_entities" => cmd_list_entities(scene_world),
-        "query_entity" => cmd_query_entity(req, scene_world),
-        "modify_entity" => cmd_modify_entity(req, scene_world),
-        "spawn_entity" => cmd_spawn_entity(req, scene_world),
-        "destroy_entity" => cmd_destroy_entity(req, scene_world),
+        "list_entities" => match scene_world {
+            Some(sw) => cmd_list_entities(sw),
+            None => CommandResponse::error("No scene loaded"),
+        },
+        "query_entity" => match scene_world {
+            Some(sw) => cmd_query_entity(req, sw),
+            None => CommandResponse::error("No scene loaded"),
+        },
+        "modify_entity" => match scene_world {
+            Some(sw) => cmd_modify_entity(req, sw),
+            None => CommandResponse::error("No scene loaded"),
+        },
+        "spawn_entity" => match scene_world {
+            Some(sw) => cmd_spawn_entity(req, sw),
+            None => CommandResponse::error("No scene loaded"),
+        },
+        "destroy_entity" => match scene_world {
+            Some(sw) => cmd_destroy_entity(req, sw),
+            None => CommandResponse::error("No scene loaded"),
+        },
         "emit_event" => cmd_emit_event(req, event_bus),
         "query_events" => cmd_query_events(req, event_bus),
-        "inject_input" => cmd_inject_input(req, input_state),
+        "inject_input" => match input_state {
+            Some(is) => cmd_inject_input(req, is),
+            None => CommandResponse::error("No input state"),
+        },
         "runtime_control" => cmd_runtime_control(req, paused),
         _ => CommandResponse::error(format!("Unknown command: {}", req.cmd)),
     }
@@ -207,11 +236,7 @@ fn json_array_to_vec3(arr: &[Value]) -> Option<glam::Vec3> {
 
 // --- Entity commands ---
 
-fn cmd_list_entities(scene_world: &Option<SceneWorld>) -> CommandResponse {
-    let sw = match scene_world {
-        Some(sw) => sw,
-        None => return CommandResponse::error("No scene loaded"),
-    };
+fn cmd_list_entities(sw: &SceneWorld) -> CommandResponse {
     let entities: Vec<Value> = sw.entity_registry.iter().map(|(id, &entity)| {
         let tags = sw.world.get::<&Tags>(entity)
             .map(|t| t.0.clone()).unwrap_or_default();
@@ -220,14 +245,10 @@ fn cmd_list_entities(scene_world: &Option<SceneWorld>) -> CommandResponse {
     CommandResponse::ok(json!({"entities": entities}))
 }
 
-fn cmd_query_entity(req: &CommandRequest, scene_world: &Option<SceneWorld>) -> CommandResponse {
+fn cmd_query_entity(req: &CommandRequest, sw: &SceneWorld) -> CommandResponse {
     let entity_id = match get_str_param(req, "entity_id") {
         Some(id) => id,
         None => return CommandResponse::error("Missing 'entity_id' parameter"),
-    };
-    let sw = match scene_world {
-        Some(sw) => sw,
-        None => return CommandResponse::error("No scene loaded"),
     };
     let entity = match sw.entity_registry.get(entity_id) {
         Some(&e) => e,
@@ -288,14 +309,10 @@ fn cmd_query_entity(req: &CommandRequest, scene_world: &Option<SceneWorld>) -> C
     CommandResponse::ok(Value::Object(data))
 }
 
-fn cmd_modify_entity(req: &CommandRequest, scene_world: &mut Option<SceneWorld>) -> CommandResponse {
+fn cmd_modify_entity(req: &CommandRequest, sw: &mut SceneWorld) -> CommandResponse {
     let entity_id = match get_str_param(req, "entity_id") {
         Some(id) => id.to_string(),
         None => return CommandResponse::error("Missing 'entity_id' parameter"),
-    };
-    let sw = match scene_world {
-        Some(sw) => sw,
-        None => return CommandResponse::error("No scene loaded"),
     };
     let entity = match sw.entity_registry.get(&entity_id) {
         Some(&e) => e,
@@ -351,14 +368,10 @@ fn cmd_modify_entity(req: &CommandRequest, scene_world: &mut Option<SceneWorld>)
     CommandResponse::ok_empty()
 }
 
-fn cmd_spawn_entity(req: &CommandRequest, scene_world: &mut Option<SceneWorld>) -> CommandResponse {
+fn cmd_spawn_entity(req: &CommandRequest, sw: &mut SceneWorld) -> CommandResponse {
     let entity_id = match get_str_param(req, "entity_id") {
         Some(id) => id.to_string(),
         None => return CommandResponse::error("Missing 'entity_id' parameter"),
-    };
-    let sw = match scene_world {
-        Some(sw) => sw,
-        None => return CommandResponse::error("No scene loaded"),
     };
     if sw.entity_registry.contains_key(&entity_id) {
         return CommandResponse::error(format!("Entity '{}' already exists", entity_id));
@@ -413,14 +426,10 @@ fn cmd_spawn_entity(req: &CommandRequest, scene_world: &mut Option<SceneWorld>) 
     CommandResponse::ok(json!({"entity_id": entity_id}))
 }
 
-fn cmd_destroy_entity(req: &CommandRequest, scene_world: &mut Option<SceneWorld>) -> CommandResponse {
+fn cmd_destroy_entity(req: &CommandRequest, sw: &mut SceneWorld) -> CommandResponse {
     let entity_id = match get_str_param(req, "entity_id") {
         Some(id) => id.to_string(),
         None => return CommandResponse::error("Missing 'entity_id' parameter"),
-    };
-    let sw = match scene_world {
-        Some(sw) => sw,
-        None => return CommandResponse::error("No scene loaded"),
     };
     let entity = match sw.entity_registry.remove(&entity_id) {
         Some(e) => e,
@@ -465,11 +474,7 @@ fn cmd_query_events(req: &CommandRequest, event_bus: &EventBus) -> CommandRespon
 
 // --- Input commands ---
 
-fn cmd_inject_input(req: &CommandRequest, input_state: &mut Option<InputState>) -> CommandResponse {
-    let input = match input_state {
-        Some(i) => i,
-        None => return CommandResponse::error("Input system not initialized"),
-    };
+fn cmd_inject_input(req: &CommandRequest, input: &mut InputState) -> CommandResponse {
     let action = match get_str_param(req, "action") {
         Some(a) => a,
         None => return CommandResponse::error("Missing 'action' parameter"),
@@ -558,10 +563,11 @@ mod tests {
     }
 
     #[test]
-    fn test_list_entities_no_scene() {
-        let mut scene: Option<SceneWorld> = None;
+    fn test_list_entities_empty_scene() {
+        let scene = SceneWorld::new();
         let resp = cmd_list_entities(&scene);
-        assert_eq!(resp.status, "error");
+        // Empty scene should return ok with empty entities list
+        assert_eq!(resp.status, "ok");
     }
 
     #[test]

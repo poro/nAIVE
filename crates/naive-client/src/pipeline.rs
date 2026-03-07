@@ -515,6 +515,10 @@ pub struct CompiledPipeline {
     pub shadow_bind_group: Option<wgpu::BindGroup>,
     /// Shadow map sampler (comparison) for lighting pass.
     pub shadow_sampler: Option<wgpu::Sampler>,
+    /// Skin matrix storage buffer for skeletal animation (shared, updated per-entity).
+    pub skin_buffer: Option<wgpu::Buffer>,
+    pub skin_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    pub skin_bind_group: Option<wgpu::BindGroup>,
 }
 
 /// A single compiled render pass.
@@ -645,7 +649,37 @@ pub fn compile_pipeline(
         ..Default::default()
     });
 
-    // 5. Compile each pass
+    // 5. Create skin matrix storage buffer for skeletal animation
+    let skin_palette_size = std::mem::size_of::<crate::anim_system::BoneMatrixPalette>() as u64;
+    let skin_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Skin Matrix Storage Buffer"),
+        size: skin_palette_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let skin_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Skin Bind Group Layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let skin_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Skin Bind Group"),
+        layout: &skin_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: skin_buffer.as_entire_binding(),
+        }],
+    });
+
+    // 6. Compile each pass
     let mut compiled_passes = Vec::new();
     let mut gbuffer_bind_group_layout = None;
     let mut gbuffer_bind_group = None;
@@ -712,6 +746,7 @@ pub fn compile_pipeline(
                     &camera_state.bind_group_layout,
                     &draw_pool.bind_group_layout,
                     texture_bind_group_layout,
+                    Some(&skin_bind_group_layout),
                 )
             }
             PassType::Fullscreen => {
@@ -854,6 +889,7 @@ pub fn compile_pipeline(
                     &resources,
                     &shadow_bg_layout,
                     &draw_pool.bind_group_layout,
+                    &skin_bind_group_layout,
                 );
 
                 shadow_uniform_buffer = Some(shadow_buf);
@@ -910,6 +946,9 @@ pub fn compile_pipeline(
         shadow_bind_group_layout,
         shadow_bind_group,
         shadow_sampler,
+        skin_buffer: Some(skin_buffer),
+        skin_bind_group_layout: Some(skin_bind_group_layout),
+        skin_bind_group: Some(skin_bind_group),
     })
 }
 
@@ -966,17 +1005,20 @@ fn create_rasterize_pipeline(
     camera_bind_group_layout: &wgpu::BindGroupLayout,
     draw_bind_group_layout: &wgpu::BindGroupLayout,
     texture_bind_group_layout: Option<&wgpu::BindGroupLayout>,
+    skin_bind_group_layout: Option<&wgpu::BindGroupLayout>,
 ) -> wgpu::RenderPipeline {
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("GBuffer Shader"),
         source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
     });
 
-    let layouts: Vec<&wgpu::BindGroupLayout> = if let Some(tex_layout) = texture_bind_group_layout {
-        vec![camera_bind_group_layout, draw_bind_group_layout, tex_layout]
-    } else {
-        vec![camera_bind_group_layout, draw_bind_group_layout]
-    };
+    let mut layouts: Vec<&wgpu::BindGroupLayout> = vec![camera_bind_group_layout, draw_bind_group_layout];
+    if let Some(tex_layout) = texture_bind_group_layout {
+        layouts.push(tex_layout);
+    }
+    if let Some(skin_layout) = skin_bind_group_layout {
+        layouts.push(skin_layout);
+    }
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("GBuffer Pipeline Layout"),
@@ -1864,6 +1906,7 @@ fn create_shadow_pipeline(
     resources: &HashMap<String, GpuResource>,
     shadow_bind_group_layout: &wgpu::BindGroupLayout,
     draw_bind_group_layout: &wgpu::BindGroupLayout,
+    skin_bind_group_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shadow Depth Shader"),
@@ -1872,7 +1915,7 @@ fn create_shadow_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Shadow Pipeline Layout"),
-        bind_group_layouts: &[shadow_bind_group_layout, draw_bind_group_layout],
+        bind_group_layouts: &[shadow_bind_group_layout, draw_bind_group_layout, skin_bind_group_layout],
         push_constant_ranges: &[],
     });
 
@@ -1936,6 +1979,7 @@ pub fn execute_pipeline(
     splat_cache: &SplatCache,
     debug: &RenderDebugState,
     texture_resources: Option<&crate::mesh::TextureResources>,
+    bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
 ) {
     let output = match gpu.surface.get_current_texture() {
         Ok(t) => t,
@@ -1956,7 +2000,7 @@ pub fn execute_pipeline(
     let encoder = execute_pipeline_to_view(
         gpu, compiled, scene_world, camera_state, draw_pool,
         mesh_cache, material_cache, splat_cache, &swapchain_view, debug,
-        texture_resources,
+        texture_resources, bone_palettes,
     );
 
     gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -1976,6 +2020,7 @@ pub fn execute_pipeline_to_view(
     swapchain_view: &wgpu::TextureView,
     debug: &RenderDebugState,
     texture_resources: Option<&crate::mesh::TextureResources>,
+    bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
 ) -> wgpu::CommandEncoder {
 
     // DEBUG: dump camera VP matrix and first entities' transforms (frame 0 only)
@@ -2049,6 +2094,11 @@ pub fn execute_pipeline_to_view(
 
         let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
         let has_texture = if gpu_mesh.texture_bind_group.is_some() { 1.0f32 } else { 0.0f32 };
+        // Check if entity has skeletal animation
+        let entity_has_skin = scene_world.world
+            .get::<&crate::components::Animator>(entity)
+            .is_ok();
+
         let draw_uniform = DrawUniforms {
             model_matrix: model_matrix.to_cols_array_2d(),
             normal_matrix: normal_matrix.to_cols_array_2d(),
@@ -2056,7 +2106,7 @@ pub fn execute_pipeline_to_view(
             roughness,
             metallic,
             has_texture,
-            _pad: 0.0,
+            has_skin: if entity_has_skin { 1.0 } else { 0.0 },
             emission,
             _padding: [0.0; 20],
         };
@@ -2178,6 +2228,7 @@ pub fn execute_pipeline_to_view(
             PassType::Rasterize => {
                 execute_rasterize_pass(
                     &mut encoder,
+                    gpu,
                     pass,
                     compiled,
                     scene_world,
@@ -2185,6 +2236,7 @@ pub fn execute_pipeline_to_view(
                     draw_pool,
                     mesh_cache,
                     texture_resources,
+                    bone_palettes,
                 );
             }
             PassType::Fullscreen => {
@@ -2210,11 +2262,13 @@ pub fn execute_pipeline_to_view(
             PassType::Shadow => {
                 execute_shadow_pass(
                     &mut encoder,
+                    gpu,
                     pass,
                     compiled,
                     scene_world,
                     draw_pool,
                     mesh_cache,
+                    bone_palettes,
                 );
             }
             PassType::Compute => {
@@ -2229,11 +2283,13 @@ pub fn execute_pipeline_to_view(
 /// Execute a shadow depth pass (renders all geometry from light's perspective).
 fn execute_shadow_pass(
     encoder: &mut wgpu::CommandEncoder,
+    gpu: &GpuState,
     pass: &CompiledPass,
     compiled: &CompiledPipeline,
     scene_world: &SceneWorld,
     draw_pool: &DrawUniformPool,
     mesh_cache: &MeshCache,
+    bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
 ) {
     let depth_view = pass
         .depth_target
@@ -2277,6 +2333,18 @@ fn execute_shadow_pass(
             let dynamic_offset = draw_index * DRAW_UNIFORM_SIZE as u32;
 
             render_pass.set_bind_group(1, &draw_pool.bind_group, &[dynamic_offset]);
+
+            // Upload bone matrices for skinned entities (group 2 in shadow shader)
+            if let (Some(skin_buffer), Some(skin_bg)) = (&compiled.skin_buffer, &compiled.skin_bind_group) {
+                if let Some(palette) = bone_palettes.get(&entity) {
+                    gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[*palette]));
+                } else {
+                    let identity = crate::anim_system::BoneMatrixPalette::default();
+                    gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[identity]));
+                }
+                render_pass.set_bind_group(2, skin_bg, &[]);
+            }
+
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
             render_pass.set_index_buffer(
                 gpu_mesh.index_buffer.slice(..),
@@ -2291,6 +2359,7 @@ fn execute_shadow_pass(
 /// Execute a rasterize pass (G-buffer geometry pass).
 fn execute_rasterize_pass(
     encoder: &mut wgpu::CommandEncoder,
+    gpu: &GpuState,
     pass: &CompiledPass,
     compiled: &CompiledPipeline,
     scene_world: &SceneWorld,
@@ -2298,6 +2367,7 @@ fn execute_rasterize_pass(
     draw_pool: &DrawUniformPool,
     mesh_cache: &MeshCache,
     texture_resources: Option<&crate::mesh::TextureResources>,
+    bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
 ) {
     // Build color attachments from pass targets
     let color_views: Vec<&wgpu::TextureView> = pass
@@ -2369,6 +2439,18 @@ fn execute_rasterize_pass(
                 let tex_bg = gpu_mesh.texture_bind_group.as_ref()
                     .unwrap_or(&tex_res.default_bind_group);
                 render_pass.set_bind_group(2, tex_bg, &[]);
+            }
+
+            // Upload bone matrices for skinned entities (group 3)
+            if let (Some(skin_buffer), Some(skin_bg)) = (&compiled.skin_buffer, &compiled.skin_bind_group) {
+                if let Some(palette) = bone_palettes.get(&entity) {
+                    gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[*palette]));
+                } else {
+                    // Non-skinned: upload identity palette (has_skin=0)
+                    let identity = crate::anim_system::BoneMatrixPalette::default();
+                    gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[identity]));
+                }
+                render_pass.set_bind_group(3, skin_bg, &[]);
             }
 
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));

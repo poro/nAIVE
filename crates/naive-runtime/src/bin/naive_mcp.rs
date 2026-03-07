@@ -149,6 +149,10 @@ fn handle_tools_call(id: Option<Value>, request: &Value, socket_path: &str) -> V
             copy_field(args, &mut c, "code");
             c
         }
+        "naive_beautify_scene" => {
+            // Special: beautify runs locally, not via engine socket
+            return handle_beautify(id, args, socket_path);
+        }
         _ => return json_rpc_error(id, -32602, &format!("Unknown tool: {}", tool_name)),
     };
 
@@ -206,6 +210,125 @@ fn json_rpc_error(id: Option<Value>, code: i32, message: &str) -> Value {
         "id": id,
         "error": { "code": code, "message": message }
     })
+}
+
+fn handle_beautify(id: Option<Value>, args: &Value, socket_path: &str) -> Value {
+    // Step 1: Get scene YAML from the running engine
+    let scene_yaml = match send_command(socket_path, &json!({"cmd": "get_scene_yaml"})) {
+        Ok(response) => {
+            if let Some(yaml) = response["yaml"].as_str() {
+                yaml.to_string()
+            } else {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "content": [{"type": "text", "text": "Error: Could not get scene YAML from engine"}],
+                        "isError": true
+                    }
+                });
+            }
+        }
+        Err(e) => {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "content": [{"type": "text", "text": format!("Error connecting to engine: {}", e)}],
+                    "isError": true
+                }
+            });
+        }
+    };
+
+    // Step 2: Parse the scene
+    let scene: naive_client::scene::SceneFile = match naive_client::scene::parse_scene(&scene_yaml) {
+        Ok(s) => s,
+        Err(e) => {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "content": [{"type": "text", "text": format!("Error parsing scene: {}", e)}],
+                    "isError": true
+                }
+            });
+        }
+    };
+
+    // Step 3: Build beautify config
+    let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let mut config = naive_client::beautify::config_from_env();
+    if let Some(style) = args.get("style").and_then(|v| v.as_str()) {
+        config.style_prompt = Some(style.to_string());
+    }
+    if let Some(output) = args.get("output").and_then(|v| v.as_str()) {
+        config.output_ply = output.to_string();
+    }
+
+    let export_only = args.get("export_only").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    if export_only {
+        // Just export the GLB
+        match naive_client::beautify::export_scene_to_glb(&project_root, &scene) {
+            Ok(glb_data) => {
+                let glb_path = project_root.join("assets/splats/beautify_export.glb");
+                if let Some(parent) = glb_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&glb_path, &glb_data);
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "content": [{
+                            "type": "text",
+                            "text": format!("Exported scene geometry to GLB ({} bytes) at {}", glb_data.len(), glb_path.display())
+                        }]
+                    }
+                });
+            }
+            Err(e) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "content": [{"type": "text", "text": format!("Export failed: {}", e)}],
+                        "isError": true
+                    }
+                });
+            }
+        }
+    }
+
+    // Step 4: Run full beautification pipeline
+    match naive_client::beautify::beautify_scene(&project_root, &scene, &config) {
+        Ok(result) => {
+            let msg = format!(
+                "Beautification complete!\nPLY saved to: {}\nBackend: {}\nSplat count: {}",
+                result.ply_path.display(),
+                result.backend_name,
+                result.splat_count.map(|c| c.to_string()).unwrap_or("unknown".to_string())
+            );
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "content": [{"type": "text", "text": msg}]
+                }
+            })
+        }
+        Err(e) => {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "content": [{"type": "text", "text": format!("Beautification failed: {}", e)}],
+                    "isError": true
+                }
+            })
+        }
+    }
 }
 
 fn tool_definitions() -> Vec<Value> {
@@ -365,6 +488,19 @@ fn tool_definitions() -> Vec<Value> {
                     "code": {"type": "string", "description": "Lua code to execute. Has access to all engine APIs (entity, physics, particles, camera, scene, events, audio). Return values and print() output are captured and returned."}
                 },
                 "required": ["code"]
+            }
+        }),
+        json!({
+            "name": "naive_beautify_scene",
+            "description": "Beautify the current scene: export geometry to GLB, send to World Labs/Marble/local GPU for Gaussian Splat generation, and import the result. The original meshes remain for physics; the splat provides photorealistic visuals.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "style": {"type": "string", "description": "Style prompt (e.g., 'photorealistic', 'stylized anime', 'watercolor'). Default: 'photorealistic'"},
+                    "output": {"type": "string", "description": "Output PLY path relative to project root. Default: 'assets/splats/beautified.ply'"},
+                    "export_only": {"type": "boolean", "description": "If true, only export the GLB without sending to backend. Useful for manual upload."}
+                },
+                "required": []
             }
         }),
     ]

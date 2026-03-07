@@ -1,11 +1,14 @@
 // Re-export naive-core modules so client files can use `crate::components`, `crate::scene`, etc.
+pub use naive_core::animation;
 pub use naive_core::components;
 pub use naive_core::events;
 pub use naive_core::scene;
 pub use naive_core::transform;
 pub use naive_core::tween;
 
+pub mod anim_system;
 pub mod audio;
+pub mod beautify;
 pub mod audio_gen;
 pub mod build;
 pub mod camera;

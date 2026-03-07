@@ -58,7 +58,7 @@ pub struct DrawUniforms {
     pub roughness: f32,
     pub metallic: f32,
     pub has_texture: f32,
-    pub _pad: f32,
+    pub has_skin: f32,
     pub emission: [f32; 4],
     // Pad to 256 bytes total: 64+64+16+16+16 = 176, need 80 more bytes = 20 floats
     pub _padding: [f32; 20],
@@ -505,7 +505,7 @@ pub fn render_scene_to_view(
             roughness: material.uniform.roughness,
             metallic: material.uniform.metallic,
             has_texture,
-            _pad: 0.0,
+            has_skin: 0.0,
             emission: material.uniform.emission,
             _padding: [0.0; 20],
         };

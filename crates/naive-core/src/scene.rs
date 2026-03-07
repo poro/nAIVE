@@ -99,6 +99,8 @@ pub struct ComponentMap {
     pub collision_damage: Option<CollisionDamageDef>,
     #[serde(default)]
     pub particle_emitter: Option<ParticleEmitterDef>,
+    #[serde(default)]
+    pub animator: Option<AnimatorDef>,
     /// Absorbs unknown component types for forward compatibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
@@ -315,6 +317,23 @@ pub struct ParticleEmitterDef {
     pub enabled: bool,
 }
 
+/// Animator component: enables skeletal animation on a skinned mesh.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AnimatorDef {
+    /// Initial animation state (e.g. "idle", "walk").
+    #[serde(default = "default_anim_state")]
+    pub state: String,
+    /// Playback speed multiplier.
+    #[serde(default = "default_anim_speed")]
+    pub speed: f32,
+    /// Whether to loop the animation.
+    #[serde(default = "default_true")]
+    pub looping: bool,
+}
+
+fn default_anim_state() -> String { "idle".to_string() }
+fn default_anim_speed() -> f32 { 1.0 }
+
 fn default_max_particles() -> u32 { 100 }
 fn default_spawn_rate() -> f32 { 10.0 }
 fn default_lifetime() -> [f32; 2] { [0.5, 1.5] }
@@ -343,6 +362,14 @@ fn default_range() -> f32 {
 }
 
 /// Load and parse a scene YAML file, resolving entity inheritance.
+/// Parse a scene from a YAML string.
+pub fn parse_scene(yaml: &str) -> Result<SceneFile, String> {
+    let mut scene: SceneFile =
+        serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse error: {}", e))?;
+    scene.entities = resolve_inheritance(&scene.entities).map_err(|e| format!("{}", e))?;
+    Ok(scene)
+}
+
 pub fn load_scene(path: &Path) -> Result<SceneFile, SceneError> {
     let contents = std::fs::read_to_string(path).map_err(SceneError::IoError)?;
     let mut scene: SceneFile = serde_yaml::from_str(&contents).map_err(SceneError::ParseError)?;

@@ -218,6 +218,92 @@ fn main() {
             return;
         }
 
+        // naive beautify [--scene X] [--style Y] [--output Z] [--mock P]
+        Some(naive_client::cli::Command::Beautify { scene, style, output, mock }) => {
+            let cwd = std::env::current_dir().expect("Failed to get current directory");
+            let project_root = naive_client::project_config::find_config(&cwd)
+                .and_then(|p| p.parent().map(|pp| pp.to_path_buf()))
+                .unwrap_or(cwd);
+
+            // Load .env if present
+            let env_path = project_root.join(".env");
+            if env_path.exists() {
+                if let Ok(contents) = std::fs::read_to_string(&env_path) {
+                    for line in contents.lines() {
+                        let line = line.trim();
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
+                        }
+                        if let Some((key, value)) = line.split_once('=') {
+                            std::env::set_var(key.trim(), value.trim());
+                        }
+                    }
+                }
+            }
+
+            // Load scene
+            let scene_path = scene.clone().unwrap_or_else(|| {
+                let config_path = project_root.join("naive.yaml");
+                if config_path.exists() {
+                    if let Ok(config) = naive_client::project_config::load_config(&config_path) {
+                        if let Some(s) = config.default_scene {
+                            return s;
+                        }
+                    }
+                }
+                "scenes/main.yaml".to_string()
+            });
+
+            let full_scene_path = project_root.join(&scene_path);
+            let scene_yaml = match std::fs::read_to_string(&full_scene_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to read scene '{}': {}", full_scene_path.display(), e);
+                    return;
+                }
+            };
+            let scene: naive_client::scene::SceneFile = match naive_client::scene::parse_scene(&scene_yaml) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to parse scene: {}", e);
+                    return;
+                }
+            };
+
+            // Build config
+            let mut config = naive_client::beautify::config_from_env();
+            if let Some(s) = style {
+                config.style_prompt = Some(s.clone());
+            }
+            if let Some(o) = output {
+                config.output_ply = o.clone();
+            }
+            if let Some(mock_path) = mock {
+                config.backend = naive_client::beautify::BeautifyBackend::Mock {
+                    ply_path: std::path::PathBuf::from(mock_path),
+                };
+            }
+
+            println!("Beautifying scene: {}", scene_path);
+            println!("Style: {}", config.style_prompt.as_deref().unwrap_or("photorealistic"));
+            println!("Output: {}", config.output_ply);
+
+            match naive_client::beautify::beautify_scene(&project_root, &scene, &config) {
+                Ok(result) => {
+                    println!("Beautification complete!");
+                    println!("PLY saved to: {}", result.ply_path.display());
+                    if let Some(count) = result.splat_count {
+                        println!("Gaussian count: {}", count);
+                    }
+                    println!("Backend: {}", result.backend_name);
+                }
+                Err(e) => {
+                    eprintln!("Beautification failed: {}", e);
+                }
+            }
+            return;
+        }
+
         // naive demo [selector] / naive demos [selector]
         Some(naive_client::cli::Command::Demo { selector })
         | Some(naive_client::cli::Command::Demos { selector }) => {
