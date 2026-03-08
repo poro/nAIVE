@@ -99,6 +99,9 @@ pub struct Engine {
     // Debug wireframe renderer for collider visualization
     pub debug_draw: Option<crate::debug_draw::DebugDrawRenderer>,
 
+    // Hot-reload notifications (message, timestamp, color)
+    pub reload_notifications: Vec<(String, instant::Instant, [f32; 4])>,
+
     // Camera shake state
     pub camera_shake: Rc<RefCell<CameraShakeState>>,
 
@@ -163,6 +166,7 @@ impl Engine {
                 ..Default::default()
             },
             debug_draw: None,
+            reload_notifications: Vec::new(),
             camera_shake: Rc::new(RefCell::new(CameraShakeState::new())),
             editor_camera: None,
             editor_command_log: Vec::new(),
@@ -1227,10 +1231,16 @@ let mut scene_world = scene_world.borrow_mut();
         let new_scene = match crate::scene::load_scene(changed_path) {
             Ok(s) => s,
             Err(e) => {
+                let file_name = changed_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                self.reload_notifications.push((format!("Scene failed: {} - {}", file_name, e), instant::Instant::now(), [1.0, 0.3, 0.3, 1.0]));
                 tracing::error!("Scene reload failed: {}, keeping old scene", e);
                 return;
             }
         };
+
+        // Borrow physics_world for reconcile so new entities get physics bodies
+        let mut pw_borrow = self.physics_world.as_ref().map(|pw| pw.borrow_mut());
+        let pw_ref = pw_borrow.as_mut().map(|b| &mut **b);
 
         crate::world::reconcile_scene(
             &mut *scene_world,
@@ -1241,10 +1251,79 @@ let mut scene_world = scene_world.borrow_mut();
             &mut self.mesh_cache,
             &mut self.material_cache,
             &mut self.splat_cache,
-            None,
+            pw_ref,
             self.texture_resources.as_ref(),
         );
 
+        // Resolve trimesh colliders for newly spawned entities
+        if let Some(ref mut pw) = pw_borrow {
+            for entity_def in &new_scene.entities {
+                if let Some(col_def) = &entity_def.components.collider {
+                    if col_def.shape == "trimesh" {
+                        if let Some(&entity) = scene_world.entity_registry.get(&entity_def.id) {
+                            let needs_resolve = if let Ok(col) = scene_world.world.get::<&crate::physics::Collider>(entity) {
+                                matches!(&col.shape, crate::physics::PhysicsShape::Trimesh { vertices, .. } if vertices.is_empty())
+                            } else {
+                                false
+                            };
+
+                            if needs_resolve {
+                                let scale = entity_def.components.transform.as_ref()
+                                    .map(|t| glam::Vec3::from(t.scale))
+                                    .unwrap_or(glam::Vec3::ONE);
+                                let resolved_shape = if let Ok(mr) = scene_world.world.get::<&crate::components::MeshRenderer>(entity) {
+                                    if let Some((verts, idxs)) = self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale) {
+                                        Some(crate::physics::PhysicsShape::Trimesh { vertices: verts, indices: idxs })
+                                    } else {
+                                        let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
+                                        Some(crate::physics::PhysicsShape::Box { half_extents: glam::Vec3::from(he) })
+                                    }
+                                } else {
+                                    None
+                                };
+
+                                if let Some(new_shape) = resolved_shape {
+                                    let rb_info = scene_world.world.get::<&crate::physics::RigidBody>(entity)
+                                        .ok()
+                                        .map(|rb| (rb.handle, rb.body_type.clone()));
+                                    if let Some((old_handle, body_type_enum)) = rb_info {
+                                        pw.remove_body(old_handle);
+                                        let pos = entity_def.components.transform.as_ref()
+                                            .map(|t| glam::Vec3::from(t.position)).unwrap_or(glam::Vec3::ZERO);
+                                        let rot = entity_def.components.transform.as_ref()
+                                            .map(|t| crate::world::euler_degrees_to_quat(t.rotation)).unwrap_or(glam::Quat::IDENTITY);
+                                        let is_trigger = col_def.is_trigger;
+                                        let restitution = col_def.restitution;
+                                        let friction = col_def.friction;
+
+                                        let (rb_handle, col_handle) = match body_type_enum {
+                                            crate::physics::PhysicsBodyType::Dynamic => {
+                                                let mass = entity_def.components.rigid_body.as_ref().map(|rb| rb.mass).unwrap_or(1.0);
+                                                let ccd = entity_def.components.rigid_body.as_ref().map(|rb| rb.ccd).unwrap_or(false);
+                                                pw.add_dynamic_body(entity, pos, rot, new_shape.clone(), mass, restitution, friction, ccd)
+                                            }
+                                            crate::physics::PhysicsBodyType::Kinematic => {
+                                                pw.add_kinematic_body(entity, pos, rot, new_shape.clone(), is_trigger, restitution, friction)
+                                            }
+                                            crate::physics::PhysicsBodyType::Static => {
+                                                pw.add_static_body(entity, pos, rot, new_shape.clone(), is_trigger, restitution, friction)
+                                            }
+                                        };
+                                        let _ = scene_world.world.insert(entity, (
+                                            crate::physics::RigidBody { handle: rb_handle, body_type: body_type_enum },
+                                            crate::physics::Collider { handle: col_handle, shape: new_shape, is_trigger },
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let file_name = changed_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        self.reload_notifications.push((format!("Scene reloaded: {}", file_name), instant::Instant::now(), [0.3, 1.0, 0.3, 1.0]));
         tracing::info!("Scene hot-reload complete");
     }
 
@@ -3409,6 +3488,20 @@ impl ApplicationHandler for Engine {
                             // Always show collider indicator when active
                             if self.render_debug.show_colliders {
                                 ui.draw_text(10.0, (gpu.config.height as f32) - 30.0, "[H] Collider wireframes ON", 14.0, [0.0, 1.0, 1.0, 1.0], font);
+                            }
+
+                            // Reload notifications (always visible, auto-fade)
+                            self.reload_notifications.retain(|(_, t, _)| t.elapsed().as_secs_f32() < 4.0);
+                            let screen_w = gpu.config.width as f32;
+                            let screen_h = gpu.config.height as f32;
+                            for (i, (msg, t, color)) in self.reload_notifications.iter().rev().enumerate() {
+                                let age = t.elapsed().as_secs_f32();
+                                let alpha = if age > 3.0 { 1.0 - (age - 3.0) } else { 1.0 };
+                                let c = [color[0], color[1], color[2], color[3] * alpha];
+                                let text_w = msg.len() as f32 * 8.0; // approximate monospace width
+                                let x = screen_w - text_w - 20.0;
+                                let y = screen_h - 50.0 - (i as f32 * 20.0);
+                                ui.draw_text(x.max(10.0), y, msg, 14.0, c, font);
                             }
 
                             let mut ui_encoder = gpu.device.create_command_encoder(

@@ -476,6 +476,20 @@ fn spawn_entity(
                     };
                     let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
                 }
+                "kinematic" => {
+                    let (rb_handle, col_handle) =
+                        pw.add_kinematic_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
+                    let rb_comp = physics::RigidBody {
+                        handle: rb_handle,
+                        body_type: physics::PhysicsBodyType::Kinematic,
+                    };
+                    let col_comp = physics::Collider {
+                        handle: col_handle,
+                        shape,
+                        is_trigger,
+                    };
+                    let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
+                }
                 _ => {
                     let (rb_handle, col_handle) =
                         pw.add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
@@ -945,7 +959,7 @@ pub fn reconcile_scene(
     mesh_cache: &mut MeshCache,
     material_cache: &mut MaterialCache,
     splat_cache: &mut SplatCache,
-    physics_world: Option<&mut PhysicsWorld>,
+    mut physics_world: Option<&mut PhysicsWorld>,
     texture_resources: Option<&crate::mesh::TextureResources>,
 ) {
     let old_scene = match &scene_world.current_scene {
@@ -959,34 +973,71 @@ pub fn reconcile_scene(
     let old_ids: HashSet<&str> = old_scene.entities.iter().map(|e| e.id.as_str()).collect();
     let new_ids: HashSet<&str> = new_scene.entities.iter().map(|e| e.id.as_str()).collect();
 
-    // 1. Remove entities no longer in the scene
+    // 1. Remove entities no longer in the scene (clean up physics bodies too)
+    let pw_ptr = physics_world.as_mut().map(|pw| *pw as *mut PhysicsWorld);
     for id in old_ids.difference(&new_ids) {
         if let Some(entity) = scene_world.entity_registry.remove(*id) {
+            if let Some(ptr) = pw_ptr {
+                if let Ok(rb) = scene_world.world.get::<&crate::physics::RigidBody>(entity) {
+                    let rb_handle = rb.handle;
+                    drop(rb);
+                    let pw = unsafe { &mut *ptr };
+                    pw.remove_body(rb_handle);
+                }
+            }
             let _ = scene_world.world.despawn(entity);
             tracing::info!("Hot-reload: destroyed entity '{}'", id);
         }
     }
 
-    // 2. Spawn new entities
+    // 2. Spawn new entities (with physics)
     for entity_def in &new_scene.entities {
         if !old_ids.contains(entity_def.id.as_str()) {
-            spawn_entity(scene_world, entity_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, None, texture_resources);
+            let pw_ref = pw_ptr.map(|ptr| unsafe { &mut *ptr });
+            spawn_entity(scene_world, entity_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, pw_ref, texture_resources);
             tracing::info!("Hot-reload: spawned entity '{}'", entity_def.id);
         }
     }
 
-    // 3. Patch modified entities
+    // 3. Patch modified entities (may trigger respawn for structural changes)
     let old_map: HashMap<&str, &EntityDef> = old_scene
         .entities
         .iter()
         .map(|e| (e.id.as_str(), e))
         .collect();
 
+    let mut respawn_ids: Vec<String> = Vec::new();
+
     for new_def in &new_scene.entities {
         if let Some(&old_def) = old_map.get(new_def.id.as_str()) {
             if let Some(&entity) = scene_world.entity_registry.get(&new_def.id) {
-                patch_entity(&mut scene_world.world, entity, old_def, new_def);
+                let needs_respawn = patch_entity(
+                    &mut scene_world.world,
+                    entity,
+                    old_def,
+                    new_def,
+                    device,
+                    queue,
+                    project_root,
+                    mesh_cache,
+                    material_cache,
+                );
+                if needs_respawn {
+                    respawn_ids.push(new_def.id.clone());
+                }
             }
+        }
+    }
+
+    // 4. Respawn entities that had structural component changes
+    for id in &respawn_ids {
+        if let Some(entity) = scene_world.entity_registry.remove(id) {
+            let _ = scene_world.world.despawn(entity);
+        }
+        if let Some(new_def) = new_scene.entities.iter().find(|e| &e.id == id) {
+            spawn_entity(scene_world, new_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, physics_world.as_deref_mut(), texture_resources);
+
+            tracing::info!("Hot-reload: respawned entity '{}' (structural change)", id);
         }
     }
 
@@ -994,12 +1045,34 @@ pub fn reconcile_scene(
 }
 
 /// Patch an existing entity's components in-place.
+/// Returns `true` if the entity needs a full destroy+respawn (structural change).
+#[allow(clippy::too_many_arguments)]
 fn patch_entity(
     world: &mut World,
     entity: hecs::Entity,
-    _old_def: &EntityDef,
+    old_def: &EntityDef,
     new_def: &EntityDef,
-) {
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    project_root: &Path,
+    mesh_cache: &mut MeshCache,
+    material_cache: &mut MaterialCache,
+) -> bool {
+    // Detect structural changes: components added or removed require a full respawn.
+    let structural_change =
+        old_def.components.rigid_body.is_some() != new_def.components.rigid_body.is_some()
+        || old_def.components.collider.is_some() != new_def.components.collider.is_some()
+        || old_def.components.character_controller.is_some() != new_def.components.character_controller.is_some()
+        || old_def.components.gaussian_splat.is_some() != new_def.components.gaussian_splat.is_some()
+        || old_def.components.mesh_renderer.is_some() != new_def.components.mesh_renderer.is_some()
+        || old_def.components.script.is_some() != new_def.components.script.is_some();
+
+    if structural_change {
+        return true;
+    }
+
+    // --- Fast-path patches for mutable component values ---
+
     // Patch transform
     if let Some(t) = &new_def.components.transform {
         if let Ok(mut transform) = world.get::<&mut Transform>(entity) {
@@ -1027,6 +1100,43 @@ fn patch_entity(
             point_light.range = pl.range;
         }
     }
+
+    // Patch mesh renderer (mesh and/or material changes)
+    if let (Some(old_mr), Some(new_mr)) = (&old_def.components.mesh_renderer, &new_def.components.mesh_renderer) {
+        if old_mr.mesh != new_mr.mesh || old_mr.material != new_mr.material {
+            let mesh_handle = if old_mr.mesh != new_mr.mesh {
+                mesh_cache.get_or_load(device, queue, project_root, &new_mr.mesh, None).ok()
+            } else {
+                None
+            };
+            let material_handle = if old_mr.material != new_mr.material {
+                material_cache.get_or_load(device, project_root, &new_mr.material).ok()
+            } else {
+                None
+            };
+            if let Ok(mut mr) = world.get::<&mut MeshRenderer>(entity) {
+                if let Some(mh) = mesh_handle {
+                    mr.mesh_handle = mh;
+                }
+                if let Some(mat) = material_handle {
+                    mr.material_handle = mat;
+                }
+            }
+        }
+    }
+
+    // Patch script source path
+    if let (Some(_old_script), Some(new_script)) = (&old_def.components.script, &new_def.components.script) {
+        if let Ok(mut script) = world.get::<&mut crate::scripting::Script>(entity) {
+            let new_path = std::path::PathBuf::from(&new_script.source);
+            if script.source != new_path {
+                script.source = new_path;
+                script.initialized = false;
+            }
+        }
+    }
+
+    false
 }
 
 // ---------------------------------------------------------------------------

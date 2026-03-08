@@ -1304,6 +1304,20 @@ Informed by the Angry Birds dev log. A complete Angry Birds clone was built in n
 | Camera shake | Screen shake effect for impacts, explosions, destruction. | Lua: `camera.shake(intensity, duration)` with configurable decay |
 | Render debug HUD | Interactive number-key toggles for render pass isolation (bloom, lights, emission, flicker, ambient). `--hud` CLI flag. | CLI: `naive run --hud`. Keys 0-6 toggle passes at runtime. Engine-level, works in all scenes. |
 
+**Tier 2.7 — Developer Experience & Code Quality** (unblocks reliable iteration) **v0.1.15+**
+
+Informed by cross-model code review (Gemini 2.5 Pro, Codex o3). Three independent AI analyses identified the same pain points: hot-reload drops physics, scene edits don't propagate, and the rendering pipeline is a 3100-line monolith. These fixes improve the daily development loop for anyone building games with nAIVE.
+
+| System | Engine Provides | Status |
+|--------|----------------|--------|
+| Physics on hot-reload | New/changed entities get physics bodies registered during hot-reload, matching initial load behavior. No restart needed. | v0.1.15 |
+| Component patch coverage | Hot-reload patches MeshRenderer and Script changes. Entities with structural component changes (added/removed colliders, rigid bodies) trigger destroy+recreate. | v0.1.15 |
+| Pipeline modularization | Split `pipeline.rs` (3100 lines) into `pipeline/` module: `def.rs` (YAML types), `resource.rs` (GPU resources), `compiler.rs` (shader compilation), `executor.rs` (pass execution). | v0.1.15 |
+| HUD reload notifications | Auto-fading overlay shows reload success (green) or failure (red) with filename. Always visible, no HUD toggle required. | v0.1.15 |
+| Debug wireframe renderer | H key toggles physics collider wireframes. Shows actual Rapier collision shapes (cuboid, sphere, capsule, convex hull, compound). | v0.1.15 |
+| Kinematic body fix | YAML `type: kinematic` now parsed correctly (serde alias). Kinematic bodies rotate with Lua `set_rotation`. | v0.1.15 |
+| Convex decomposition colliders | Trimesh colliders use VHACD convex decomposition for proper two-sided collisions. Configurable resolution. | v0.1.15 |
+
 **Tier 3 — GPU Scale** (unblocks 50K entities)
 
 These systems move entity simulation from CPU to GPU. Game developers configure behavior via YAML and SLANG compute shaders.
@@ -1337,6 +1351,7 @@ These systems move entity simulation from CPU to GPU. Game developers configure 
 | 3a | Tier 1: Gameplay Primitives | — | **DONE (v0.1.2)** Health/damage, projectiles, third-person camera, hitscan API, collision damage |
 | 3b | Tier 2: Production Foundations | — | **DONE (v0.1.4)** Dynamic instance buffer, safe entity lifecycle, entity pooling, particle system, runtime queries, event subscription |
 | 3b.5 | Tier 2.5: Physics & Scene API | — | **DONE (v0.1.7)** Physics impulse/velocity, entity.get_tag, scene.load, collider materials, CCD, camera shake, render debug HUD, 5 demo scenes |
+| 3b.7 | Tier 2.7: DX & Code Quality | — | **DONE (v0.1.15)** Physics hot-reload, component patch coverage, pipeline modularization, HUD reload notifications, debug wireframe renderer, kinematic body fix, convex decomposition colliders |
 | 3c | Tier 3: GPU Scale | 17-22 | GPU compute entity system, neighbor grid, instanced rendering, flow field |
 | 3d | Tier 4: Animation | 23-26 | Skeletal animation + state machine, VAT loader + renderer |
 | 3e | Tier 5: Vehicles | 27-30 | Vehicle physics, mount/dismount, LOD system |
