@@ -496,6 +496,7 @@ fn spawn_entity(
 }
 
 /// Parse a shape from a collider definition.
+/// For trimesh shapes, returns a Trimesh with empty data — caller must resolve with mesh cache.
 pub fn parse_collider_shape(col_def: &crate::scene::ColliderDef) -> PhysicsShape {
     match col_def.shape.as_str() {
         "sphere" => PhysicsShape::Sphere {
@@ -504,6 +505,10 @@ pub fn parse_collider_shape(col_def: &crate::scene::ColliderDef) -> PhysicsShape
         "capsule" => PhysicsShape::Capsule {
             half_height: col_def.half_height.unwrap_or(0.5),
             radius: col_def.radius.unwrap_or(0.3),
+        },
+        "trimesh" => PhysicsShape::Trimesh {
+            vertices: Vec::new(),
+            indices: Vec::new(),
         },
         _ => {
             let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);

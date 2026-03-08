@@ -411,7 +411,7 @@ impl ScriptRuntime {
     }
 
     /// Register entity manipulation API (get/set position, rotation, light).
-    pub fn register_entity_api(&self, scene_world: SharedSceneWorld) -> Result<(), String> {
+    pub fn register_entity_api(&self, scene_world: SharedSceneWorld, physics_world: SharedPhysicsWorld) -> Result<(), String> {
         let globals = self.lua.globals();
         let entity_table = self.lua.create_table().map_err(|e| e.to_string())?;
 
@@ -431,7 +431,7 @@ impl ScriptRuntime {
         // entity.set_position(entity_string_id, x, y, z)
         let sw = scene_world.clone();
         let set_pos_fn = self.lua.create_function(move |_, (id, x, y, z): (String, f32, f32, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut transform) = sw.world.get::<&mut Transform>(entity) {
                     transform.position = glam::Vec3::new(x, y, z);
@@ -467,12 +467,32 @@ impl ScriptRuntime {
 
         // entity.set_rotation(entity_string_id, pitch_deg, yaw_deg, roll_deg)
         let sw = scene_world.clone();
+        let pw = physics_world.clone();
         let set_rot_fn = self.lua.create_function(move |_, (id, pitch, yaw, roll): (String, f32, f32, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
+            let new_rot = crate::world::euler_degrees_to_quat([pitch, yaw, roll]);
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut transform) = sw.world.get::<&mut Transform>(entity) {
-                    transform.rotation = crate::world::euler_degrees_to_quat([pitch, yaw, roll]);
+                    transform.rotation = new_rot;
                     transform.dirty = true;
+                }
+                // Sync rotation to physics for kinematic bodies
+                if let Ok(rb) = sw.world.get::<&crate::physics::RigidBody>(entity) {
+                    if rb.body_type == crate::physics::PhysicsBodyType::Kinematic {
+                        let rb_handle = rb.handle;
+                        drop(rb);
+                        let mut pw = pw.borrow_mut();
+                        if let Some(body) = pw.rigid_body_set.get_mut(rb_handle) {
+                            let cur_pos = body.position().translation;
+                            let iso = rapier3d::na::Isometry3::from_parts(
+                                rapier3d::na::Translation3::new(cur_pos.x, cur_pos.y, cur_pos.z),
+                                rapier3d::na::UnitQuaternion::new_normalize(
+                                    rapier3d::na::Quaternion::new(new_rot.w, new_rot.x, new_rot.y, new_rot.z)
+                                ),
+                            );
+                            body.set_next_kinematic_position(iso);
+                        }
+                    }
                 }
             }
             Ok(())
@@ -482,7 +502,7 @@ impl ScriptRuntime {
         // entity.set_light(entity_string_id, intensity)
         let sw = scene_world.clone();
         let set_light_fn = self.lua.create_function(move |_, (id, intensity): (String, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut light) = sw.world.get::<&mut PointLight>(entity) {
                     light.intensity = intensity;
@@ -495,7 +515,7 @@ impl ScriptRuntime {
         // entity.set_light_color(entity_string_id, r, g, b)
         let sw = scene_world.clone();
         let set_light_color_fn = self.lua.create_function(move |_, (id, r, g, b): (String, f32, f32, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut light) = sw.world.get::<&mut PointLight>(entity) {
                     light.color = glam::Vec3::new(r, g, b);
@@ -605,7 +625,7 @@ impl ScriptRuntime {
         // entity.set_health(id, current, max)
         let sw = scene_world.clone();
         let set_health_fn = self.lua.create_function(move |_, (id, current, max): (String, f32, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
                     health.current = current;
@@ -619,7 +639,7 @@ impl ScriptRuntime {
         // entity.damage(id, amount) -> new_current
         let sw = scene_world.clone();
         let damage_fn = self.lua.create_function(move |_, (id, amount): (String, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
                     health.current = (health.current - amount).max(0.0);
@@ -633,7 +653,7 @@ impl ScriptRuntime {
         // entity.heal(id, amount) -> new_current
         let sw = scene_world.clone();
         let heal_fn = self.lua.create_function(move |_, (id, amount): (String, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut health) = sw.world.get::<&mut Health>(entity) {
                     health.current = (health.current + amount).min(health.max);
@@ -673,7 +693,7 @@ impl ScriptRuntime {
         // entity.add_tag(id, tag)
         let sw = scene_world.clone();
         let add_tag_fn = self.lua.create_function(move |_, (id, tag): (String, String)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut tags) = sw.world.get::<&mut Tags>(entity) {
                     if !tags.0.contains(&tag) {
@@ -688,7 +708,7 @@ impl ScriptRuntime {
         // entity.remove_tag(id, tag)
         let sw = scene_world.clone();
         let remove_tag_fn = self.lua.create_function(move |_, (id, tag): (String, String)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut tags) = sw.world.get::<&mut Tags>(entity) {
                     tags.0.retain(|t| t != &tag);
@@ -946,7 +966,7 @@ impl ScriptRuntime {
         // entity.set_scale(id, sx, sy, sz)
         let sw = scene_world.clone();
         let set_scale_fn = self.lua.create_function(move |_, (id, sx, sy, sz): (String, f32, f32, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut transform) = sw.world.get::<&mut Transform>(entity) {
                     transform.scale = glam::Vec3::new(sx, sy, sz);
@@ -1211,7 +1231,7 @@ impl ScriptRuntime {
         // entity.set_emitter_enabled(id, enabled)
         let sw = scene_world.clone();
         let set_emitter_fn = self.lua.create_function(move |_, (id, enabled): (String, bool)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut emitter) = sw.world.get::<&mut ParticleEmitter>(entity) {
                     emitter.enabled = enabled;
@@ -1224,7 +1244,7 @@ impl ScriptRuntime {
         // entity.set_emitter_rate(id, rate)
         let sw = scene_world.clone();
         let set_rate_fn = self.lua.create_function(move |_, (id, rate): (String, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut emitter) = sw.world.get::<&mut ParticleEmitter>(entity) {
                     emitter.config.spawn_rate = rate;
@@ -1446,7 +1466,7 @@ impl ScriptRuntime {
         // state_name: "idle", "walk", "run", "attack", or custom string
         let sw = scene_world.clone();
         let play_fn = self.lua.create_function(move |_, (id, state): (String, String)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut animator) = sw.world.get::<&mut crate::components::Animator>(entity) {
                     let anim_state = match state.as_str() {
@@ -1466,7 +1486,7 @@ impl ScriptRuntime {
         // animation.stop(entity_id)
         let sw = scene_world.clone();
         let stop_fn = self.lua.create_function(move |_, id: String| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut animator) = sw.world.get::<&mut crate::components::Animator>(entity) {
                     animator.controller.stop();
@@ -1479,7 +1499,7 @@ impl ScriptRuntime {
         // animation.set_speed(entity_id, speed)
         let sw = scene_world.clone();
         let speed_fn = self.lua.create_function(move |_, (id, speed): (String, f32)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut animator) = sw.world.get::<&mut crate::components::Animator>(entity) {
                     animator.controller.speed = speed;
@@ -1492,7 +1512,7 @@ impl ScriptRuntime {
         // animation.set_looping(entity_id, looping)
         let sw = scene_world.clone();
         let loop_fn = self.lua.create_function(move |_, (id, looping): (String, bool)| {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             if let Some(&entity) = sw.entity_registry.get(&id) {
                 if let Ok(mut animator) = sw.world.get::<&mut crate::components::Animator>(entity) {
                     animator.controller.looping = looping;

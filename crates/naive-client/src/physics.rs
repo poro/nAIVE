@@ -59,7 +59,11 @@ pub enum PhysicsShape {
     Box { half_extents: Vec3 },
     Sphere { radius: f32 },
     Capsule { half_height: f32, radius: f32 },
-    Trimesh,
+    /// Triangle mesh collider built from GLB vertex/index data.
+    Trimesh {
+        vertices: Vec<rapier3d::na::Point3<f32>>,
+        indices: Vec<[u32; 3]>,
+    },
 }
 
 /// Collision event emitted when two colliders touch.
@@ -154,6 +158,41 @@ impl PhysicsWorld {
         friction: f32,
     ) -> (RigidBodyHandle, ColliderHandle) {
         let rb = RigidBodyBuilder::fixed()
+            .translation(vector![position.x, position.y, position.z])
+            .rotation(quat_to_angvector(rotation))
+            .build();
+        let rb_handle = self.rigid_body_set.insert(rb);
+
+        let collider_builder = shape_to_collider(&shape)
+            .restitution(restitution)
+            .friction(friction);
+        let collider = if is_trigger {
+            collider_builder.sensor(true).build()
+        } else {
+            collider_builder.build()
+        };
+        let col_handle =
+            self.collider_set
+                .insert_with_parent(collider, rb_handle, &mut self.rigid_body_set);
+
+        self.body_to_entity.insert(rb_handle, entity);
+        self.collider_to_entity.insert(col_handle, entity);
+
+        (rb_handle, col_handle)
+    }
+
+    /// Add a kinematic rigid body + collider (moved by game code, not physics).
+    pub fn add_kinematic_body(
+        &mut self,
+        entity: hecs::Entity,
+        position: Vec3,
+        rotation: Quat,
+        shape: PhysicsShape,
+        is_trigger: bool,
+        restitution: f32,
+        friction: f32,
+    ) -> (RigidBodyHandle, ColliderHandle) {
+        let rb = RigidBodyBuilder::kinematic_position_based()
             .translation(vector![position.x, position.y, position.z])
             .rotation(quat_to_angvector(rotation))
             .build();
@@ -528,9 +567,15 @@ fn shape_to_collider(shape: &PhysicsShape) -> ColliderBuilder {
             half_height,
             radius,
         } => ColliderBuilder::capsule_y(*half_height, *radius),
-        PhysicsShape::Trimesh => {
-            // Fallback to unit box for unsupported trimesh
-            ColliderBuilder::cuboid(0.5, 0.5, 0.5)
+        PhysicsShape::Trimesh { vertices, indices } => {
+            // Use convex decomposition for proper two-sided collisions.
+            // Raw trimesh is one-sided (designed for static terrain).
+            let params = rapier3d::parry::transformation::vhacd::VHACDParameters {
+                resolution: 256,
+                concavity: 0.002,
+                ..Default::default()
+            };
+            ColliderBuilder::convex_decomposition_with_params(vertices, indices, &params)
         }
     }
 }

@@ -49,11 +49,11 @@ entities:
       script:
         source: logic/submarine_demo.lua
       collider:
-        shape: box
-        half_extents: [4, 1.5, 1.5]
+        shape: trimesh
+        restitution: 0.5
         friction: 0.3
       rigid_body:
-        type: static
+        type: kinematic
 
   # === Three-point lighting ===
   - id: key_light

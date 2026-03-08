@@ -82,6 +82,10 @@ pub struct GpuMesh {
     pub texture_bind_group: Option<wgpu::BindGroup>,
     /// Skinning data if the mesh has a skeleton and animations.
     pub skin_data: Option<SkinData>,
+    /// CPU-side vertex positions for physics trimesh colliders.
+    pub physics_vertices: Option<Vec<[f32; 3]>>,
+    /// CPU-side triangle indices for physics trimesh colliders.
+    pub physics_indices: Option<Vec<[u32; 3]>>,
 }
 
 /// Shared texture resources: bind group layout and 1x1 white fallback.
@@ -294,6 +298,17 @@ impl MeshCache {
         result
     }
 
+    /// Get physics trimesh data for a mesh handle (vertices scaled by transform scale).
+    pub fn get_physics_trimesh(&self, handle: MeshHandle, scale: glam::Vec3) -> Option<(Vec<rapier3d::na::Point3<f32>>, Vec<[u32; 3]>)> {
+        let mesh = self.meshes.get(handle.0)?;
+        let verts = mesh.physics_vertices.as_ref()?;
+        let idxs = mesh.physics_indices.as_ref()?;
+        let scaled_verts: Vec<rapier3d::na::Point3<f32>> = verts.iter()
+            .map(|v| rapier3d::na::Point3::new(v[0] * scale.x, v[1] * scale.y, v[2] * scale.z))
+            .collect();
+        Some((scaled_verts, idxs.clone()))
+    }
+
     /// Get the path/name for a mesh handle (reverse lookup for serialization).
     pub fn name_for_handle(&self, handle: MeshHandle) -> Option<String> {
         for (path, &h) in &self.path_to_handle {
@@ -398,12 +413,20 @@ fn load_gltf(
     // Extract skin and animation data
     let skin_data = extract_skin_data(&document, &buffers);
 
+    // Keep CPU-side data for physics trimesh colliders
+    let physics_vertices: Vec<[f32; 3]> = all_vertices.iter().map(|v| v.position).collect();
+    let physics_indices: Vec<[u32; 3]> = all_indices.chunks_exact(3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+
     Ok(GpuMesh {
         vertex_buffer,
         index_buffer,
         index_count: all_indices.len() as u32,
         texture_bind_group,
         skin_data,
+        physics_vertices: Some(physics_vertices),
+        physics_indices: Some(physics_indices),
     })
 }
 
@@ -810,6 +833,8 @@ fn create_procedural_sphere(device: &wgpu::Device, radius: f32, rings: u32, sect
         index_count: indices.len() as u32,
         texture_bind_group: None,
         skin_data: None,
+        physics_vertices: None,
+        physics_indices: None,
     }
 }
 
@@ -879,5 +904,7 @@ fn create_procedural_cube(device: &wgpu::Device) -> GpuMesh {
         index_count: indices.len() as u32,
         texture_bind_group: None,
         skin_data: None,
+        physics_vertices: None,
+        physics_indices: None,
     }
 }

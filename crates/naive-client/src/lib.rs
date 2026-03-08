@@ -12,6 +12,7 @@ pub mod beautify;
 pub mod audio_gen;
 pub mod build;
 pub mod camera;
+pub mod debug_draw;
 pub mod cli;
 pub mod command;
 pub mod demos;

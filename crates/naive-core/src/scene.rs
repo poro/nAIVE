@@ -212,7 +212,7 @@ pub struct GaussianSplatDef {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RigidBodyDef {
-    #[serde(default = "default_body_type")]
+    #[serde(default = "default_body_type", alias = "type")]
     pub body_type: String,
     #[serde(default = "default_mass")]
     pub mass: f32,

@@ -3,7 +3,7 @@ function init()
     self.angle = 0
     self.speed = 15  -- degrees per second
     self.timer = 0
-    self.drop_interval = 10  -- seconds between ball drops
+    self.drop_interval = 3   -- seconds between ball drops
     self.ball_count = 50
     self.dropped = false
 end

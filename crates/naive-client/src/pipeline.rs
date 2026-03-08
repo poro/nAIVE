@@ -24,6 +24,8 @@ pub struct RenderDebugState {
     pub emission_enabled: bool,
     pub torch_flicker_enabled: bool,
     pub show_hud: bool,
+    /// Show physics collider wireframes (toggle with H key).
+    pub show_colliders: bool,
     /// Multiplier for all light intensities (1.0 = normal, 10.0 = boosted)
     pub light_intensity_mult: f32,
     /// Override ambient light level (0.0 = use scene default)
@@ -38,6 +40,7 @@ impl Default for RenderDebugState {
             emission_enabled: true,
             torch_flicker_enabled: true,
             show_hud: false,
+            show_colliders: false,
             light_intensity_mult: 1.0,
             ambient_override: 0.0,
         }
@@ -2022,37 +2025,6 @@ pub fn execute_pipeline_to_view(
     texture_resources: Option<&crate::mesh::TextureResources>,
     bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
 ) -> wgpu::CommandEncoder {
-
-    // DEBUG: dump camera VP matrix and first entities' transforms (frame 0 only)
-    {
-        static DEBUG_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        if !DEBUG_ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            let cam = &camera_state.uniform;
-            let vp = cam.view_projection;
-            tracing::warn!(
-                "Camera pos=({:.2},{:.2},{:.2}) near={} far={}",
-                cam.position[0], cam.position[1], cam.position[2],
-                cam.near_plane, cam.far_plane,
-            );
-            tracing::warn!("VP col0=[{:.4},{:.4},{:.4},{:.4}]", vp[0][0], vp[0][1], vp[0][2], vp[0][3]);
-            tracing::warn!("VP col1=[{:.4},{:.4},{:.4},{:.4}]", vp[1][0], vp[1][1], vp[1][2], vp[1][3]);
-            tracing::warn!("VP col2=[{:.4},{:.4},{:.4},{:.4}]", vp[2][0], vp[2][1], vp[2][2], vp[2][3]);
-            tracing::warn!("VP col3=[{:.4},{:.4},{:.4},{:.4}]", vp[3][0], vp[3][1], vp[3][2], vp[3][3]);
-            let entity_count = scene_world.world.query::<(&Transform, &MeshRenderer)>().iter().count();
-            tracing::warn!("Entities with MeshRenderer: {}", entity_count);
-            for (i, (_e, (t, _mr))) in (0u32..).zip(
-                scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
-            ) {
-                if i < 3 {
-                    tracing::warn!(
-                        "  Entity {}: pos=({:.2},{:.2},{:.2}) scale=({:.2},{:.2},{:.2})",
-                        i, t.position.x, t.position.y, t.position.z,
-                        t.scale.x, t.scale.y, t.scale.z,
-                    );
-                }
-            }
-        }
-    }
 
     // Upload per-entity draw uniforms (skip hidden entities before incrementing draw_index)
     let mut draw_index = 0u32;

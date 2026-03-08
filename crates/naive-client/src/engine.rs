@@ -96,6 +96,9 @@ pub struct Engine {
     // Render debug: interactive pass toggles (number keys)
     pub render_debug: crate::pipeline::RenderDebugState,
 
+    // Debug wireframe renderer for collider visualization
+    pub debug_draw: Option<crate::debug_draw::DebugDrawRenderer>,
+
     // Camera shake state
     pub camera_shake: Rc<RefCell<CameraShakeState>>,
 
@@ -159,6 +162,7 @@ impl Engine {
                 show_hud,
                 ..Default::default()
             },
+            debug_draw: None,
             camera_shake: Rc::new(RefCell::new(CameraShakeState::new())),
             editor_camera: None,
             editor_command_log: Vec::new(),
@@ -207,6 +211,13 @@ impl Engine {
         // Create camera state and draw uniform pool
         let camera_state = CameraState::new(&gpu.device);
         let draw_pool = DrawUniformPool::new(&gpu.device);
+
+        // Debug wireframe renderer for collider visualization
+        self.debug_draw = Some(crate::debug_draw::DebugDrawRenderer::new(
+            &gpu.device,
+            &camera_state.bind_group_layout,
+            gpu.config.format,
+        ));
 
         // Initialize texture resources for GLB albedo textures
         let tex_res = crate::mesh::TextureResources::new(&gpu.device, &gpu.queue);
@@ -344,7 +355,7 @@ impl Engine {
                             };
                             let _ = sw.world.insert(entity, (rb_comp, col_comp, cc_comp, player));
                         } else if let Some(col_def) = &entity_def.components.collider {
-                            let shape = crate::world::parse_collider_shape(col_def);
+                            let mut shape = crate::world::parse_collider_shape(col_def);
                             let is_trigger = col_def.is_trigger;
                             let restitution = col_def.restitution;
                             let friction = col_def.friction;
@@ -354,6 +365,21 @@ impl Engine {
                                 .as_ref()
                                 .map(|rb| rb.body_type.as_str())
                                 .unwrap_or("static");
+                            // Resolve trimesh: look up mesh data from cache
+                            if matches!(shape, crate::physics::PhysicsShape::Trimesh { .. }) {
+                                let scale = entity_def.components.transform.as_ref()
+                                    .map(|t| glam::Vec3::from(t.scale))
+                                    .unwrap_or(glam::Vec3::ONE);
+                                if let Ok(mr) = sw.world.get::<&crate::components::MeshRenderer>(entity) {
+                                    if let Some((verts, idxs)) = self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale) {
+                                        shape = crate::physics::PhysicsShape::Trimesh { vertices: verts, indices: idxs };
+                                    } else {
+                                        tracing::warn!("Trimesh collider for '{}': no mesh data, falling back to box", entity_def.id);
+                                        let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
+                                        shape = crate::physics::PhysicsShape::Box { half_extents: glam::Vec3::from(he) };
+                                    }
+                                }
+                            }
 
                             match body_type {
                                 "dynamic" => {
@@ -374,6 +400,20 @@ impl Engine {
                                     let rb_comp = crate::physics::RigidBody {
                                         handle: rb_handle,
                                         body_type: crate::physics::PhysicsBodyType::Dynamic,
+                                    };
+                                    let col_comp = crate::physics::Collider {
+                                        handle: col_handle,
+                                        shape,
+                                        is_trigger,
+                                    };
+                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
+                                }
+                                "kinematic" => {
+                                    let (rb_handle, col_handle) = physics_world
+                                        .add_kinematic_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
+                                    let rb_comp = crate::physics::RigidBody {
+                                        handle: rb_handle,
+                                        body_type: crate::physics::PhysicsBodyType::Kinematic,
                                     };
                                     let col_comp = crate::physics::Collider {
                                         handle: col_handle,
@@ -427,8 +467,8 @@ impl Engine {
         }
 
         // Register entity manipulation API
-        if let Some(sw) = &self.scene_world {
-            if let Err(e) = script_runtime.register_entity_api(sw.clone()) {
+        if let (Some(sw), Some(pw)) = (&self.scene_world, &self.physics_world) {
+            if let Err(e) = script_runtime.register_entity_api(sw.clone(), pw.clone()) {
                 tracing::error!("Failed to register entity API: {}", e);
             }
             // Entity command API (spawn, destroy, scale, visibility, pooling)
@@ -539,7 +579,7 @@ impl Engine {
         }
         // Mark all as initialized
         if let Some(sw) = &self.scene_world {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             for (_entity, script) in sw.world.query::<&mut Script>().iter() {
                 script.initialized = true;
             }
@@ -669,13 +709,29 @@ impl Engine {
                         .unwrap_or(glam::Quat::IDENTITY);
 
                     if let Some(col_def) = &entity_def.components.collider {
-                        let shape = crate::world::parse_collider_shape(col_def);
+                        let mut shape = crate::world::parse_collider_shape(col_def);
                         let is_trigger = col_def.is_trigger;
                         let restitution = col_def.restitution;
                         let friction = col_def.friction;
                         let body_type = entity_def.components.rigid_body.as_ref()
                             .map(|rb| rb.body_type.as_str())
                             .unwrap_or("static");
+
+                        // Resolve trimesh: look up mesh data from cache
+                        if matches!(shape, crate::physics::PhysicsShape::Trimesh { .. }) {
+                            let scale = entity_def.components.transform.as_ref()
+                                .map(|t| glam::Vec3::from(t.scale))
+                                .unwrap_or(glam::Vec3::ONE);
+                            if let Ok(mr) = sw.world.get::<&crate::components::MeshRenderer>(entity) {
+                                if let Some((verts, idxs)) = self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale) {
+                                    shape = crate::physics::PhysicsShape::Trimesh { vertices: verts, indices: idxs };
+                                } else {
+                                    tracing::warn!("Trimesh collider for '{}': no mesh data, falling back to box", entity_def.id);
+                                    let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
+                                    shape = crate::physics::PhysicsShape::Box { half_extents: glam::Vec3::from(he) };
+                                }
+                            }
+                        }
 
                         match body_type {
                             "dynamic" => {
@@ -687,6 +743,14 @@ impl Engine {
                                     .add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
                                 let _ = sw.world.insert(entity, (
                                     crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Dynamic },
+                                    crate::physics::Collider { handle: col_handle, shape, is_trigger },
+                                ));
+                            }
+                            "kinematic" => {
+                                let (rb_handle, col_handle) = physics_world
+                                    .add_kinematic_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
+                                let _ = sw.world.insert(entity, (
+                                    crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Kinematic },
                                     crate::physics::Collider { handle: col_handle, shape, is_trigger },
                                 ));
                             }
@@ -740,8 +804,8 @@ impl Engine {
         }
 
         // Register entity manipulation API
-        if let Some(sw) = &self.scene_world {
-            if let Err(e) = script_runtime.register_entity_api(sw.clone()) {
+        if let (Some(sw), Some(pw)) = (&self.scene_world, &self.physics_world) {
+            if let Err(e) = script_runtime.register_entity_api(sw.clone(), pw.clone()) {
                 tracing::error!("Failed to register entity API: {}", e);
             }
             // Entity command API (spawn, destroy, scale, visibility, pooling)
@@ -1318,7 +1382,7 @@ let input = input.borrow();
     Some(scene_world) => scene_world,
     None => return,
 };
-let mut scene_world = scene_world.borrow_mut();
+let scene_world = scene_world.borrow_mut();
         let physics_world = match &self.physics_world {
     Some(physics_world) => physics_world,
     None => return,
@@ -1433,7 +1497,7 @@ let mut physics_world = physics_world.borrow_mut();
             Some(sr) => sr,
             None => return,
         };
-        let mut sw = scene_world.borrow_mut();
+        let sw = scene_world.borrow_mut();
         let physics_world = physics_world.borrow();
 
         // Build reverse lookup: entity -> string ID
@@ -1506,7 +1570,7 @@ let mut physics_world = physics_world.borrow_mut();
             Some(sw) => sw,
             None => return,
         };
-        let mut scene_world = scene_world_rc.borrow_mut();
+        let scene_world = scene_world_rc.borrow_mut();
         let dt = self.delta_time;
 
         let mut expired = Vec::new();
@@ -1585,7 +1649,7 @@ let mut scene_world = scene_world.borrow_mut();
             Some(sw) => sw,
             None => return,
         };
-        let mut scene_world = scene_world_rc.borrow_mut();
+        let scene_world = scene_world_rc.borrow_mut();
         let dt = self.delta_time;
 
         // Collect entities with animators
@@ -1612,7 +1676,7 @@ let mut scene_world = scene_world.borrow_mut();
             Some(sw) => sw,
             None => return,
         };
-        let mut scene_world = scene_world_rc.borrow_mut();
+        let scene_world = scene_world_rc.borrow_mut();
         let script_runtime = match &self.script_runtime {
             Some(sr) => sr,
             None => return,
@@ -1751,7 +1815,7 @@ let mut scene_world = scene_world.borrow_mut();
         let scale_updates: Vec<_> = self.entity_commands.borrow_mut().scale_updates.drain(..).collect();
         for (id, scale) in scale_updates {
             if let Some(scene_world) = &self.scene_world {
-                let mut scene_world = scene_world.borrow_mut();
+                let scene_world = scene_world.borrow_mut();
                 if let Some(&entity) = scene_world.entity_registry.get(&id) {
                     if let Ok(mut transform) = scene_world.world.get::<&mut Transform>(entity) {
                         transform.scale = glam::Vec3::from(scale);
@@ -1887,17 +1951,39 @@ let mut scene_world = scene_world.borrow_mut();
                             let player = crate::components::Player { height: cc_def.height, radius: cc_def.radius, ..Default::default() };
                             let _ = sw.world.insert(entity, (rb_comp, col_comp, cc_comp, player));
                         } else if let Some(col_def) = &entity_def.components.collider {
-                            let shape = crate::world::parse_collider_shape(col_def);
+                            let mut shape = crate::world::parse_collider_shape(col_def);
                             let is_trigger = col_def.is_trigger;
                             let restitution = col_def.restitution;
                             let friction = col_def.friction;
                             let body_type = entity_def.components.rigid_body.as_ref().map(|rb| rb.body_type.as_str()).unwrap_or("static");
+
+                            // Resolve trimesh
+                            if matches!(shape, crate::physics::PhysicsShape::Trimesh { .. }) {
+                                let scale = entity_def.components.transform.as_ref()
+                                    .map(|t| glam::Vec3::from(t.scale))
+                                    .unwrap_or(glam::Vec3::ONE);
+                                if let Ok(mr) = sw.world.get::<&crate::components::MeshRenderer>(entity) {
+                                    if let Some((verts, idxs)) = self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale) {
+                                        shape = crate::physics::PhysicsShape::Trimesh { vertices: verts, indices: idxs };
+                                    } else {
+                                        let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
+                                        shape = crate::physics::PhysicsShape::Box { half_extents: glam::Vec3::from(he) };
+                                    }
+                                }
+                            }
+
                             match body_type {
                                 "dynamic" => {
                                     let mass = entity_def.components.rigid_body.as_ref().map(|rb| rb.mass).unwrap_or(1.0);
                                     let ccd = entity_def.components.rigid_body.as_ref().map(|rb| rb.ccd).unwrap_or(false);
                                     let (rb_handle, col_handle) = pw.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
                                     let rb_comp = crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Dynamic };
+                                    let col_comp = crate::physics::Collider { handle: col_handle, shape, is_trigger };
+                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
+                                }
+                                "kinematic" => {
+                                    let (rb_handle, col_handle) = pw.add_kinematic_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
+                                    let rb_comp = crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Kinematic };
                                     let col_comp = crate::physics::Collider { handle: col_handle, shape, is_trigger };
                                     let _ = sw.world.insert(entity, (rb_comp, col_comp));
                                 }
@@ -1954,7 +2040,7 @@ let mut scene_world = scene_world.borrow_mut();
             }
         }
         if let Some(sw) = &self.scene_world {
-            let mut sw = sw.borrow_mut();
+            let sw = sw.borrow_mut();
             for (_entity, script) in sw.world.query::<&mut Script>().iter() {
                 script.initialized = true;
             }
@@ -2044,7 +2130,7 @@ let mut scene_world = scene_world.borrow_mut();
 
                     // Wall collision: raycast from target to desired camera position
                     if let Some(physics_world) = &self.physics_world {
-                        let mut physics_world = physics_world.borrow_mut();
+                        let physics_world = physics_world.borrow_mut();
                         let ray_dir = (desired_pos - target).normalize_or_zero();
                         let ray_dist = (desired_pos - target).length();
                         if let Some((_entity, toi, _hit, _normal)) = physics_world.raycast_detailed(
@@ -2931,9 +3017,13 @@ impl ApplicationHandler for Engine {
 
                 // Render debug toggles: 0 always toggles HUD, 1-6 only when HUD is visible
                 if let Some(input) = &self.input_state {
-                    let mut input = input.borrow_mut();
+                    let input = input.borrow_mut();
                     if input.just_pressed_key(KeyCode::Digit0) {
                         self.render_debug.show_hud = !self.render_debug.show_hud;
+                    }
+                    if input.just_pressed_key(KeyCode::KeyH) {
+                        self.render_debug.show_colliders = !self.render_debug.show_colliders;
+                        tracing::info!("Collider wireframes: {}", if self.render_debug.show_colliders { "ON" } else { "OFF" });
                     }
                     if self.render_debug.show_hud {
                         if input.just_pressed_key(KeyCode::Digit1) {
@@ -3258,6 +3348,30 @@ impl ApplicationHandler for Engine {
                             gpu.queue.submit(std::iter::once(encoder.finish()));
                         }
 
+                        // Debug wireframe pass: draw collider shapes over 3D scene
+                        if self.render_debug.show_colliders {
+                            if let (Some(debug_draw), Some(physics_world), Some(camera_state)) = (
+                                &self.debug_draw,
+                                &self.physics_world,
+                                &self.camera_state,
+                            ) {
+                                let pw = physics_world.borrow();
+                                let cs = camera_state.borrow();
+                                let mut encoder = gpu.device.create_command_encoder(
+                                    &wgpu::CommandEncoderDescriptor { label: Some("Debug Wireframe Encoder") },
+                                );
+                                debug_draw.render(
+                                    &gpu.device,
+                                    &mut encoder,
+                                    &swapchain_view,
+                                    &gpu.depth_view,
+                                    &*cs,
+                                    &*pw,
+                                );
+                                gpu.queue.submit(std::iter::once(encoder.finish()));
+                            }
+                        }
+
                         // UI overlay pass (drawn on top of 3D scene)
                         if let (Some(ui_rc), Some(font_rc)) = (
                             &self.ui_renderer,
@@ -3287,7 +3401,14 @@ impl ApplicationHandler for Engine {
                                 let c = if self.render_debug.torch_flicker_enabled { on } else { off };
                                 ui.draw_text(x, y, &format!("[5] Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
                                 ui.draw_text(x, y, &format!("[6] Ambient: {}", if self.render_debug.ambient_override < 0.1 { "scene".to_string() } else { format!("{:.1}", self.render_debug.ambient_override) }), sz, val, font); y += sz + 2.0;
-                                ui.draw_text(x, y, "[0] Toggle this HUD", sz, hdr, font);
+                                ui.draw_text(x, y, "[0] Toggle this HUD", sz, hdr, font); y += sz + 2.0;
+                                let c = if self.render_debug.show_colliders { on } else { off };
+                                ui.draw_text(x, y, &format!("[H] Colliders: {}", if self.render_debug.show_colliders { "ON" } else { "OFF" }), sz, c, font);
+                            }
+
+                            // Always show collider indicator when active
+                            if self.render_debug.show_colliders {
+                                ui.draw_text(10.0, (gpu.config.height as f32) - 30.0, "[H] Collider wireframes ON", 14.0, [0.0, 1.0, 1.0, 1.0], font);
                             }
 
                             let mut ui_encoder = gpu.device.create_command_encoder(

@@ -98,7 +98,7 @@ impl TestRunner {
             .register_physics_api(self.physics_world.clone(), self.scene_world.clone())
             .map_err(|e| format!("Physics API: {}", e))?;
         self.script_runtime
-            .register_entity_api(self.scene_world.clone())
+            .register_entity_api(self.scene_world.clone(), self.physics_world.clone())
             .map_err(|e| format!("Entity API: {}", e))?;
         self.script_runtime
             .register_event_api(
@@ -160,7 +160,7 @@ impl TestRunner {
             self.script_runtime.call_init(entity);
         }
         {
-            let mut sw = self.scene_world.borrow_mut();
+            let sw = self.scene_world.borrow_mut();
             for (_entity, script) in sw.world.query::<&mut Script>().iter() {
                 script.initialized = true;
             }
