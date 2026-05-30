@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>nAIVE — web playground</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --fg: #e8ecf1;
+    --muted: #8b95a7;
+    --accent: #6ee7ff;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+    font-family: 'Inter', system-ui, sans-serif; }
+  header { padding: 24px 32px; display: flex; align-items: baseline; gap: 16px;
+    border-bottom: 1px solid #1a1f29; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: -0.02em; }
+  header h1 span { color: var(--accent); }
+  header .sub { color: var(--muted); font-size: 13px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px; }
+  .canvas-wrap { position: relative; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.45); }
+  canvas { display: block; width: 100%; height: auto; background: #000; }
+  .status { margin-top: 16px; color: var(--muted); font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; white-space: pre-wrap; }
+  .err { color: #ff8a8a; }
+  .ok { color: #7fffa7; }
+  noscript { color: var(--muted); }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span>n</span>AIVE web</h1>
+    <div class="sub">v0 — WebGPU proof of life</div>
+  </header>
+  <main>
+    <div class="canvas-wrap">
+      <canvas id="naive-canvas" width="1024" height="576"></canvas>
+    </div>
+    <div id="status" class="status">booting…</div>
+    <noscript>This playground requires JavaScript and a WebGPU-capable browser.</noscript>
+  </main>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

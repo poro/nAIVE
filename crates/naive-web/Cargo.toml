@@ -1,0 +1,39 @@
+[package]
+name = "naive-web"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+description = "nAIVE web playground — wasm runtime for in-browser demos"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# wgpu in browser uses the WebGPU backend
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+
+# Logging through console.log
+log = "0.4"
+console_log = "1"
+console_error_panic_hook = "0.1"
+
+# wasm glue
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "GpuCanvasContext",
+    "Performance",
+]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O3", "--enable-bulk-memory"]
