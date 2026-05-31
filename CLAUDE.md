@@ -83,7 +83,7 @@ Text-to-3D pipeline: prompt → FLUX.1 (2D) → Hunyuan3D (3D GLB) → engine.
 
 | Server | Tool | Purpose |
 |--------|------|---------|
-| `game-asset-generator` | `tools/game-asset-mcp/index.js` (entry point invoked by `.mcp.json`) | Text→2D→3D asset pipeline |
+| `game-asset-generator` | `tools/game-asset-mcp/src/index.js` (canonical entry per upstream `package.json` main; vendored as a submodule) | Text→2D→3D asset pipeline |
 | `meshy-ai` | `meshy-ai-mcp-server` (npx) | Meshy AI 3D generation |
 | `blender` | `blender-mcp` (uvx) | Blender scene manipulation |
 
