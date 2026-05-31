@@ -185,8 +185,7 @@ ssh -L 8000:localhost:8000 -p 2222 ubuntu@<your-server-ip>
 
 ```bash
 source .env
-cd tools/game-asset-mcp
-node test_generate.js "red sports car"
+node scripts/test_generate_asset.js "red sports car"
 ```
 
 This saves `generated_2d.png` and `generated_3d.glb` into `project/assets/meshes/`.
@@ -210,9 +209,11 @@ naive-core        (MIT)    Shared types, ECS components, scene format, event bus
     │
 naive-client      (MIT)    Full engine: renderer, physics, audio, scripting
     │
-naive-runtime     (MIT)    Thin CLI binary
+naive-runtime     (MIT)    Thin CLI binary (naive, naive-runtime, naive_mcp)
     │
-naive-server      (BSL)    Multiplayer hosting, matchmaking, AI Director (optional)
+naive-server      (BSL)    Multiplayer hosting, matchmaking, AI Director (stub)
+    │
+naive-web         (MIT)    WASM + WebGPU build for browser playground
 ```
 
 ### Tech stack
@@ -397,10 +398,12 @@ Development follows a tiered system, each tier validated by proof-of-concept gam
 | Tier | Systems | Status |
 |------|---------|--------|
 | **1** | Health, hitscan, projectiles, collision damage, third-person camera | **Done** (v0.1.2) |
-| **2** | Dynamic GPU buffer, entity pooling, particles, tag queries, events | **Done** (v0.1.3) |
-| **3** | GPU compute entity simulation (50,000+ entities at 60 FPS) | Planned |
-| **4** | Vertex animation textures, skeletal animation, state machines | Planned |
-| **5** | Vehicles, mounted weapons, inventory, loadout system | Planned |
+| **2** | Dynamic GPU buffer, entity pooling, particles, tag queries, events | **Done** (v0.1.4) |
+| **2.5** | Physics & Scene API — impulse/force, CCD, collider materials, scene loading, camera shake | **Done** (v0.1.7) |
+| **2.7** | DX & Code Quality — physics hot-reload, pipeline modularization, debug wireframes, kinematic bodies, convex decomposition | **Done** (v0.1.15) |
+| **3** | Visual & Interaction — texture mapping, procedural meshes, STL loading, `screen_to_ray` mouse picking | **In progress** (v0.1.18) |
+| **4** | GPU compute entity simulation (50,000+ entities at 60 FPS), neighbor-grid collisions, flow field | Planned |
+| **5** | Vertex animation textures, skeletal animation, state machines, UI widgets | Planned |
 
 **Proof game: HAVOC** — A 3D Vampire Survivors-style horde survival game. If nAIVE can render 50,000 physics-driven goblins while you drive a truck through them, it can handle anything.
 
@@ -460,6 +463,7 @@ The server crate — **`naive-server`** — is licensed under the [Business Sour
 naive-core       MIT          Use for anything. No restrictions.
 naive-client     MIT          Use for anything. No restrictions.
 naive-runtime    MIT          Use for anything. No restrictions.
+naive-web        MIT          Use for anything. No restrictions.
 naive-server     BSL 1.1      No competing hosting services. Converts to MIT in 2029.
 ```
 
@@ -482,4 +486,4 @@ cargo check --workspace
 
 ---
 
-**Current version:** 0.1.4
+**Current version:** 0.1.18
