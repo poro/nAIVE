@@ -38,7 +38,7 @@ Add `[features] web = []` to `naive-client`. Use `cfg(not(target_arch = "wasm32"
 
 ## v2 — Demo browser in the browser
 
-- Bake the 14 embedded demo YAML + Lua scripts (already `include_str!`'d) into wasm.
+- Bake the 19 embedded demo YAML + Lua scripts (already `include_str!`'d) into wasm.
 - Pre-compile each demo's shaders to WGSL via host `build.rs` (runs slang on the dev machine, emits `OUT_DIR/wgsl/*.wgsl`, `include_str!`'d into the wasm).
 - URL routes: `/demo/<slug>` deep-links to a specific demo.
 - "View source" panel showing YAML + Lua for the active demo.

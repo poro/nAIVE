@@ -84,7 +84,7 @@ When a developer runs `naive init my-game`, the scaffold creates three interconn
 # Dev Log — my-game
 
 ## Engine Version
-nAIVE v0.1.11
+nAIVE v0.1.18
 
 ## Game Type
 <!-- What kind of game? (FPS, puzzle, platformer, RTS) -->
@@ -207,7 +207,7 @@ flowchart LR
     end
 
     subgraph GITHUB["GitHub"]
-        ISSUE["Issue created<br/>[Dev Log] my-game — v0.1.10"]
+        ISSUE["Issue created<br/>[Dev Log] my-game — v0.1.18"]
         LABEL["Label: dev-log"]
         RECORD["Append submission<br/>record to dev.log"]
     end
@@ -259,7 +259,7 @@ The created GitHub Issue contains:
 
 ```
 **Project:** my-game v0.1.0
-**Engine:** nAIVE v0.1.11
+**Engine:** nAIVE v0.1.18
 **Submitted:** 2026-02-17 14:30
 
 ---

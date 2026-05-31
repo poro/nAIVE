@@ -29,7 +29,7 @@ v4.0's engine was a renderer with scripting and physics. v5.0 adds the systems n
 - **Gameplay primitives (DONE v0.1.2)** — health/damage, hitscan, projectiles, collision damage, third-person camera. Tier 1 complete.
 - **Production foundations (DONE v0.1.4)** — dynamic GPU instance buffer (no more 256-entity ceiling), entity pooling, particle system, runtime entity queries, event subscription. Tier 2 complete.
 - **Physics & scene API (DONE v0.1.7)** — physics impulse/velocity, collider materials, CCD, scene loading, camera shake, render debug HUD, 5 demo scenes. Tier 2.5 complete. Informed by Angry Birds dev log feedback.
-- **Editor mode + AI asset pipeline (DONE v0.1.11)** — `naive edit` with free-fly camera and MCP command socket, vertex color support for GLB meshes, Meshy AI 3D generation demo, binary mesh asset embedding in demo system. 16 embedded demos.
+- **Editor mode + AI asset pipeline (DONE v0.1.11)** — `naive edit` with free-fly camera and MCP command socket, vertex color support for GLB meshes, Meshy AI 3D generation demo, binary mesh asset embedding in demo system. 19 embedded demos (as of v0.1.18).
 - **Scene-to-splat beautification pipeline** — build a level with simple meshes, one-click convert to photorealistic Gaussian Splats via World Labs/Marble while keeping simple colliders for physics. Decouples gameplay geometry from visual representation.
 - **GPU compute entity simulation** — 50,000+ physics-driven entities on the GPU. nAIVE's answer to Unreal's Niagara, but for gameplay entities, not just particles.
 - **Vertex Animation Textures (VAT)** — baked skeletal animation sampled on the GPU for massive instanced rendering
@@ -1567,8 +1567,8 @@ crates/
     material.rs        — PBR materials from YAML
     mesh.rs            — glTF + procedural meshes
     editor_camera.rs   — Free-fly camera for `naive edit`
-    demos.rs           — 16 embedded demos with binary asset support
-    ... (26 modules total)
+    demos.rs           — 19 embedded demos with binary asset support
+    ... (35+ modules total)
   naive-runtime/src/
     main.rs            — Thin CLI entry point
     bin/naive_mcp.rs   — MCP JSON-RPC server

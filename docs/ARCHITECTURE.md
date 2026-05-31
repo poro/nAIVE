@@ -1,7 +1,7 @@
 # nAIVE Engine — Architecture Reference
 
-**Version:** 0.1.13
-**Date:** March 2026
+**Version:** 0.1.18
+**Date:** May 2026
 **Companion:** nAIVE Engine PRD v5.0
 **License:** MIT
 
@@ -13,45 +13,49 @@ nAIVE is a six-stage pipeline: natural language description becomes a rendered, 
 
 ![Architecture Overview](images/nAIVE_Architecture_Overview.png)
 
-The engine is built in Rust (2021 edition) across four workspace crates, totaling ~22,700 lines of source across 33 modules. The core technology stack pairs each domain with a best-in-class Rust library: wgpu for cross-platform GPU rendering, NVIDIA SLANG for shader authoring, Rapier3D for deterministic physics, hecs for lightweight ECS, mlua for Lua 5.4 scripting, and Kira for spatial audio.
+The engine is built in Rust (2021 edition) across five workspace crates, totaling ~25,000 lines of source across 40+ modules. The core technology stack pairs each domain with a best-in-class Rust library: wgpu for cross-platform GPU rendering, NVIDIA SLANG for shader authoring, Rapier3D for deterministic physics, hecs for lightweight ECS, mlua for Lua 5.4 scripting, and Kira for spatial audio.
 
-The development roadmap is organized into tiers, each validated by HAVOC — a 3D Vampire Survivors-style horde survival game designed to push every subsystem to its limit. Tiers 1 through 2.75 are complete as of v0.1.13, covering gameplay primitives, production foundations, physics APIs, editor mode, AI asset generation, and debug visualization. Tier 3 (GPU scale with 50K+ entities and deferred PBR) is next.
+The development roadmap is organized into tiers, each validated by HAVOC — a 3D Vampire Survivors-style horde survival game designed to push every subsystem to its limit. Tiers 1 through 2.7 are complete as of v0.1.15, covering gameplay primitives, production foundations, physics APIs, editor mode, AI asset generation, pipeline modularization, and debug visualization. Tier 3 (Visual & Interaction — texture mapping, procedural meshes, mouse picking via `screen_to_ray`) is in progress as of v0.1.18. Tier 4 (GPU scale with 50K+ entities and deferred PBR) is next.
 
 ### Crate Map
 
 | Crate | Lines | Purpose | License |
 |-------|-------|---------|---------|
-| `naive-core` | ~1,200 | Scene schema, shared types, YAML deserialization | MIT |
-| `naive-client` | ~19,500 | Engine loop, renderer, physics, scripting, world management | MIT |
-| `naive-runtime` | ~800 | CLI binary (`naive`, `naive-runtime`, `naive_mcp`) | MIT |
-| `naive-server` | ~200 | Multiplayer server (stub — future platform work) | BSL 1.1 |
+| `naive-core` | ~1,700 | Scene schema, shared types, YAML deserialization | MIT |
+| `naive-client` | ~22,300 | Engine loop, renderer, physics, scripting, world management | MIT |
+| `naive-runtime` | ~900 | CLI binary (`naive`, `naive-runtime`, `naive_mcp`) | MIT |
+| `naive-server` | ~12 | Multiplayer server (stub — future platform work) | BSL 1.1 |
+| `naive-web` | ~120 | WASM + WebGPU browser playground (`cdylib`) | MIT |
 
 ### Key Modules (naive-client)
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| `engine.rs` | 3,480 | Main `Engine` struct, ApplicationHandler, game loop orchestration |
-| `pipeline.rs` | 3,057 | CompiledPipeline — YAML-defined render pass DAG, RenderDebugState |
-| `scripting.rs` | 1,611 | Lua API registration (40+ functions: physics, entity, camera, events, audio) |
+| `engine.rs` | 3,697 | Main `Engine` struct, ApplicationHandler, game loop orchestration |
+| `pipeline/` (mod) | 3,106 | CompiledPipeline — YAML-defined render pass DAG; split into `def` (198), `resource` (249), `compiler` (1,443), `executor` (898), `mod` (318) |
+| `scripting.rs` | 1,794 | Lua API registration (40+ functions: physics, entity, camera, events, audio) |
 | `shader.rs` | 1,606 | SLANG→WGSL shader compilation, caching, hot-reload |
-| `init.rs` | 1,111 | Engine initialization, GPU setup, resource loading |
-| `world.rs` | 1,100 | SceneWorld (ECS + registry), EntityCommandQueue, entity spawning, pooling |
-| `mesh.rs` | 910 | MeshCache, GLB loading, procedural meshes, vertex colors, skinned meshes |
+| `mesh.rs` | 1,302 | MeshCache, GLB + STL loading, procedural meshes, vertex colors, skinned meshes |
+| `world.rs` | 1,248 | SceneWorld (ECS + registry), EntityCommandQueue, entity spawning, pooling |
+| `init.rs` | 1,160 | Engine initialization, GPU setup, resource loading |
 | `test_runner.rs` | 814 | Headless test runner for `naive test` CLI command |
 | `beautify.rs` | 672 | Scene beautification pipeline (simple mesh → Gaussian Splat conversion) |
 | `physics.rs` | 652 | PhysicsWorld — Rapier3D wrapper (dynamic, kinematic, static bodies, VHACD) |
+| `demos.rs` | 620 | 19 embedded demos with interactive CLI browser |
 | `command.rs` | 594 | MCP JSON-RPC command socket (TCP :6969) |
 | `renderer.rs` | 580 | GpuState, DrawUniformPool, instance buffer management |
-| `demos.rs` | 553 | 17 embedded demos with interactive CLI browser |
 | `input.rs` | 506 | InputState — key/mouse capture, binding system, synthetic injection |
 | `ui.rs` | 472 | UiRenderer — text overlay, HUD, flash effects |
 | `splat.rs` | 446 | Gaussian Splatting loader and renderer |
-| `debug_draw.rs` | 383 | **NEW** — Wireframe physics collider visualization (toggle: H key) |
+| `debug_draw.rs` | 382 | Wireframe physics collider visualization (toggle: H key) |
 | `font.rs` | 370 | BitmapFont — SDF text rendering |
-| `particles.rs` | ~350 | ParticleSystem — CPU simulation, GPU billboard rendering |
-| `camera.rs` | ~300 | CameraState — FPS, TPS, fly-cam modes, shake effects |
+| `particles.rs` | 248 | ParticleSystem — CPU simulation, GPU billboard rendering |
+| `material.rs` | 247 | Material system, YAML loader, procedural defaults |
+| `reflect.rs` | 197 | Component reflection / patch system for hot-reload |
 | `anim_system.rs` | 185 | Animation system tick, skeletal bone palette computation |
-| `editor_camera.rs` | ~170 | Free-fly camera for `naive edit` mode |
+| `editor_camera.rs` | 144 | Free-fly camera for `naive edit` mode |
+| `camera.rs` | 131 | CameraState — FPS, TPS, fly-cam modes, shake effects |
+| `texture_cache.rs` | 120 | PNG/JPG/WEBP texture loading + wgpu bind group caching |
 
 ---
 
@@ -80,7 +84,7 @@ Each frame follows a strict 12-stage pipeline, designed around a 16ms budget at 
 
 Lua scripts cannot modify the ECS world directly because mlua requires `'static` closures. Instead, scripts push commands to an `EntityCommandQueue`, and the engine processes them at a safe point between simulation and rendering. Spawn commands execute before destroy commands to prevent newly-spawned entities from referencing destroyed ones.
 
-The raw pointer bridge (`*mut PhysicsWorld`, `*mut SceneWorld`) provides zero-cost Lua→engine access without `Arc<Mutex<>>` locking. This is safe because the Engine struct is pinned in the winit event loop, and scene transitions replace the world in-place at the same memory address.
+Engine state is shared with Lua via `Rc<RefCell<T>>` handles — `SharedPhysicsWorld`, `SharedSceneWorld`, `SharedEntityCommandQueue`, and friends are defined at the top of `scripting.rs`. This avoids `Arc<Mutex<>>` locking (the engine is single-threaded inside the winit event loop) while still allowing mlua's `'static` closures to mutate engine state. The discipline is to drop every `borrow_mut()` before dispatching events or calling user code that might re-enter; scene transitions reuse the same `Rc` handles, re-initializing their contents in place.
 
 ---
 
@@ -98,7 +102,7 @@ Three backends provide redundancy: self-hosted GPU (fastest, full control), Hugg
 
 ### MCP Scene Control
 
-The `naive_mcp` bridge process connects Claude Code to the running engine via JSON-RPC over TCP port 6969. Eleven tools provide full scene control: `spawn_entity`, `destroy_entity`, `modify_entity`, `list_entities`, `query_entity`, `run_lua`, `save_scene`, `get_scene_yaml`, `set_camera`, `editor_status`, and `inject_input`.
+The `naive_mcp` bridge process connects Claude Code to the running engine via JSON-RPC over TCP port 6969. Fifteen tools provide full scene + runtime control: `naive_spawn_entity`, `naive_destroy_entity`, `naive_modify_entity`, `naive_list_entities`, `naive_query_entity`, `naive_run_lua`, `naive_save_scene`, `naive_get_scene_yaml`, `naive_set_camera`, `naive_editor_status`, `naive_inject_input`, `naive_emit_event`, `naive_query_events`, `naive_runtime_control`, and `naive_beautify_scene`.
 
 This architecture means every action the AI takes is observable, replayable, and version-controlled. A session of AI scene-building produces a YAML file and Lua scripts — human-readable artifacts that can be reviewed, modified, and committed to version control.
 
@@ -133,9 +137,9 @@ Scene files (YAML) are deserialized with serde_yaml into `SceneDef` + `EntityDef
 
 Shaders are written in NVIDIA SLANG (`.slang` files), compiled through the SLANG SDK (vendored in `vendor/`) to WGSL output, then consumed by wgpu to create native GPU pipelines for Metal, Vulkan, DX12, or WebGPU backends. Hot-reload recompiles in <200ms.
 
-### Planned: Deferred PBR Pipeline (Tier 3)
+### Planned: Deferred PBR Pipeline (Tier 4)
 
-The `pipeline.rs` module (3,057 lines) already contains the `CompiledPipeline` infrastructure for YAML-defined render pass DAGs. Tier 3 will activate this with shadow mapping, G-buffer generation, deferred lighting, Gaussian splat compositing, bloom, ACES tonemapping, and FXAA — all defined as a declarative YAML graph rather than hardcoded render passes.
+The `pipeline/` module (3,106 lines, split across `def`/`resource`/`compiler`/`executor`/`mod` since Tier 2.7) contains the `CompiledPipeline` infrastructure for YAML-defined render pass DAGs. Tier 4 will fully activate this with shadow mapping, G-buffer generation, deferred lighting, Gaussian splat compositing, bloom, ACES tonemapping, and FXAA — all defined as a declarative YAML graph rather than hardcoded render passes.
 
 ---
 
@@ -192,9 +196,9 @@ This design means a complete game can be code-reviewed in a pull request. Every 
 | T1 | Gameplay Primitives | **DONE v0.1.2** | Health, hitscan, projectiles, collision damage, third-person camera |
 | T2 | Production Foundations | **DONE v0.1.4** | Dynamic GPU instance buffer, entity pooling, particles, event system |
 | T2.5 | Physics & Scene API | **DONE v0.1.7** | Impulse/force, CCD, collider materials, scene loading, camera shake |
-| T2.75 | Editor + AI Assets | **DONE v0.1.13** | `naive edit`, MCP command socket, text→3D pipeline, debug wireframe |
-| T3 | GPU Scale | **NEXT** | 50K+ GPU compute entities, shadow maps, deferred PBR pipeline |
-| T4 | Animation & Polish | Planned | Skeletal mesh rendering, VAT, UI widgets, animation state machines |
-| T5 | Game Systems | Planned | Vehicles, weapons, inventory, client-side prediction, multiplayer |
+| T2.7 | DX & Code Quality | **DONE v0.1.15** | Physics hot-reload, component patch coverage, pipeline modularization, HUD reload notifications, debug wireframes, kinematic bodies, convex decomposition |
+| T3 | Visual & Interaction | **IN PROGRESS v0.1.18** | Texture mapping, procedural meshes (cube/sphere/plane/cylinder/cone/torus), STL mesh loading, `screen_to_ray` mouse picking |
+| T4 | GPU Scale | Planned | 50K+ GPU compute entities, neighbor-grid collisions, flow field, shadow maps, deferred PBR pipeline |
+| T5 | Animation & Polish | Planned | Skeletal mesh rendering, VAT, UI widgets, animation state machines |
 
 Each tier is validated by building real games — not synthetic benchmarks. HAVOC (50K-goblin horde survival) is the proof game that exercises every system from physics to rendering to AI integration. If it runs HAVOC, it can run anything.
