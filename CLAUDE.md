@@ -19,7 +19,8 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `naive-core` | Scene schema, shared types (YAML deserialization) |
 | `naive-client` | Engine loop, renderer, physics, scripting, world management |
 | `naive-runtime` | CLI binary (`naive`, `naive-runtime`, `naive_mcp`) |
-| `naive-server` | Multiplayer server (future) |
+| `naive-server` | Multiplayer server (stub — future) |
+| `naive-web` | WASM + WebGPU build for browser playground (`crates/naive-web`, `cdylib`) |
 
 ## Key Source Files
 
@@ -31,17 +32,22 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/world.rs` | `SceneWorld` (ECS + registry), `EntityCommandQueue`, entity spawning, pooling |
 | `crates/naive-client/src/scripting.rs` | Lua API registration (physics, entity, camera, scene, events) |
 | `crates/naive-client/src/renderer.rs` | wgpu render pipeline, instance buffers, particles |
+| `crates/naive-client/src/pipeline/` | CompiledPipeline — YAML render-pass DAG (split into `def`/`resource`/`compiler`/`executor`/`mod`) |
+| `crates/naive-client/src/debug_draw.rs` | Wireframe physics collider visualization (toggle: H key) |
+| `crates/naive-client/src/command.rs` | MCP JSON-RPC command socket (TCP :6969) |
 | `crates/naive-client/src/test_runner.rs` | Headless test runner for `naive test` CLI command |
 | `crates/naive-client/src/dev_log.rs` | `naive submit-log` — POST dev.log as GitHub Issue |
-| `crates/naive-client/src/demos.rs` | `naive demo` — 16 embedded demos with interactive browser |
+| `crates/naive-client/src/demos.rs` | `naive demo` — 19 embedded demos with interactive browser |
 | `crates/naive-client/src/editor_camera.rs` | Free fly camera for `naive edit` editor mode |
 | `crates/naive-client/src/texture_cache.rs` | TextureCache — loads PNG/JPG/WEBP textures, creates wgpu bind groups |
+| `crates/naive-client/src/beautify.rs` | Scene beautification pipeline (simple mesh → Gaussian splat conversion) |
+| `crates/naive-web/src/lib.rs` | WASM entry point for browser playground (wgpu WebGPU init, panic hook, logging) |
 
 ## Architecture Patterns
 
 - **Deferred commands:** Lua scripts push commands to `EntityCommandQueue`; engine processes them end-of-frame to avoid aliasing/dangling pointers.
-- **Raw pointers for Lua closures:** Lua API closures capture `*mut PhysicsWorld` / `*mut SceneWorld` since mlua requires `'static` closures. Safe because Engine is pinned in the winit event loop.
-- **In-place replacement for scene transitions:** `scene.load()` clears ECS and replaces physics world in-place (same memory address) so captured raw pointers remain valid.
+- **Shared mutable state via `Rc<RefCell<T>>`:** Lua API closures capture `Rc<RefCell<PhysicsWorld>>` / `Rc<RefCell<SceneWorld>>` (and similar shared types — see `SharedSceneWorld`, `SharedPhysicsWorld`, etc. in `scripting.rs`) so mlua's `'static` closures can mutate engine state without `Arc<Mutex<>>` locking. Borrow discipline matters: always drop a `borrow_mut()` before dispatching events or calling user code that might re-enter.
+- **In-place replacement for scene transitions:** `scene.load()` clears the ECS and re-initializes the shared `PhysicsWorld` via `borrow_mut()` so captured `Rc` handles remain valid across scene changes.
 - **Pool manager:** Entity recycling for projectiles and spawned entities to avoid allocation churn.
 
 ## Tier Status
@@ -77,7 +83,7 @@ Text-to-3D pipeline: prompt → FLUX.1 (2D) → Hunyuan3D (3D GLB) → engine.
 
 | Server | Tool | Purpose |
 |--------|------|---------|
-| `game-asset-generator` | `tools/game-asset-mcp/src/index.js` | Text→2D→3D asset pipeline |
+| `game-asset-generator` | `tools/game-asset-mcp/index.js` (entry point invoked by `.mcp.json`) | Text→2D→3D asset pipeline |
 | `meshy-ai` | `meshy-ai-mcp-server` (npx) | Meshy AI 3D generation |
 | `blender` | `blender-mcp` (uvx) | Blender scene manipulation |
 
@@ -85,8 +91,7 @@ Text-to-3D pipeline: prompt → FLUX.1 (2D) → Hunyuan3D (3D GLB) → engine.
 
 ```sh
 source .env
-cd tools/game-asset-mcp
-node test_generate.js "red sports car"
+node scripts/test_generate_asset.js "red sports car"
 # Outputs: project/assets/meshes/generated_2d.png, generated_3d.glb
 ```
 
@@ -103,9 +108,9 @@ naive edit --scene scenes/my.yaml    # Opens editor with an existing scene
 
 ### Controls
 
-- **WASD** — Move camera (hold right-click for mouse look)
-- **Right-click + mouse** — Look around
-- **Space / Ctrl** — Move up / down
+- **WASD** — Move camera (forward / left / back / right)
+- **Mouse** — Look around (always active — no button needed, works on Mac trackpads)
+- **Space / Q** — Move up / down
 - **Shift** — 3x speed boost
 - **Scroll wheel** — Adjust movement speed
 
@@ -121,6 +126,11 @@ When the editor is running, Claude Code can use these MCP tools via `naive_mcp`:
 | `naive_list_entities` | List all entities with IDs and tags |
 | `naive_query_entity` | Get detailed component data for an entity |
 | `naive_run_lua` | Execute Lua code with full API access (entity, physics, particles, camera, events, audio). Use for batch operations, physics manipulation, particle effects. |
+| `naive_emit_event` | Emit a gameplay event into the event bus (name + payload) |
+| `naive_query_events` | Query recent events from the bus (for AI introspection) |
+| `naive_inject_input` | Synthesize keyboard/mouse input as if the user pressed it |
+| `naive_runtime_control` | Pause / resume / step the engine runtime |
+| `naive_beautify_scene` | Trigger the scene beautification pipeline (mesh → Gaussian splat) |
 | `naive_save_scene` | Serialize current scene to YAML file |
 | `naive_get_scene_yaml` | Get current scene as YAML string (for understanding context) |
 | `naive_set_camera` | Move/orient the editor camera (position, yaw, pitch, look_at) |
