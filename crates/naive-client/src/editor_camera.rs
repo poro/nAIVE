@@ -5,8 +5,8 @@ use crate::camera::CameraState;
 use crate::input::InputState;
 
 /// Free fly camera for editor mode.
-/// WASD + mouse look (right-click held), scroll to adjust speed,
-/// Space/Ctrl for up/down, Shift for fast mode.
+/// WASD + always-on mouse look, scroll to adjust speed,
+/// Space/Q for up/down, Shift for fast mode.
 pub struct EditorCamera {
     pub position: Vec3,
     pub yaw: f32,
