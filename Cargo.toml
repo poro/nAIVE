@@ -5,6 +5,7 @@ members = [
     "crates/naive-client",
     "crates/naive-runtime",
     "crates/naive-server",
+    "crates/naive-web",
 ]
 
 [workspace.package]
