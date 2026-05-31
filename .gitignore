@@ -4,6 +4,7 @@
 *.swo
 .DS_Store
 *.log
+stderr.*
 .env
 .mcp.json
 
