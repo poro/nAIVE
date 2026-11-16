@@ -657,7 +657,10 @@ impl Engine {
                 self.command_server = Some(server);
             }
             Err(e) => {
-                tracing::warn!("Failed to start command server: {}", e);
+                tracing::error!(
+                    "Command socket unavailable, MCP and socket commands will not work: {}",
+                    e
+                );
             }
         }
     }
@@ -973,7 +976,10 @@ impl Engine {
                 self.command_server = Some(server);
             }
             Err(e) => {
-                tracing::warn!("Failed to start command server: {}", e);
+                tracing::error!(
+                    "Command socket unavailable, MCP and socket commands will not work: {}",
+                    e
+                );
             }
         }
 

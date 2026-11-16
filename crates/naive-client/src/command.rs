@@ -71,10 +71,7 @@ pub struct CommandServer {
 impl CommandServer {
     pub fn start(socket_path: &str) -> Result<Self, String> {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        // Never unlink an existing path: it may be a live engine, a symlink,
-        // or an unrelated file. A crashed engine's socket needs explicit removal.
-        let listener = std::os::unix::net::UnixListener::bind(socket_path)
-            .map_err(|e| format!("Cannot bind command socket {socket_path}: {e}. Use a unique --socket path; remove stale sockets explicitly."))?;
+        let listener = bind_socket(socket_path)?;
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("Cannot secure command socket: {e}"))?;
         listener.set_nonblocking(true).map_err(|e| e.to_string())?;
@@ -167,6 +164,51 @@ impl Drop for CommandServer {
                 let _ = std::fs::remove_file(&self.socket_path);
             }
         }
+    }
+}
+
+/// Bind the command socket. An existing path is replaced only when it is a
+/// socket owned by this user that nothing is listening on, which is what a
+/// crashed, killed or interrupted engine leaves behind. A live engine, a
+/// symlink, another user's socket or any other file is never touched.
+fn bind_socket(socket_path: &str) -> Result<std::os::unix::net::UnixListener, String> {
+    use std::io::ErrorKind;
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    use std::os::unix::net::{UnixListener, UnixStream};
+
+    let bind_error = |e: std::io::Error| format!("Cannot bind command socket {socket_path}: {e}");
+    let error = match UnixListener::bind(socket_path) {
+        Ok(listener) => return Ok(listener),
+        Err(error) if error.kind() == ErrorKind::AddrInUse => error,
+        Err(error) => return Err(bind_error(error)),
+    };
+    let metadata = std::fs::symlink_metadata(socket_path).map_err(|_| bind_error(error))?;
+    if !metadata.file_type().is_socket() || metadata.uid() != current_uid() {
+        return Err(format!(
+            "Cannot bind command socket {socket_path}: the path exists and is not a socket owned by this user. Use a unique --socket path."
+        ));
+    }
+    match UnixStream::connect(socket_path) {
+        Ok(_) => Err(format!(
+            "Another engine is already listening on {socket_path}. Stop it or use a unique --socket path."
+        )),
+        Err(connect) if connect.kind() == ErrorKind::ConnectionRefused => {
+            // Re-check the identity so a socket that a new engine created in
+            // the meantime is not removed.
+            let current = std::fs::symlink_metadata(socket_path).map_err(bind_error)?;
+            if (current.dev(), current.ino()) != (metadata.dev(), metadata.ino()) {
+                return Err(format!(
+                    "Command socket {socket_path} changed while checking it. Try again or use a unique --socket path."
+                ));
+            }
+            std::fs::remove_file(socket_path)
+                .map_err(|e| format!("Cannot remove stale command socket {socket_path}: {e}"))?;
+            tracing::info!("Removed stale command socket {}", socket_path);
+            UnixListener::bind(socket_path).map_err(bind_error)
+        }
+        Err(connect) => Err(format!(
+            "Cannot bind command socket {socket_path}: it exists and could not be checked ({connect}). Use a unique --socket path."
+        )),
     }
 }
 
@@ -712,6 +754,22 @@ mod tests {
         assert!(CommandServer::start(&path).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep this file");
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn stale_socket_from_a_crashed_engine_is_replaced() {
+        use std::os::unix::fs::FileTypeExt;
+        let path = test_socket_path();
+        // A std listener does not unlink its path when dropped, like a crash.
+        drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+        assert!(std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_socket());
+        let server = CommandServer::start(&path).expect("stale socket should be replaced");
+        assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());
+        drop(server);
+        assert!(!std::path::Path::new(&path).exists());
     }
 
     #[test]

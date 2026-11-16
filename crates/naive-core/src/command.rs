@@ -59,8 +59,10 @@ impl<T: Argument> Argument for Option<T> {
     }
 }
 
+/// Each command: `Variant => "wire_name", "tool description", { field: Type => "field description", ... }`.
+/// Field descriptions go into the MCP input schema so agents see argument formats.
 macro_rules! commands {
-    ($($variant:ident => $name:literal, $description:literal, {$($field:ident: $ty:ty),* $(,)?});* $(;)?) => {
+    ($($variant:ident => $name:literal, $description:literal, {$($field:ident: $ty:ty $(=> $doc:literal)?),* $(,)?});* $(;)?) => {
         /// Validated commands. Unknown commands/fields and incorrect argument
         /// types are rejected before they reach the engine thread.
         #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,8 +88,13 @@ macro_rules! commands {
                     let mut properties = Map::new();
                     #[allow(unused_mut)]
                     let mut required: Vec<&str> = Vec::new();
-                    $(properties.insert(stringify!($field).into(), <$ty as Argument>::schema());
-                    if <$ty as Argument>::required() { required.push(stringify!($field)); })*
+                    $(
+                        #[allow(unused_mut)]
+                        let mut schema = <$ty as Argument>::schema();
+                        $(schema["description"] = json!($doc);)?
+                        properties.insert(stringify!($field).into(), schema);
+                        if <$ty as Argument>::required() { required.push(stringify!($field)); }
+                    )*
                     json!({"name": concat!("naive_", $name), "description": $description,
                         "inputSchema": {"type": "object", "properties": properties,
                             "required": required, "additionalProperties": false}})
@@ -104,37 +111,62 @@ macro_rules! commands {
 }
 
 commands! {
-    ListEntities => "list_entities", "List the IDs and tags of all entities in the current scene.", {};
+    ListEntities => "list_entities", "List all entities in the current scene with their IDs and tags.", {};
     QueryEntity => "query_entity", "Query component data for an entity by ID.", {
-        entity_id: String, component: Option<String>
+        entity_id: String => "The entity ID to query",
+        component: Option<String> => "Return only this component, e.g. transform, mesh_renderer, point_light or camera. Omit for all components."
     };
-    ModifyEntity => "modify_entity", "Patch an entity's transform or light components.", {
-        entity_id: String, components: Map<String, Value>
+    ModifyEntity => "modify_entity", "Patch an existing entity's transform or point light. Other components cannot be changed here; use naive_run_lua for them.", {
+        entity_id: String => "The entity ID to modify",
+        components: Map<String, Value> => "transform {position: [x,y,z], rotation: [x,y,z] in degrees or [x,y,z,w] quaternion, scale: [x,y,z]} and/or point_light {color: [r,g,b], intensity, range}, e.g. {\"transform\": {\"position\": [1, 2, 3]}}"
     };
-    SpawnEntity => "spawn_entity", "Spawn an entity with optional components (transform, mesh_renderer, collider, rigid_body, point_light or camera) and tags. Procedural mesh names include procedural:cube and procedural:sphere.", {
-        entity_id: String, components: Option<Map<String, Value>>, tags: Option<Vec<String>>
+    SpawnEntity => "spawn_entity", "Spawn an entity using the same component format as scene YAML. Meshes are procedural:cube, procedural:sphere or a project path such as assets/meshes/model.glb; materials are procedural:default or a path such as assets/materials/red.yaml. Bodies with rigid_body and collider fall, bounce and collide.", {
+        entity_id: String => "Unique ID for the new entity",
+        components: Option<Map<String, Value>> => "Components: transform {position, rotation (degrees), scale}, mesh_renderer {mesh, material, cast_shadows, receive_shadows}, rigid_body {type: 'dynamic'|'static'|'kinematic', mass, ccd} (needs a collider or character_controller), collider {shape: 'box'|'sphere'|'capsule'|'trimesh', half_extents: [x,y,z], radius, half_height, restitution, friction, is_trigger}, point_light {color, intensity, range}, directional_light, camera {fov, near, far, role}, script {source: 'logic/file.lua'}, health {max, current}, collision_damage, particle_emitter, animator, gaussian_splat {source} (not combined with mesh_renderer). Unknown components are rejected.",
+        tags: Option<Vec<String>> => "Tags for the entity, e.g. [\"enemy\"]"
     };
-    DestroyEntity => "destroy_entity", "Destroy an entity by ID.", { entity_id: String };
-    EmitEvent => "emit_event", "Emit a game event with an optional object payload.", {
-        event_type: String, data: Option<Map<String, Value>>
+    DestroyEntity => "destroy_entity", "Destroy an entity by ID, including its physics body, script and event listeners.", {
+        entity_id: String => "The entity ID to destroy"
     };
-    QueryEvents => "query_events", "Query recent events; filter matches event type names, limit defaults to 100.", {
-        filter: Option<String>, limit: Option<u32>
+    EmitEvent => "emit_event", "Emit a game event that scripts listening with events.on receive.", {
+        event_type: String => "Event type, e.g. player.damaged",
+        data: Option<Map<String, Value>> => "Event payload object; listeners read it as e.data"
     };
-    InjectInput => "inject_input", "Inject input: key_press/key_release with key; mouse_press/mouse_release with button; mouse_motion with dx/dy.", {
-        action: String, key: Option<String>, button: Option<String>, dx: Option<f32>, dy: Option<f32>
+    QueryEvents => "query_events", "Query recent game events from the event log.", {
+        filter: Option<String> => "Only return events whose type matches this filter",
+        limit: Option<u32> => "Maximum number of events to return (default 100)"
     };
-    RuntimeControl => "runtime_control", "Pause, resume or query status of the runtime.", { action: String };
-    SaveScene => "save_scene", "Save scene YAML inside the project. Path defaults to scenes/editor_scene.yaml.", { path: Option<String> };
-    GetSceneYaml => "get_scene_yaml", "Get the current scene as YAML.", {};
-    SetCamera => "set_camera", "Move the editor camera; yaw/pitch are degrees and look_at is a world position.", {
-        position: Option<[f32; 3]>, yaw: Option<f32>, pitch: Option<f32>, look_at: Option<[f32; 3]>
+    InjectInput => "inject_input", "Inject synthetic keyboard or mouse input into the running game.", {
+        action: String => "key_press, key_release, mouse_press, mouse_release or mouse_motion",
+        key: Option<String> => "Key name for key_press/key_release, e.g. W, Space, E",
+        button: Option<String> => "Mouse button for mouse_press/mouse_release: Left, Right or Middle",
+        dx: Option<f32> => "Horizontal mouse movement for mouse_motion",
+        dy: Option<f32> => "Vertical mouse movement for mouse_motion"
     };
-    EditorStatus => "editor_status", "Get editor mode, entity count, camera and scene path.", {};
-    CaptureFrame => "capture_frame", "Render the scene without UI to a PNG inside the project (default captures/frame.png).", { path: Option<String> };
-    Benchmark => "benchmark", "Run whole frames offscreen, advancing simulation, and report throughput and GPU pass timings. Frames defaults to 240.", { frames: Option<u32> };
-    GpuTimings => "gpu_timings", "GPU milliseconds per frame and render pass over the last 60 frames. Use benchmark to avoid display throttling.", {};
-    RunLua => "run_lua", "Run limited Lua with the registered entity, physics, scene, event, camera, particle and audio APIs. Returns the result and print output.", { code: String }
+    RuntimeControl => "runtime_control", "Pause, resume or get the status of the game runtime.", {
+        action: String => "pause, resume or status"
+    };
+    SaveScene => "save_scene", "Save the current scene as YAML inside the project, keeping authored scripts, physics and gameplay components with live transform and light edits. Runtime state that a scene file cannot represent is reported as an error.", {
+        path: Option<String> => "Output path relative to the project root (default scenes/editor_scene.yaml)"
+    };
+    GetSceneYaml => "get_scene_yaml", "Get the current scene as YAML. Use it to see which entities exist and their properties before making changes.", {};
+    SetCamera => "set_camera", "Set the editor camera position and orientation. Use look_at to point the camera at a world position.", {
+        position: Option<[f32; 3]> => "Camera position [x, y, z]",
+        yaw: Option<f32> => "Yaw in degrees",
+        pitch: Option<f32> => "Pitch in degrees",
+        look_at: Option<[f32; 3]> => "Point the camera at this world position [x, y, z]"
+    };
+    EditorStatus => "editor_status", "Get editor status: mode, entity count, camera position and scene path.", {};
+    CaptureFrame => "capture_frame", "Render the current frame to a PNG inside the project and return its path, so you can look at what the scene actually shows. The image is the 3D scene without the UI overlay.", {
+        path: Option<String> => "Where to write the PNG, relative to the project root (default captures/frame.png)"
+    };
+    Benchmark => "benchmark", "Measure what the engine sustains: run whole frames back to back (simulation, swarms and every render pass) into an offscreen target without presenting, then report frames per second, milliseconds per frame and GPU time per pass. Unaffected by vsync or by the window being in the background. The simulation really advances.", {
+        frames: Option<u32> => "Frames to run (default 240)"
+    };
+    GpuTimings => "gpu_timings", "GPU milliseconds per frame over the last 60 frames, for the whole frame and per render pass (the swarm step is \"swarms\"), from timestamp queries. On screen with vsync the GPU slows to fit the display refresh, so use naive_benchmark to measure headroom.", {};
+    RunLua => "run_lua", "Run Lua in the running engine, sandboxed with instruction and memory limits. Tables: entity (spawn, spawn_dynamic, destroy, get_position/set_position, get_rotation/set_rotation, set_scale, find_by_tag, damage, heal, set_base_color, set_emission, ...), physics (apply_impulse, apply_force, set_velocity, raycast, hitscan), events (emit, on, off), audio (play_sfx, play_music, stop_music), particles (spawn_burst), camera (shake, world_to_screen), animation, mesh, input and swarm. Use it for batch edits and anything the other tools do not cover.", {
+        code: String => "Lua code to run. Its return value and print() output are returned."
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -298,5 +330,21 @@ mod tests {
             CommandKind::RunLua.tool_definition()["inputSchema"]["required"],
             json!(["code"])
         );
+    }
+
+    #[test]
+    fn every_tool_argument_is_described_for_agents() {
+        for tool in tool_definitions() {
+            let properties = tool["inputSchema"]["properties"].as_object().unwrap();
+            for (field, schema) in properties {
+                assert!(
+                    schema["description"]
+                        .as_str()
+                        .is_some_and(|d| !d.is_empty()),
+                    "{} argument {field} has no description",
+                    tool["name"]
+                );
+            }
+        }
     }
 }
