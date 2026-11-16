@@ -103,7 +103,7 @@ Three backends provide redundancy: self-hosted GPU (fastest, full control), Hugg
 
 ### MCP Scene Control
 
-The `naive_mcp` bridge process connects Claude Code to the running engine: it speaks MCP (JSON-RPC 2.0) over stdio and forwards each call to the engine's Unix domain socket (default `/tmp/naive-runtime.sock`, set with `--socket`). Fifteen tools provide full scene + runtime control: `naive_spawn_entity`, `naive_destroy_entity`, `naive_modify_entity`, `naive_list_entities`, `naive_query_entity`, `naive_run_lua`, `naive_save_scene`, `naive_get_scene_yaml`, `naive_set_camera`, `naive_editor_status`, `naive_inject_input`, `naive_emit_event`, `naive_query_events`, `naive_runtime_control`, and `naive_beautify_scene`.
+The `naive_mcp` bridge process connects Claude Code to the running engine: it speaks MCP (JSON-RPC 2.0) over stdio and forwards each call to the engine's Unix domain socket (default `/tmp/naive-runtime.sock`, set with `--socket`). Sixteen tools provide full scene + runtime control: `naive_spawn_entity`, `naive_destroy_entity`, `naive_modify_entity`, `naive_list_entities`, `naive_query_entity`, `naive_run_lua`, `naive_save_scene`, `naive_get_scene_yaml`, `naive_set_camera`, `naive_editor_status`, `naive_inject_input`, `naive_emit_event`, `naive_query_events`, `naive_runtime_control`, `naive_beautify_scene`, and `naive_capture_frame`, which renders the current frame to a PNG so the agent can see the result.
 
 This architecture means every action the AI takes is observable, replayable, and version-controlled. A session of AI scene-building produces a YAML file and Lua scripts — human-readable artifacts that can be reviewed, modified, and committed to version control.
 

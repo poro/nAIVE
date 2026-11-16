@@ -144,6 +144,11 @@ fn handle_tools_call(id: Option<Value>, request: &Value, socket_path: &str) -> V
             c
         }
         "naive_editor_status" => json!({"cmd": "editor_status"}),
+        "naive_capture_frame" => {
+            let mut c = json!({"cmd": "capture_frame"});
+            copy_field(args, &mut c, "path");
+            c
+        }
         "naive_run_lua" => {
             let mut c = json!({"cmd": "run_lua"});
             copy_field(args, &mut c, "code");
@@ -476,6 +481,20 @@ fn tool_definitions() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {},
+                "required": []
+            }
+        }),
+        json!({
+            "name": "naive_capture_frame",
+            "description": "Render the current frame to a PNG file inside the project and return its path, so you can look at what the scene actually shows. The image is the 3D scene without the UI overlay.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Where to write the PNG, relative to the project root. Default: captures/frame.png"
+                    }
+                },
                 "required": []
             }
         }),

@@ -2196,6 +2196,7 @@ let mut scene_world = scene_world.borrow_mut();
                 "set_camera" => self.handle_set_camera(&pending.request),
                 "editor_status" => self.handle_editor_status(),
                 "run_lua" => self.handle_run_lua(&pending.request),
+                "capture_frame" => self.handle_capture_frame(&pending.request),
                 _ => {
                         let mut sw_opt = self.scene_world.as_ref().map(|rc| rc.borrow_mut());
                         let mut eb = self.event_bus.borrow_mut();
@@ -3093,6 +3094,109 @@ let input = input.borrow();
         }
     }
 
+    /// Render the 3D scene into `target`, without collider wireframes or
+    /// the UI overlay. Used for the window and for frame captures.
+    fn render_scene_to(&self, gpu: &GpuState, target: &wgpu::TextureView) {
+        if self.compiled_pipeline.is_some() {
+            if let (
+                Some(scene_world),
+                Some(camera_state),
+                Some(draw_pool),
+                Some(compiled),
+            ) = (
+                &self.scene_world,
+                &self.camera_state,
+                &self.draw_pool,
+                &self.compiled_pipeline,
+            ) {
+                let sw = scene_world.borrow();
+                let cs = camera_state.borrow();
+                let encoder = crate::pipeline::execute_pipeline_to_view(
+                    gpu,
+                    compiled,
+                    &sw,
+                    &cs,
+                    draw_pool,
+                    &self.mesh_cache,
+                    &self.material_cache,
+                    &self.splat_cache,
+                    target,
+                    &self.render_debug,
+                    self.texture_resources.as_ref(),
+                    &self.bone_palettes,
+                    Some(&self.texture_cache),
+                );
+                gpu.queue.submit(std::iter::once(encoder.finish()));
+            }
+        } else if let (
+            Some(scene_world),
+            Some(camera_state),
+            Some(draw_pool),
+            Some(forward_pipeline),
+        ) = (
+            &self.scene_world,
+            &self.camera_state,
+            &self.draw_pool,
+            &self.forward_pipeline,
+        ) {
+            let mut encoder = gpu.device.create_command_encoder(
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("Forward Render Encoder"),
+                },
+            );
+            let sw = scene_world.borrow();
+            let cs = camera_state.borrow();
+            crate::renderer::render_scene_to_view(
+                gpu,
+                &sw,
+                &cs,
+                draw_pool,
+                &self.mesh_cache,
+                &self.material_cache,
+                forward_pipeline,
+                target,
+                &mut encoder,
+                self.texture_resources.as_ref(),
+            );
+            gpu.queue.submit(std::iter::once(encoder.finish()));
+        }
+    }
+
+    /// Handle capture_frame: render the scene to a PNG file inside the project.
+    fn handle_capture_frame(&mut self, req: &crate::command::CommandRequest) -> crate::command::CommandResponse {
+        use crate::command::CommandResponse;
+        use serde_json::json;
+
+        let relative = req.params.get("path").and_then(|v| v.as_str())
+            .unwrap_or("captures/frame.png");
+        let path = match crate::capture::capture_path(&self.project_root, relative) {
+            Ok(path) => path,
+            Err(e) => return CommandResponse::error(e),
+        };
+        let gpu = match &self.gpu {
+            Some(gpu) => gpu,
+            None => return CommandResponse::error("The renderer is not running"),
+        };
+        if self.scene_world.is_none() {
+            return CommandResponse::error("No scene loaded");
+        }
+
+        let target = crate::capture::create_capture_target(gpu);
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        self.render_scene_to(gpu, &view);
+        match crate::capture::save_texture_png(gpu, &target, &path) {
+            Ok((width, height)) => {
+                tracing::info!("Frame captured to {:?}", path);
+                CommandResponse::ok(json!({
+                    "path": path.display().to_string(),
+                    "width": width,
+                    "height": height,
+                }))
+            }
+            Err(e) => CommandResponse::error(format!("Capture failed: {}", e)),
+        }
+    }
+
     /// Draw the frame: 3D scene, collider wireframes, UI overlay, then
     /// present. Returns early, drawing nothing, if the surface is unavailable.
     fn render_frame(&mut self) {
@@ -3115,69 +3219,7 @@ let input = input.borrow();
                 .create_view(&wgpu::TextureViewDescriptor::default());
 
             // Render 3D scene
-            if self.compiled_pipeline.is_some() {
-                if let (
-                    Some(scene_world),
-                    Some(camera_state),
-                    Some(draw_pool),
-                    Some(compiled),
-                ) = (
-                    &self.scene_world,
-                    &self.camera_state,
-                    &self.draw_pool,
-                    &self.compiled_pipeline,
-                ) {
-                    let sw = scene_world.borrow();
-                    let cs = camera_state.borrow();
-                    let encoder = crate::pipeline::execute_pipeline_to_view(
-                        gpu,
-                        compiled,
-                        &sw,
-                        &cs,
-                        draw_pool,
-                        &self.mesh_cache,
-                        &self.material_cache,
-                        &self.splat_cache,
-                        &swapchain_view,
-                        &self.render_debug,
-                        self.texture_resources.as_ref(),
-                        &self.bone_palettes,
-                        Some(&self.texture_cache),
-                    );
-                    gpu.queue.submit(std::iter::once(encoder.finish()));
-                }
-            } else if let (
-                Some(scene_world),
-                Some(camera_state),
-                Some(draw_pool),
-                Some(forward_pipeline),
-            ) = (
-                &self.scene_world,
-                &self.camera_state,
-                &self.draw_pool,
-                &self.forward_pipeline,
-            ) {
-                let mut encoder = gpu.device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor {
-                        label: Some("Forward Render Encoder"),
-                    },
-                );
-                let sw = scene_world.borrow();
-                let cs = camera_state.borrow();
-                crate::renderer::render_scene_to_view(
-                    gpu,
-                    &sw,
-                    &cs,
-                    draw_pool,
-                    &self.mesh_cache,
-                    &self.material_cache,
-                    forward_pipeline,
-                    &swapchain_view,
-                    &mut encoder,
-                    self.texture_resources.as_ref(),
-                );
-                gpu.queue.submit(std::iter::once(encoder.finish()));
-            }
+            self.render_scene_to(gpu, &swapchain_view);
 
             // Debug wireframe pass: draw collider shapes over 3D scene
             if self.render_debug.show_colliders {
