@@ -21,6 +21,7 @@ pub mod dev_log;
 pub mod editor_camera;
 pub mod engine;
 pub mod font;
+pub mod gpu_timer;
 pub mod init;
 pub mod input;
 pub mod material;

@@ -1,6 +1,6 @@
 # Tier 4 plan: GPU-scale entities
 
-**Status:** approved on 2026-11-16. Milestone 0 is in pull request #11; milestones 1 to 5 are not started.
+**Status:** done. Approved on 2026-11-16; milestones 0 to 5 are built (pull requests #11, #14, #15, #17, #18 and the milestone 5 one).
 **Goal:** 50,000 horde entities on screen at 60 fps, as the roadmap and the HAVOC proof game call for.
 **Source spec:** section 8 of [the engine PRD](nAIVE_Engine_PRD_v5.0.md), which this plan narrows into steps.
 
@@ -143,7 +143,7 @@ Each one ends with a number or a scene to look at.
 | 2 | Compute pass plumbing and the `gpu_swarm` component: members move toward a target, drawn instanced | `scenes/tier4_swarm.yaml`: 50,000 to 400,000 members at 120 fps (the display cap) | Done |
 | 3 | Neighbour grid and flow field | Members spread out instead of stacking and path around obstacles: tests above, and the four walls in `tier4_swarm`; still 400,000 members at 120 fps | Done |
 | 4 | Damage volumes, contact damage, death, spawn waves, the Lua API and events | A HAVOC wave 1 to 3 prototype: 1,000 to 5,000 members you can fight: `scenes/tier4_havoc.yaml`; still 400,000 members at 120 fps | Done |
-| 5 | Scale-up and tidy | 50,000 members at 60 fps on this MacBook; README's Tier 4 row marked done | Medium |
+| 5 | Scale-up and tidy | 50,000 members at 60 fps on this MacBook, measured past the display's cap; README's Tier 4 row marked done | Done |
 
 Milestone 1 came before any compute work because swarms need instancing anyway, and it lifted the ceiling for ordinary entities on the way: from about 6,000 to about 100,000 static entities at 60 fps.
 
@@ -162,6 +162,34 @@ Milestone 4 added health, damage volumes, attacks, spawning and the counters, an
 
 `scenes/tier4_havoc.yaml` is the milestone's prototype: three waves (1,000, 2,500, then 5,000 goblins with 30 health) spawn around the arena's edge, path around ruins and close on the player, who has a piercing rifle (hold the left mouse button) and a ground slam (E). Captures of it show the four spawn groups, the horde routing round the ruins' ends and packing around the player, a clean 7 m hole after a slam, and wounded goblins glowing.
 
+### Milestone 5: measuring past the display
+
+Every frame rate above stops at 120 fps, the display's refresh, so they show the target is met but not by how much. Three things stood in the way of a real number:
+
+- **`vsync` was ignored.** The render pipeline's `settings.vsync` was read but nothing used it; the surface always waited for the display. It now presents without waiting when it is `false`.
+- **macOS throttles a window anyway.** Even without vsync, most runs stayed at 120 fps, depending on whether the new window was in front.
+- **The GPU slows down to fit.** Timed on screen, the lighting, bloom and tonemap passes took longer with 1,000 members than with 400,000: with time to spare, the GPU lowers its clock to just make the refresh.
+
+So milestone 5 added two measuring tools, both commands on the engine's socket and MCP tools:
+
+- **`gpu_timings`** (`crates/naive-client/src/gpu_timer.rs`): GPU time per render and compute pass from timestamp queries, written at the start and end of each pass (the only places Apple GPUs sample them) and read back without waiting, like the swarm counters. Apple GPUs overlap consecutive passes, so a frame's GPU time is taken from its first pass's start to its last pass's end; the passes' own times overlap and do not add up. The render debug overlay shows it too.
+- **`benchmark`**: run N whole frames back to back (simulation at a fixed 1/60 s step, the swarm step, every render pass) into an offscreen target the size of the window, without presenting, then wait for the GPU. That keeps the GPU at full clock and leaves the window and the display out of it.
+
+Measured with `benchmark` (300 frames, 2560 by 1440, release build, M4 Max):
+
+| Scene | Members | Frames per second | Milliseconds per frame |
+|---|---|---|---|
+| `tier4_swarm` (chasing the bait round four walls) | 1,000 | 1,318 | 0.76 |
+| | 50,000 | 899 | 1.11 |
+| | 100,000 | 659 | 1.52 |
+| | 200,000 | 424 | 2.36 |
+| | 400,000 | 238 | 4.20 |
+| `tier4_havoc`, in a fight | 5,000 | 1,554 | 0.64 |
+| | 50,000 | 1,027 | 0.97 |
+| | 100,000 | 764 | 1.31 |
+
+"In a fight" means a script that, every frame, fires 48 rifle lines across the whole arena and a slam, and asks for 1,600 respawns, with kills counted through Lua: over a million goblins died during the 50,000 run. 50,000 members in a fight run at 17 times the 60 fps target. At small counts the full-resolution fullscreen passes (lighting, bloom, tonemap) are most of the frame; at 400,000 the swarm step takes about 1.1 ms and its draws in the shadow and G-buffer passes about 3.4 ms.
+
 Milestone 3 added the neighbour grid, separation and the flow field, and the same measurement did not move: 50,000, 100,000, 200,000 and 400,000 members all ran at 118 to 120 fps, still the display cap, now with four walls to path around. The GPU step for 400,000 members fits in a frame with room to spare; how much room is not measured (it would need GPU timestamp queries).
 
 ## Not in Tier 4
@@ -176,7 +204,7 @@ Milestone 3 added the neighbour grid, separation and the flow field, and the sam
 - **Looking at the screen.** Since `capture_frame` (pull request #13) Claude can look at renders itself, but a capture is one still frame; motion and feel still want you to run a scene.
 - **The GPU path is outside CI.** CI validates the shaders and the CPU reference covers the maths; the GPU-versus-CPU test only runs by hand.
 - **Projectiles no longer "hit" horde members physically.** They become rays or small damage volumes. Anything that relied on a Rapier contact with a goblin has to be expressed that way.
-- **The 50,000 figure is met, combat included**, at the display cap; milestone 5's job is to show it at 60 fps with headroom measured (GPU timestamp queries) and tidy up.
+- **The 50,000 figure is met with room to spare**: 50,000 members in a fight at about 1,000 fps on an M4 Max. Only this MacBook has been measured; a weaker GPU will have less room, mostly in the full-resolution fullscreen passes.
 - **Kill positions stay on the GPU.** Scripts learn how many died, not where, so effects at a death (gore, drops) can only go where the script aimed the damage.
 
 ## Decisions

@@ -38,6 +38,7 @@ use glam::{Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
 use crate::components::{GpuSwarm, Hidden, MaterialOverride, MeshHandle, Transform};
+use crate::gpu_timer::GpuTimer;
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
 use crate::physics::PhysicsWorld;
@@ -1328,11 +1329,13 @@ impl SwarmBuffers {
 }
 
 /// Record one step for each `(swarm, parity)`: clear its grid and this
-/// step's counters, bin, steer.
+/// step's counters, bin, steer. All in one compute pass, timed with
+/// `timestamps` if given.
 pub fn encode_steps(
     encoder: &mut wgpu::CommandEncoder,
     pipelines: &SwarmPipelines,
     steps: &[(&SwarmBuffers, usize)],
+    timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
 ) {
     for (buffers, _) in steps {
         encoder.clear_buffer(&buffers.cell_counts, 0, None);
@@ -1342,7 +1345,7 @@ pub fn encode_steps(
     }
     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: Some("Swarm step"),
-        timestamp_writes: None,
+        timestamp_writes: timestamps,
     });
     for (buffers, parity) in steps {
         let groups = buffers.count.div_ceil(WORKGROUP_SIZE);
@@ -1450,6 +1453,7 @@ impl SwarmSystem {
         material_cache: &MaterialCache,
         draw_pool: &DrawUniformPool,
         bus: &mut SwarmBus,
+        timer: Option<&GpuTimer>,
         dt: f32,
     ) {
         let world = &scene_world.world;
@@ -1531,7 +1535,8 @@ impl SwarmSystem {
                     (&state.buffers, state.parity)
                 })
                 .collect();
-            encode_steps(&mut encoder, pipelines, &steps);
+            let timestamps = timer.and_then(|t| t.compute_pass(crate::gpu_timer::SWARMS));
+            encode_steps(&mut encoder, pipelines, &steps, timestamps);
         }
         // Copy each swarm's counters out, where a slot is free.
         let mut copied: Vec<(hecs::Entity, usize)> = Vec::new();
@@ -2233,7 +2238,7 @@ mod tests {
             let p = with_orders(params, &volumes, &[]);
             queue.write_buffer(&buffers.params, 0, bytemuck::bytes_of(&p));
             let mut encoder = device.create_command_encoder(&Default::default());
-            encode_steps(&mut encoder, &pipelines, &[(&buffers, parity)]);
+            encode_steps(&mut encoder, &pipelines, &[(&buffers, parity)], None);
             queue.submit(std::iter::once(encoder.finish()));
             parity = 1 - parity;
             let (next, stats) = step_swarm(&cpu, &p, &field);
@@ -2295,7 +2300,7 @@ mod tests {
         );
         queue.write_buffer(&buffers.params, 0, bytemuck::bytes_of(&p));
         let mut encoder = device.create_command_encoder(&Default::default());
-        encode_steps(&mut encoder, &pipelines, &[(&buffers, 0)]);
+        encode_steps(&mut encoder, &pipelines, &[(&buffers, 0)], None);
         queue.submit(std::iter::once(encoder.finish()));
 
         let gpu_members: Vec<Member> = bytemuck::cast_slice(&read_back(&device, &queue, &buffers.members[1])).to_vec();
