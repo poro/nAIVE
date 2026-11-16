@@ -245,8 +245,10 @@ the pull request.
 2. After it merges, tag the merge commit on master: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. `.github/workflows/release.yml` builds `naive` and `naive-player`, bundles the
    demo project as an app (notarized when the Developer ID secrets are set),
-   checks that GitHub's source archive includes the LFS meshes, publishes the
-   release and prints the Homebrew `url` and `sha256`.
-4. Update `../homebrew-tap/Formula/naive.rb` with them. The formula must also
+   attaches `nAIVE-X.Y.Z-source.tar.gz` (the source with the Git LFS files, which
+   GitHub's own archives may lack), publishes the release and prints that
+   tarball's `url` and `sha256` for Homebrew.
+4. Update `../homebrew-tap/Formula/naive.rb` with them; the formula builds from
+   that release asset, not from GitHub's archive. The formula must also
    build `crates/naive-player` (`cargo install` it alongside
    `crates/naive-runtime`) so `naive build` can bundle it.

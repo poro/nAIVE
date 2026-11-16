@@ -12,8 +12,9 @@ existing tags are retained; there is no force push or history rewrite. Use
 must keep the LFS pre-push hook enabled so payloads upload before Git references.
 
 Source archives used by Homebrew or other packagers must contain materialized
-assets. Enable inclusion of LFS objects in GitHub source archives in repository
-settings, or publish an archive produced from a checkout after `git lfs pull`.
+assets. Each release attaches `nAIVE-X.Y.Z-source.tar.gz`, built by the release
+workflow from a checkout after `git lfs pull`, and the Homebrew formula builds
+from it. GitHub's automatic archives can still hold LFS pointers.
 Verify the files start with GLB/audio signatures, not the LFS pointer header,
 before publishing an archive. Plain archive downloads are not a replacement for
 `git lfs pull` unless this setting is enabled.

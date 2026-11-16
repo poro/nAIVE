@@ -139,31 +139,39 @@ jobs:
       VERSION: ${{ needs.verify.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      # Git LFS files are needed: include_bytes! embeds LFS-tracked meshes.
       - uses: actions/checkout@v7
+        with:
+          lfs: true
       - uses: actions/download-artifact@v8
         with:
           name: macos
           path: release
 
-      # Homebrew builds from GitHub's source archive, and include_bytes! embeds
-      # LFS-tracked meshes. An archive without LFS objects would compile pointer
-      # files into the binary. Repository setting: Settings > General >
-      # Archives > "Include Git LFS objects in archives".
-      - name: Source archive includes Git LFS objects
-        id: archive
+      # Homebrew builds from source. GitHub's own source archives can hold
+      # Git LFS pointer files instead of the meshes include_bytes! embeds, so
+      # the release carries its own source tarball with the real files.
+      - name: Source tarball with Git LFS files
+        id: source
         run: |
-          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
-          curl -fsSL "$url" -o source.tar.gz
-          # GitHub drops the tag's leading "v" from the archive's directory.
-          mesh="nAIVE-${VERSION}/project/assets/meshes/meshy_car.glb"
-          tar -xzf source.tar.gz -O "$mesh" > mesh.glb
+          name="nAIVE-${VERSION}"
+          mkdir -p stage
+          git archive --format=tar --prefix="${name}/" HEAD | tar -x -C stage
+          git lfs ls-files --name-only | while IFS= read -r file; do
+            cp "$file" "stage/${name}/${file}"
+          done
+          mesh="stage/${name}/project/assets/meshes/meshy_car.glb"
           # An LFS pointer is a ~130-byte text file; the real mesh is megabytes.
-          if [ "$(wc -c < mesh.glb)" -lt 4096 ]; then
-            echo "::error::The source archive holds a Git LFS pointer for $mesh. Turn on 'Include Git LFS objects in archives' and re-run."
+          if [ "$(wc -c < "$mesh")" -lt 4096 ]; then
+            echo "::error::$mesh is still a Git LFS pointer"
             exit 1
           fi
-          echo "sha256=$(sha256sum source.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+          tarball="${name}-source.tar.gz"
+          tar -C stage -czf "release/${tarball}" "$name"
+          rm -f release/SHA256SUMS
+          (cd release && sha256sum -- *) > SHA256SUMS && mv SHA256SUMS release/
+          echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${tarball}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "release/${tarball}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         run: |
@@ -171,6 +179,6 @@ jobs:
             --verify-tag --title "nAIVE $GITHUB_REF_NAME" --generate-notes
           {
             echo "### Homebrew formula"
-            echo "url \"${{ steps.archive.outputs.url }}\""
-            echo "sha256 \"${{ steps.archive.outputs.sha256 }}\""
+            echo "url \"${{ steps.source.outputs.url }}\""
+            echo "sha256 \"${{ steps.source.outputs.sha256 }}\""
           } >> "$GITHUB_STEP_SUMMARY"
