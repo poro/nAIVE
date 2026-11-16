@@ -54,7 +54,6 @@ test:
 build:
   targets:
     - "macos"
-    - "windows"
     - "linux"
 
 dev_log:
@@ -90,8 +89,7 @@ YAML scenes + Lua scripts + assets, run by the `naive` binary.
 - `naive run --scene scenes/other.yaml` — Run a specific scene
 - `naive test` — Run all tests (discovers test_*.lua in tests/)
 - `naive test tests/test_basic.lua` — Run a specific test file
-- `naive build` — Bundle for standalone distribution
-- `naive build --target windows` — Cross-platform build
+- `naive build` — Bundle for standalone distribution (for the platform you run it on)
 
 ## Development Workflow
 - Edit YAML scenes to add/modify entities and components

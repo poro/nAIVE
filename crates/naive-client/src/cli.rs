@@ -52,7 +52,8 @@ pub enum Command {
     },
     /// Bundle game for standalone distribution
     Build {
-        /// Target platform (macos, windows, linux)
+        /// Platform to build for. Must be the one you are running on: the
+        /// bundle contains this engine binary, so there is no cross-compiling.
         #[arg(long)]
         target: Option<String>,
     },
