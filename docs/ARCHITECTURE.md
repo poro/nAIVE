@@ -72,7 +72,7 @@ Each frame follows a strict 12-stage pipeline, designed around a 16ms budget at 
 3. **MCP Commands** — Drain the Unix domain command socket (`/tmp/naive-runtime.sock`). AI agent instructions (spawn, modify, destroy, run Lua) are queued here.
 4. **Input Capture** — Read keyboard and mouse state, resolve binding mappings, accept synthetic input injection from MCP.
 5. **Scripts** — Call `update(dt)` on every entity's Lua script. Scripts push commands to the EntityCommandQueue rather than mutating the world directly.
-6. **Physics** — Step Rapier3D. Supports dynamic, kinematic, and static rigid bodies with CCD. Sync transforms back to ECS components.
+6. **Physics** — Advance Rapier3D in fixed 1/120 s steps: as many as the frame's elapsed time calls for (usually one or two, sometimes none), so results do not depend on frame rate. Each script's `fixed_update(dt)` runs before every step. Supports dynamic, kinematic, and static rigid bodies with CCD. Sync transforms back to ECS components.
 7. **Events** — Process collision events into gameplay: apply collision damage, fire death events, invoke Lua event listeners.
 8. **Deferred Commands** — Process the EntityCommandQueue. Spawns execute first, then destroys — this ordering prevents dangling entity references.
 9. **Animation** — Tick tween system, advance skeletal animations, compute joint palette matrices.

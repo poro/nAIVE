@@ -367,12 +367,13 @@ impl TestRunner {
             }
         }
 
-        self.physics_world.borrow_mut().step(dt);
-        {
-            let pw = self.physics_world.borrow();
-            let mut sw = self.scene_world.borrow_mut();
-            pw.sync_to_ecs(&mut sw.world);
-        }
+        // Same fixed-step loop as the engine, including `fixed_update` hooks.
+        crate::scripting::run_fixed_steps(
+            &self.physics_world,
+            &self.scene_world,
+            Some(&self.script_runtime),
+            dt,
+        );
     }
 }
 

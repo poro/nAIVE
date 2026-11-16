@@ -211,18 +211,12 @@ pub fn spawn_all_entities(
     mesh_cache: &mut MeshCache,
     material_cache: &mut MaterialCache,
     splat_cache: &mut SplatCache,
-    physics_world: Option<&mut PhysicsWorld>,
+    mut physics_world: Option<&mut PhysicsWorld>,
     texture_resources: Option<&crate::mesh::TextureResources>,
-    texture_cache: Option<&mut crate::texture_cache::TextureCache>,
+    mut texture_cache: Option<&mut crate::texture_cache::TextureCache>,
 ) {
-    let pw_ptr = physics_world.map(|pw| pw as *mut PhysicsWorld);
-    let tc_ptr = texture_cache.map(|tc| tc as *mut crate::texture_cache::TextureCache);
     for entity_def in &scene.entities {
-        // SAFETY: we need to reborrow the physics world and texture cache for each entity spawn since
-        // Option<&mut T> is not Copy. The references are valid for the entire loop.
-        let pw_ref = pw_ptr.map(|ptr| unsafe { &mut *ptr });
-        let tc_ref = tc_ptr.map(|ptr| unsafe { &mut *ptr });
-        spawn_entity(scene_world, entity_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, pw_ref, texture_resources, tc_ref);
+        spawn_entity(scene_world, entity_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, physics_world.as_deref_mut(), texture_resources, texture_cache.as_deref_mut());
     }
     scene_world.current_scene = Some(scene.clone());
     tracing::info!(
@@ -1012,14 +1006,12 @@ pub fn reconcile_scene(
     let new_ids: HashSet<&str> = new_scene.entities.iter().map(|e| e.id.as_str()).collect();
 
     // 1. Remove entities no longer in the scene (clean up physics bodies too)
-    let pw_ptr = physics_world.as_mut().map(|pw| *pw as *mut PhysicsWorld);
     for id in old_ids.difference(&new_ids) {
         if let Some(entity) = scene_world.entity_registry.remove(*id) {
-            if let Some(ptr) = pw_ptr {
+            if let Some(pw) = physics_world.as_deref_mut() {
                 if let Ok(rb) = scene_world.world.get::<&crate::physics::RigidBody>(entity) {
                     let rb_handle = rb.handle;
                     drop(rb);
-                    let pw = unsafe { &mut *ptr };
                     pw.remove_body(rb_handle);
                 }
             }
@@ -1031,8 +1023,7 @@ pub fn reconcile_scene(
     // 2. Spawn new entities (with physics)
     for entity_def in &new_scene.entities {
         if !old_ids.contains(entity_def.id.as_str()) {
-            let pw_ref = pw_ptr.map(|ptr| unsafe { &mut *ptr });
-            spawn_entity(scene_world, entity_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, pw_ref, texture_resources, None);
+            spawn_entity(scene_world, entity_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, physics_world.as_deref_mut(), texture_resources, None);
             tracing::info!("Hot-reload: spawned entity '{}'", entity_def.id);
         }
     }

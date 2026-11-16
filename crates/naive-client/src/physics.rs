@@ -6,6 +6,17 @@ use rapier3d::control::{KinematicCharacterController, CharacterAutostep, Charact
 
 use crate::components::Transform;
 
+/// Length of one physics step, in seconds. The simulation only ever advances
+/// in steps of exactly this size, so its results do not depend on the frame
+/// rate. 120 Hz gives one step per frame on a 120 Hz display and two on a
+/// 60 Hz display.
+pub const FIXED_TIMESTEP: f32 = 1.0 / 120.0;
+
+/// Most fixed steps run for a single frame. When a frame takes longer than
+/// this many steps, the backlog is dropped: the simulation slows down instead
+/// of falling ever further behind.
+pub const MAX_STEPS_PER_FRAME: u32 = 8;
+
 /// Rigid body component attached to entities.
 #[derive(Debug, Clone)]
 pub struct RigidBody {
@@ -105,8 +116,11 @@ pub struct PhysicsWorld {
     pub collision_events: Vec<CollisionEvent>,
     pub trigger_events: Vec<TriggerEvent>,
 
-    // Track active contact pairs from previous frame to detect new-only contacts
+    // Track active contact pairs from the previous step to detect new-only contacts
     active_contact_pairs: HashSet<[ColliderHandle; 2]>,
+
+    // Frame time not yet consumed by fixed steps
+    accumulator: f32,
 
     // Character controller
     pub character_controller: KinematicCharacterController,
@@ -142,6 +156,10 @@ impl PhysicsWorld {
             collision_events: Vec::new(),
             trigger_events: Vec::new(),
             active_contact_pairs: HashSet::new(),
+            // Start half a step in. When frames arrive at a whole number of
+            // steps apart, timing jitter then cannot flip a frame between one
+            // step too few and one too many.
+            accumulator: FIXED_TIMESTEP * 0.5,
             character_controller,
         }
     }
@@ -277,9 +295,28 @@ impl PhysicsWorld {
         (rb_handle, col_handle)
     }
 
-    /// Step the physics simulation.
-    pub fn step(&mut self, dt: f32) {
-        self.integration_params.dt = dt;
+    /// Start a frame that lasted `frame_dt` seconds: forget the previous
+    /// frame's events and return how many fixed steps to run for this one.
+    /// Call [`step_fixed`](Self::step_fixed) that many times.
+    pub fn begin_frame(&mut self, frame_dt: f32) -> u32 {
+        self.collision_events.clear();
+        self.trigger_events.clear();
+
+        self.accumulator += frame_dt.max(0.0);
+        let due = (self.accumulator / FIXED_TIMESTEP).floor() as u32;
+        if due > MAX_STEPS_PER_FRAME {
+            self.accumulator = FIXED_TIMESTEP * 0.5;
+            return MAX_STEPS_PER_FRAME;
+        }
+        self.accumulator -= due as f32 * FIXED_TIMESTEP;
+        due
+    }
+
+    /// Advance the simulation by one fixed step. Events are added to this
+    /// frame's lists rather than replacing them, so none are lost when a
+    /// frame runs several steps.
+    pub fn step_fixed(&mut self) {
+        self.integration_params.dt = FIXED_TIMESTEP;
         let gravity = vector![self.gravity.x, self.gravity.y, self.gravity.z];
 
         self.physics_pipeline.step(
@@ -299,16 +336,13 @@ impl PhysicsWorld {
         );
 
         // Collect collision events from narrow phase — only newly started contacts
-        self.collision_events.clear();
-        self.trigger_events.clear();
-
         let mut current_pairs = HashSet::new();
         for pair in self.narrow_phase.contact_pairs() {
             if pair.has_any_active_contact {
                 let key = [pair.collider1, pair.collider2];
                 current_pairs.insert(key);
 
-                // Only emit if this pair was NOT active last frame (new contact)
+                // Only emit if this pair was NOT active last step (new contact)
                 if !self.active_contact_pairs.contains(&key) {
                     let entity_a = self.collider_to_entity.get(&pair.collider1).copied();
                     let entity_b = self.collider_to_entity.get(&pair.collider2).copied();
@@ -336,13 +370,19 @@ impl PhysicsWorld {
         let body = &self.rigid_body_set[rb_handle];
         let collider = &self.collider_set[col_handle];
 
+        // Start from the pending kinematic target rather than the current
+        // position. The target is only applied by the next physics step, and a
+        // frame can pass without one, so successive moves must build on each
+        // other instead of overwriting.
+        let start = *body.next_position();
+
         let movement = self.character_controller.move_shape(
             dt,
             &self.rigid_body_set,
             &self.collider_set,
             &self.query_pipeline,
             collider.shape(),
-            body.position(),
+            &start,
             vector![desired_movement.x, desired_movement.y, desired_movement.z],
             QueryFilter::default().exclude_rigid_body(rb_handle),
             |_| {},
@@ -356,16 +396,9 @@ impl PhysicsWorld {
         );
 
         // Apply the movement to the rigid body
-        let current_pos = body.position().translation;
-        let new_pos = vector![
-            current_pos.x + effective.x,
-            current_pos.y + effective.y,
-            current_pos.z + effective.z
-        ];
-
+        let mut new_iso = start;
+        new_iso.translation.vector += movement.translation;
         if let Some(body) = self.rigid_body_set.get_mut(rb_handle) {
-            let mut new_iso = *body.position();
-            new_iso.translation = new_pos.into();
             body.set_next_kinematic_position(new_iso);
         }
 
@@ -648,5 +681,150 @@ mod tests {
         let (hit_entity, distance, _normal) = result.unwrap();
         assert_eq!(hit_entity, entity);
         assert!(distance > 0.0);
+    }
+
+    const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
+
+    /// Feed `frames` frames of `1 / fps` seconds through the fixed-step loop
+    /// and return how many steps ran.
+    fn run_frames(pw: &mut PhysicsWorld, fps: f32, frames: u32) -> u32 {
+        let mut total = 0;
+        for _ in 0..frames {
+            let steps = pw.begin_frame(1.0 / fps);
+            for _ in 0..steps {
+                pw.step_fixed();
+            }
+            total += steps;
+        }
+        total
+    }
+
+    /// A world with a ball half a metre above a floor.
+    fn ball_over_floor() -> PhysicsWorld {
+        let mut world = hecs::World::new();
+        let mut pw = PhysicsWorld::new(GRAVITY);
+        pw.add_static_body(
+            world.spawn(()),
+            Vec3::new(0.0, -0.5, 0.0),
+            Quat::IDENTITY,
+            PhysicsShape::Box {
+                half_extents: Vec3::new(10.0, 0.5, 10.0),
+            },
+            false,
+            0.0,
+            0.5,
+        );
+        pw.add_dynamic_body(
+            world.spawn(()),
+            Vec3::new(0.0, 1.0, 0.0),
+            Quat::IDENTITY,
+            PhysicsShape::Sphere { radius: 0.5 },
+            1.0,
+            0.0,
+            0.5,
+            false,
+        );
+        pw
+    }
+
+    #[test]
+    fn fixed_steps_follow_elapsed_time_not_frame_rate() {
+        let two_seconds_of_steps = (2.0 / FIXED_TIMESTEP).round() as i64;
+        for fps in [30.0, 60.0, 120.0, 144.0, 240.0] {
+            let mut pw = PhysicsWorld::new(GRAVITY);
+            let steps = run_frames(&mut pw, fps, (fps * 2.0) as u32) as i64;
+            assert!(
+                (steps - two_seconds_of_steps).abs() <= 1,
+                "{fps} fps ran {steps} steps, expected about {two_seconds_of_steps}"
+            );
+        }
+    }
+
+    #[test]
+    fn simulation_is_identical_at_different_frame_rates() {
+        let mut heights = Vec::new();
+        for fps in [30.0, 60.0, 120.0] {
+            let mut world = hecs::World::new();
+            let mut pw = PhysicsWorld::new(GRAVITY);
+            let (ball, _) = pw.add_dynamic_body(
+                world.spawn(()),
+                Vec3::new(0.0, 10.0, 0.0),
+                Quat::IDENTITY,
+                PhysicsShape::Sphere { radius: 0.5 },
+                1.0,
+                0.0,
+                0.5,
+                false,
+            );
+            // One second of game time at each frame rate.
+            let steps = run_frames(&mut pw, fps, fps as u32);
+            assert_eq!(steps, 120, "{fps} fps");
+            heights.push(pw.rigid_body_set[ball].translation().y);
+        }
+        assert!(heights[0] < 10.0, "the ball should have fallen");
+        assert_eq!(heights[0], heights[1]);
+        assert_eq!(heights[1], heights[2]);
+    }
+
+    #[test]
+    fn long_frame_is_capped_and_backlog_dropped() {
+        let mut pw = PhysicsWorld::new(GRAVITY);
+        assert_eq!(pw.begin_frame(1.0), MAX_STEPS_PER_FRAME);
+        // The backlog is gone, so the next ordinary frame runs one step.
+        assert_eq!(pw.begin_frame(FIXED_TIMESTEP), 1);
+    }
+
+    #[test]
+    fn collision_events_accumulate_over_a_frame_then_clear() {
+        fn single_step_frame(pw: &mut PhysicsWorld) {
+            assert_eq!(pw.begin_frame(FIXED_TIMESTEP), 1);
+            pw.step_fixed();
+        }
+
+        // Find the step on which the ball first touches the floor.
+        let mut pw = ball_over_floor();
+        let mut contact_step = 0;
+        for step in 1..=240 {
+            single_step_frame(&mut pw);
+            if !pw.collision_events.is_empty() {
+                contact_step = step;
+                break;
+            }
+        }
+        assert!(contact_step > 1, "the ball never reached the floor");
+
+        // Replay, with the contact in the first of two steps in one frame.
+        let mut pw = ball_over_floor();
+        for _ in 1..contact_step {
+            single_step_frame(&mut pw);
+        }
+        assert_eq!(pw.begin_frame(2.0 * FIXED_TIMESTEP), 2);
+        pw.step_fixed();
+        pw.step_fixed();
+        assert_eq!(
+            pw.collision_events.len(),
+            1,
+            "the event from the first step should survive the second"
+        );
+
+        // A frame too short to run a step must not replay that event.
+        assert_eq!(pw.begin_frame(0.0), 0);
+        assert!(pw.collision_events.is_empty());
+    }
+
+    #[test]
+    fn character_moves_build_up_between_steps() {
+        let mut world = hecs::World::new();
+        let mut pw = PhysicsWorld::new(GRAVITY);
+        let (rb, col) = pw.add_character_body(world.spawn(()), Vec3::ZERO, 0.5, 0.3);
+
+        // Two moves with no physics step in between, as on a display faster
+        // than the step rate.
+        pw.move_character(rb, col, Vec3::new(0.25, 0.0, 0.0), FIXED_TIMESTEP);
+        pw.move_character(rb, col, Vec3::new(0.25, 0.0, 0.0), FIXED_TIMESTEP);
+        pw.step_fixed();
+
+        let x = pw.rigid_body_set[rb].translation().x;
+        assert!((x - 0.5).abs() < 1e-4, "expected both moves to apply, got x = {x}");
     }
 }
