@@ -1,7 +1,7 @@
--- Audio Test: plays testAssets MP3 files (snake/minesweeper SFX)
+-- Audio Test: plays the MP3 files in assets/audio/sfx (snake/minesweeper SFX)
 -- Demonstrates: audio.play_music, audio.play_sfx, audio.stop_music, ui overlay
 
-local AUDIO_ROOT = "../testAssets/"
+local AUDIO_ROOT = "assets/audio/sfx/"
 
 -- Schedule of sound effects to play
 local SFX_SCHEDULE = {
@@ -93,7 +93,7 @@ function update(dt)
     -- ═══════════════════════════════════
     ui.rect(0, 0, sw, 40, 0.0, 0.0, 0.0, 0.8)
     ui.text(10, 8, "AUDIO TEST - Snake Sweeper SFX", 22, 0.3, 0.8, 1.0, 1.0)
-    ui.text(sw - 140, 12, "testAssets/", 14, 0.5, 0.5, 0.5, 0.8)
+    ui.text(sw - 140, 12, "assets/audio/sfx/", 14, 0.5, 0.5, 0.5, 0.8)
 
     -- ═══════════════════════════════════
     -- Audio status panel
@@ -171,7 +171,7 @@ function update(dt)
     -- Bottom bar
     -- ═══════════════════════════════════
     ui.rect(0, sh - 28, sw, 28, 0.0, 0.0, 0.0, 0.7)
-    ui.text(10, sh - 22, "Source: testAssets/ (Unity snake/minesweeper game)", 12, 0.5, 0.5, 0.5, 1.0)
+    ui.text(10, sh - 22, "Source: assets/audio/sfx/ (snake/minesweeper SFX)", 12, 0.5, 0.5, 0.5, 1.0)
 
     -- Animated audio waveform visualization (fake)
     local wave_x = sw / 2 - 100
