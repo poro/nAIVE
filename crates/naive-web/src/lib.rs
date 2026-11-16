@@ -54,17 +54,19 @@ pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
             force_fallback_adapter: false,
         })
         .await
-        .map_err(|e| JsValue::from_str(&format!("request_adapter: {e}")))?;
+        .ok_or_else(|| JsValue::from_str("request_adapter: no suitable WebGPU adapter"))?;
 
     let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("naive-web device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                .using_resolution(adapter.limits()),
-            memory_hints: wgpu::MemoryHints::Performance,
-            trace: wgpu::Trace::Off,
-        })
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("naive-web device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                    .using_resolution(adapter.limits()),
+                memory_hints: wgpu::MemoryHints::Performance,
+            },
+            None,
+        )
         .await
         .map_err(|e| JsValue::from_str(&format!("request_device: {e}")))?;
 
@@ -105,7 +107,6 @@ pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
                     }),
                     store: wgpu::StoreOp::Store,
                 },
-                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
