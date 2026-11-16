@@ -1,11 +1,15 @@
 name: Release
 
-# Releases are cut from tags on master. Bump the version in a pull request
-# (scripts/bump-version.sh), merge it once CI passes, then push a tag on the
-# merge commit: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+# Bump the version in a pull request (scripts/bump-version.sh). When it merges,
+# this workflow sees the new version on master, tags the commit vX.Y.Z and
+# releases it. Pushing a vX.Y.Z tag on master by hand also releases.
 
 on:
   push:
+    branches: [master]
+    # Only version bumps can start a release from master. (Path filters do
+    # not apply to tag pushes.)
+    paths: [Cargo.toml]
     tags: ["v*"]
 
 permissions:
@@ -23,32 +27,56 @@ env:
 
 jobs:
   verify:
-    name: Verify tag
+    name: Decide and tag
     runs-on: ubuntu-latest
+    # Creates the tag when a version bump lands on master.
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Tag matches the workspace version and is on master
+      - name: Version, tag and master
         id: version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
-          if [ "$tag" != "$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
-            exit 1
+          tag="v${version}"
+          if [ "$GITHUB_REF_TYPE" = "branch" ]; then
+            # A push to master that touched Cargo.toml: release only if this
+            # version has no tag yet.
+            if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null; then
+              echo "${tag} already exists; nothing to release"
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git tag "$tag" "$GITHUB_SHA"
+            # Pushed with the workflow token, so it does not start this
+            # workflow again; this run carries on with the release.
+            git push origin "refs/tags/${tag}"
+          else
+            if [ "$GITHUB_REF_NAME" != "$tag" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+              echo "::error::$GITHUB_REF_NAME is not on master; release from a merged commit"
+              exit 1
+            fi
           fi
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
-            echo "::error::$GITHUB_REF_NAME is not on master; release from a merged commit"
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "release=true"
+          } >> "$GITHUB_OUTPUT"
 
   macos:
     name: Build and package (macOS)
     needs: verify
+    if: needs.verify.outputs.release == 'true'
     runs-on: macos-latest
     timeout-minutes: 90
     env:
@@ -132,11 +160,13 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: [verify, macos]
+    if: needs.verify.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.verify.outputs.version }}
+      TAG: ${{ needs.verify.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
       # Git LFS files are needed: include_bytes! embeds LFS-tracked meshes.
@@ -170,13 +200,13 @@ jobs:
           tar -C stage -czf "release/${tarball}" "$name"
           rm -f release/SHA256SUMS
           (cd release && sha256sum -- *) > SHA256SUMS && mv SHA256SUMS release/
-          echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${tarball}" >> "$GITHUB_OUTPUT"
+          echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${tarball}" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "release/${tarball}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         run: |
-          gh release create "$GITHUB_REF_NAME" release/* \
-            --verify-tag --title "nAIVE $GITHUB_REF_NAME" --generate-notes
+          gh release create "$TAG" release/* \
+            --verify-tag --title "nAIVE $TAG" --generate-notes
           {
             echo "### Homebrew formula"
             echo "url \"${{ steps.source.outputs.url }}\""
