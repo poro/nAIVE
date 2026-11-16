@@ -76,6 +76,14 @@ Choices, each made to keep the first version simple and inside WebGPU's default 
 
 - **Neighbour grid with fixed-size cells.** Each cell holds up to a fixed number of member indices, filled with an atomic counter; overflow is dropped. One pass, no prefix sum or sort. Crowding beyond the cell capacity loses some separation, which a horde hides.
 - **Flow field on the CPU.** A 128 by 128 grid solved from the target's position around static obstacles, uploaded as a texture when the target changes cell. It is 16,384 cells, which is cheap.
+
+As built in milestone 3 (`crates/naive-client/src/swarm.rs`):
+
+- **Two passes per swarm per frame.** `bin_main` files members into the neighbour grid (cells at least `spacing` wide, 8 members each, counts cleared every frame). `steer_main` reads the 3 by 3 cells around each member. Members are double-buffered, so every member reads the same frame's positions.
+- **Separation comes first.** Each neighbour closer than `spacing` pushes; the summed closeness of all neighbours (not the net push, which cancels inside a crowd) damps how hard a member presses toward the target. Without that, a crowd around a target compressed to half its spacing in the tests; with it, it keeps its spacing.
+- **Obstacles come from the physics world.** Any fixed collider whose box crosses the members' plane is a wall: the floor under their feet is not, a wall is, a beam overhead is not. Solved with Dijkstra on an 8-connected grid without corner cutting, re-solved when the target changes cell or the obstacles change. A wall is stored as blocked cells; members slide along them and never step into one (one that starts inside can walk out).
+- **The swarm's square.** The flow field and grid cover a square of `field_size` (default 256 m, so 2 m flow cells) centred where the swarm spawned; members are clamped inside it. Members steer straight at the target within two flow cells of it, or where the field has no route.
+- Flow directions come from an 8-direction grid and are blended between cells, so paths are a little angular; good enough for a horde.
 - **No Rapier for members.** Members are always moving, so Rapier could never put them to sleep, and stepping 50,000 awake bodies on the CPU every fixed step is far beyond the frame budget. (An earlier draft put a number on this from the physics benchmark; that benchmark measures sleeping bodies, so the number did not hold.) Members collide with each other through the grid and with the world through the flow field's obstacles.
 
 ### Talking to the rest of the game without stalling
@@ -105,11 +113,11 @@ events.on("swarm.player_hit", function(e) ... end)
 
 The headless test runner has no GPU, so the compute path cannot run in `naive test` or in CI as it stands. The plan is a CPU reference implementation of one simulation step in Rust, with the same maths, covered by unit tests (separation keeps spacing, members converge along the flow field, damage volumes kill what they touch). The GPU path is checked by a benchmark scene and by eye.
 
-As built in milestone 2:
+As built:
 
-- `swarm::step_member` is the CPU reference, with unit tests (members reach their slots, never exceed top speed, stay on their plane, face the way they move; spawning is deterministic).
+- `swarm::step_swarm` is the CPU reference of both passes, with unit tests: members spread out instead of stacking (nearest neighbours above 0.4 of the spacing, median above 0.6), path around a wall to the target without ever entering it, never exceed top speed, stay on their plane, face the way they move; the flow field points at the target in the open, routes round a wall's end, marks walled-in cells unreachable; only boxes crossing the plane are obstacles; spawning is deterministic.
 - A test parses and validates every built-in WGSL shader with naga, the compiler wgpu uses, and checks each shader's copy of `DrawUniforms` is 256 bytes. It runs in CI without a GPU, and caught a reserved word in the first swarm shader.
-- `gpu_step_matches_the_cpu_reference` runs the real compute shader and compares 300 members over 90 steps with the CPU reference. It needs a GPU, so it is `#[ignore]`d in CI: `cargo test -p naive-client --lib -- --ignored gpu_step`.
+- `gpu_step_matches_the_cpu_reference` runs the real compute shaders and compares 300 members over 20 steps, with a wall in the way, with the CPU reference (positions, velocities and draw matrices within 1e-3). It needs a GPU, so it is `#[ignore]`d in CI: `cargo test -p naive-client --lib -- --ignored gpu_step`.
 - Claude can look at the result with `capture_frame`.
 
 ## Milestones
@@ -121,7 +129,7 @@ Each one ends with a number or a scene to look at.
 | 0 | Stop the per-entity bone upload | Measured above. Pull request #11 | Done |
 | 1 | Instanced drawing for ECS entities that share a mesh and material | Measured above; regression captures pixel-identical | Done |
 | 2 | Compute pass plumbing and the `gpu_swarm` component: members move toward a target, drawn instanced | `scenes/tier4_swarm.yaml`: 50,000 to 400,000 members at 120 fps (the display cap) | Done |
-| 3 | Neighbour grid and flow field | Members spread out instead of stacking and path around obstacles | Large |
+| 3 | Neighbour grid and flow field | Members spread out instead of stacking and path around obstacles: tests above, and the four walls in `tier4_swarm`; still 400,000 members at 120 fps | Done |
 | 4 | Damage volumes, contact damage, death, spawn waves, the Lua API and events | A HAVOC wave 1 to 3 prototype: 1,000 to 5,000 members you can fight | Large |
 | 5 | Scale-up and tidy | 50,000 members at 60 fps on this MacBook; README's Tier 4 row marked done | Medium |
 
@@ -136,9 +144,9 @@ Milestone 2 measured, release build, same MacBook, `tier4_swarm` scene with its 
 | 200,000 | 118 fps |
 | 400,000 | 118 fps |
 
-All at the display's 120 Hz cap, so the real ceiling is higher; the 524,288-member limit per swarm comes first. Members in milestone 2 only steer toward slots around the target. Separation, the neighbour grid and the flow field (milestone 3) add the work that will actually cost frame time.
+All at the display's 120 Hz cap, so the real ceiling is higher; the 524,288-member limit per swarm comes first. In milestone 2 members only steered toward slots around the target.
 
-In `gpu_swarm`, each member steers to its own slot on an even spiral around the target, `spacing` apart, so members keep apart without any neighbour checks. Milestone 3 replaces that with real separation.
+Milestone 3 added the neighbour grid, separation and the flow field, and the same measurement did not move: 50,000, 100,000, 200,000 and 400,000 members all ran at 118 to 120 fps, still the display cap, now with four walls to path around. The GPU step for 400,000 members fits in a frame with room to spare; how much room is not measured (it would need GPU timestamp queries).
 
 ## Not in Tier 4
 
@@ -152,7 +160,7 @@ In `gpu_swarm`, each member steers to its own slot on an even spiral around the 
 - **Looking at the screen.** Since `capture_frame` (pull request #13) Claude can look at renders itself, but a capture is one still frame; motion and feel still want you to run a scene.
 - **The GPU path is outside CI.** CI validates the shaders and the CPU reference covers the maths; the GPU-versus-CPU test only runs by hand.
 - **Projectiles no longer "hit" horde members physically.** They become rays or small damage volumes. Anything that relied on a Rapier contact with a goblin has to be expressed that way.
-- **The 50,000 figure is met for movement alone.** The grid pass is the likely bottleneck, and its cost is unknown until milestone 3.
+- **The 50,000 figure is met for movement, separation and pathing.** Damage, death and spawn waves (milestone 4) remain.
 
 ## Decisions
 

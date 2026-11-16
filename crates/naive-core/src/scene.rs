@@ -337,10 +337,12 @@ pub struct AnimatorDef {
 /// it is the swarm; its members exist only in GPU buffers and are not
 /// addressable from scripts.
 ///
-/// Members spawn in a disc of `spawn_radius` around the entity, then each
-/// steers to its own slot in a disc around the target, slots `spacing` apart.
-/// They move on the horizontal plane at the entity's height. The target is
-/// the entity named by `target_entity`, or the swarm entity itself.
+/// Members spawn in a disc of `spawn_radius` around the entity and move on
+/// the horizontal plane at the entity's height, inside a square of side
+/// `field_size` centred where the swarm spawned. They follow a flow field
+/// toward the target around static colliders that cross their plane, and
+/// push apart from members closer than `spacing`. The target is the entity
+/// named by `target_entity`, or the swarm entity itself.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct GpuSwarmDef {
     pub count: u32,
@@ -359,12 +361,18 @@ pub struct GpuSwarmDef {
     pub acceleration: f32,
     #[serde(default = "default_swarm_spawn_radius")]
     pub spawn_radius: f32,
-    /// Distance between neighbouring slots around the target.
+    /// Distance members keep from each other.
     #[serde(default = "default_one")]
     pub spacing: f32,
-    /// Members slow down inside this distance of their slot.
+    /// How hard members push apart, relative to their top speed.
+    #[serde(default = "default_swarm_separation")]
+    pub separation: f32,
+    /// Members slow down inside this distance of the target.
     #[serde(default = "default_swarm_arrive_radius")]
     pub arrive_radius: f32,
+    /// Side of the square the swarm moves and finds paths in, in metres.
+    #[serde(default = "default_swarm_field_size")]
+    pub field_size: f32,
     #[serde(default)]
     pub target_entity: Option<String>,
     /// Seed for spawn positions and per-member speed variation.
@@ -379,6 +387,8 @@ fn default_swarm_speed() -> f32 { 4.0 }
 fn default_swarm_acceleration() -> f32 { 3.0 }
 fn default_swarm_spawn_radius() -> f32 { 20.0 }
 fn default_swarm_arrive_radius() -> f32 { 2.0 }
+fn default_swarm_separation() -> f32 { 3.0 }
+fn default_swarm_field_size() -> f32 { 256.0 }
 
 fn default_anim_state() -> String { "idle".to_string() }
 fn default_anim_speed() -> f32 { 1.0 }

@@ -1,6 +1,8 @@
 name: "Tier 4: GPU swarm"
 # 50,000 members simulated and drawn on the GPU, chasing a bait that runs a
-# figure-eight. Members do not avoid each other yet (Tier 4 milestone 3).
+# figure-eight. They keep their distance from each other and follow a flow
+# field around the walls; the bait passes through walls, the horde cannot.
+# Any fixed collider that crosses the members' plane is a wall to them.
 settings:
   ambient_light: [0.3, 0.3, 0.35]
   gravity: [0, -9.81, 0]
@@ -20,6 +22,28 @@ entities:
       transform: { position: [0, -0.5, 0], scale: [400, 1, 400] }
       mesh_renderer: { mesh: "procedural:cube", material: assets/materials/stone.yaml }
 
+  # Walls across the bait's path. The horde has to go round their ends.
+  - id: rampart_west
+    components:
+      transform: { position: [-30, 2, 0], scale: [3, 4, 50] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/red.yaml }
+      collider: { shape: box, half_extents: [1.5, 2, 25] }
+  - id: rampart_east
+    components:
+      transform: { position: [30, 2, 0], scale: [3, 4, 50] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/red.yaml }
+      collider: { shape: box, half_extents: [1.5, 2, 25] }
+  - id: block_north
+    components:
+      transform: { position: [0, 2, -45], scale: [40, 4, 3] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/red.yaml }
+      collider: { shape: box, half_extents: [20, 2, 1.5] }
+  - id: block_south
+    components:
+      transform: { position: [0, 2, 45], scale: [40, 4, 3] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/red.yaml }
+      collider: { shape: box, half_extents: [20, 2, 1.5] }
+
   - id: bait
     components:
       transform: { position: [0, 1.5, 0], scale: [3, 3, 3] }
@@ -29,7 +53,8 @@ entities:
 
   - id: horde
     components:
-      # Members move on the plane at this height.
+      # Members move on the plane at this height, inside a 256 m square
+      # (field_size) centred here.
       transform: { position: [0, 0.25, 0] }
       gpu_swarm:
         count: 50000
@@ -38,8 +63,10 @@ entities:
         scale: 0.5
         speed: 9.0
         acceleration: 2.0
-        spawn_radius: 150
+        spawn_radius: 110
         spacing: 0.7
+        separation: 3.0
         arrive_radius: 5.0
+        field_size: 256
         target_entity: bait
         seed: 1
