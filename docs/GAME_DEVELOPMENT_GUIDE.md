@@ -236,6 +236,7 @@ entities:
 | `tags` | Searchable string tags for entity lookup |
 | `health` | Health pool with max/current values for damageable entities |
 | `collision_damage` | Deals damage to entities with health on physics contact |
+| `gpu_swarm` | A swarm of up to hundreds of thousands of members simulated and drawn on the GPU (see Swarm API) |
 
 ## 7. Scripting
 
@@ -455,6 +456,70 @@ if hit and eid ~= "" then
 end
 ```
 
+### Swarm API
+
+A `gpu_swarm` entity is a pool of members simulated on the GPU. They chase a
+target along a flow field around static colliders, keep their spacing, and
+can attack the target. Scripts address the swarm by its entity id, never a
+single member.
+
+```yaml
+- id: goblins
+  components:
+    transform: { position: [0, 0.5, 0] }   # members walk on the plane at this height
+    gpu_swarm:
+      count: 5000            # pool size: members alive at once, at most
+      initial: 0             # alive at the start (default: count)
+      mesh: procedural:cube
+      material: assets/materials/goblin.yaml
+      scale: 1.0
+      speed: 5.5             # metres per second
+      spacing: 1.1           # distance members keep from each other
+      field_size: 256        # side of the square they move in, centred here
+      target_entity: player
+      health: 30             # each member's health
+      attack_damage: 3       # 0 (default): members never attack
+      attack_range: 1.8      # they hit the target from this close, and stop just short of it
+      attack_interval: 1.0   # seconds between one member's attacks
+```
+
+```lua
+-- Bring back up to 500 dead members in a disc of radius 16 around (x, y, z)
+swarm.spawn("goblins", 500, x, y, z, 16)
+
+-- Hurt every member within the radius (plus half a member) of a point or a segment
+swarm.damage_sphere("goblins", x, y, z, 7, 60)
+swarm.damage_line("goblins", x1, y1, z1, x2, y2, z2, 0.6, 22)   -- a piercing shot
+
+-- Chase a point, or an entity (which the members then attack)
+swarm.set_target("goblins", x, y, z)
+swarm.follow("goblins", "player")
+
+swarm.alive("goblins")      -- living members
+swarm.capacity("goblins")   -- the pool size
+swarm.kills("goblins")      -- members killed so far
+```
+
+Damage volumes apply on the next frame; up to 64 volumes and 8 spawn requests
+are served per frame and the rest wait for the next. Members' attacks take
+`attack_damage` off the target entity's `health` and call its `on_damage`
+with the swarm's id as the source.
+
+Kills and attacks are counted on the GPU and read back without waiting for
+it, so they arrive a frame or two late, as events:
+
+| Event | `e.data` fields |
+|-------|-----------------|
+| `swarm.kills` | `swarm`, `count` (killed since the last event), `alive` |
+| `swarm.hit` | `swarm`, `target`, `hits`, `damage` |
+| `swarm.cleared` | `swarm` (the last members died and no spawns are on the way) |
+
+`swarm.alive` counts members as of the last report plus spawns requested
+since, so it does not drop to zero between `swarm.spawn` and the spawn.
+
+`scenes/tier4_havoc.yaml` is a complete example: three waves, a rifle, a
+ground slam and a HUD.
+
 ### Math Utilities
 
 Added to the standard Lua `math` table:
@@ -469,6 +534,12 @@ math.clamp(value, min, max)  -- clamp value to [min, max]
 ```lua
 -- Emit an event with a data table (keys must be strings)
 events.emit("item.collected", { item_id = "key_01", item_type = "key" })
+
+-- Listen for an event. The callback gets { type = ..., data = { ... } }.
+local id = events.on("swarm.kills", function(e)
+    game.kills = (game.kills or 0) + e.data.count
+end)
+events.off(id)
 ```
 
 Event types and their fields are defined in `events/schema.yaml`. Events are logged and can be checked in tests via `event_occurred()`.
@@ -579,8 +650,13 @@ end
 | `get_game_value(key)` | Read a value from the game state table |
 | `event_occurred(type, filter)` | Check if an event was emitted (optional filter table) |
 | `input.inject(action, type, value)` | Simulate input: type is "press", "release", or "axis" |
+| `swarm.*` | The Swarm API, to fire at swarms and count their members |
 | `assert(condition, message)` | Assert a condition is true |
 | `log.info(message)` | Log from test output |
+
+The headless runner steps swarms on the CPU with the same maths as the GPU,
+and reports kills and attacks on the frame they happen. See
+`tests/test_swarm.lua` and `tests/test_havoc.lua`.
 
 **`scene.find()` returns** a table with an `id` field and a `:get(component)` method:
 

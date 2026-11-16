@@ -34,7 +34,8 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/scripting.rs` | Lua API registration (physics, entity, camera, scene, events) |
 | `crates/naive-client/src/renderer.rs` | wgpu render pipeline, instance buffers, particles |
 | `crates/naive-client/src/pipeline/` | CompiledPipeline — YAML render-pass DAG (split into `def`/`resource`/`compiler`/`executor`/`mod`) |
-| `crates/naive-client/src/swarm.rs` | GPU swarms (`gpu_swarm` component): compute passes bin members into a neighbour grid, then steer them along a CPU-solved flow field around static colliders with separation, and write their draw data; one instanced draw per swarm per pass. `step_swarm` is the CPU reference for tests. Plan: `docs/tier4-plan.md` |
+| `crates/naive-client/src/swarm.rs` | GPU swarms (`gpu_swarm` component): compute passes bin living members into a neighbour grid, then revive dead ones for spawn requests, apply damage volumes, count kills and attacks on the target, steer members along a CPU-solved flow field around static colliders with separation, and write their draw data; one instanced draw per swarm per pass. Counters are read back asynchronously. `step_swarm` is the CPU reference for tests; `CpuSwarms` runs it in the headless test runner. Plan: `docs/tier4-plan.md` |
+| `crates/naive-client/src/swarm_api.rs` | The `swarm` Lua table (spawn, damage spheres and lines, targets, counts) and the `SwarmBus` carrying requests to swarms and reports back; `sim::process_swarm_reports` turns reports into target damage and `swarm.kills` / `swarm.hit` / `swarm.cleared` events |
 | `crates/naive-client/src/debug_draw.rs` | Wireframe physics collider visualization (toggle: H key) |
 | `crates/naive-client/src/command.rs` | Command socket — newline-delimited JSON over a Unix domain socket (default `/tmp/naive-runtime.sock`); `naive_mcp` bridges it to MCP |
 | `crates/naive-client/src/test_runner.rs` | Headless test runner for `naive test` CLI command |
@@ -62,7 +63,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | Tier 2.5 | Physics & Scene API (impulse/force, velocity, CCD, collider materials, entity tags, camera shake, scene loading) | **DONE v0.1.7** |
 | Tier 2.7 | DX & Code Quality (physics hot-reload, component patch coverage, pipeline modularization, HUD reload notifications, debug wireframes, kinematic bodies, convex decomposition) | **DONE v0.1.15** |
 | Tier 3 | Visual & Interaction (texture mapping, procedural meshes, mouse picking, screen_to_ray) | **IN PROGRESS v0.1.18** |
-| Tier 4 | GPU Scale (50K+ GPU compute entities, neighbor-grid collisions, flow field) | **IN PROGRESS** — instanced drawing, `gpu_swarm` movement, separation and flow-field pathing done (milestones 0–3 of `docs/tier4-plan.md`) |
+| Tier 4 | GPU Scale (50K+ GPU compute entities, neighbor-grid collisions, flow field) | **IN PROGRESS** — instanced drawing, `gpu_swarm` movement, separation, flow-field pathing, damage, death, spawn waves and the Lua swarm API done (milestones 0–4 of `docs/tier4-plan.md`; prototype `scenes/tier4_havoc.yaml`) |
 | Tier 5 | Animation & Polish (skeletal animation, VAT, UI) | Planned |
 
 ## AI Asset Generation

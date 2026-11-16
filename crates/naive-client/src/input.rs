@@ -22,6 +22,39 @@ pub enum InputTrigger {
     Mouse(String),
 }
 
+/// The physical input a trigger names.
+enum Resolved {
+    Key(KeyCode),
+    Mouse(MouseButton),
+}
+
+/// The mouse button called `name` in bindings: "Left", "Right" or "Middle".
+pub fn mouse_button_named(name: &str) -> Option<MouseButton> {
+    match name {
+        "Left" => Some(MouseButton::Left),
+        "Right" => Some(MouseButton::Right),
+        "Middle" => Some(MouseButton::Middle),
+        _ => None,
+    }
+}
+
+impl InputTrigger {
+    /// Both variants hold a plain string, so bindings.yaml always loads as
+    /// `Key`. Mouse button names therefore count as mouse buttons in either
+    /// variant; no key shares their names (the arrow keys are `ArrowLeft`
+    /// and so on).
+    fn resolve(&self) -> Option<Resolved> {
+        let (InputTrigger::Key(name) | InputTrigger::Mouse(name)) = self;
+        if let Some(button) = mouse_button_named(name) {
+            return Some(Resolved::Mouse(button));
+        }
+        match self {
+            InputTrigger::Key(name) => key_name_to_code(name).map(Resolved::Key),
+            InputTrigger::Mouse(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AxisBinding {
     #[serde(default)]
@@ -261,91 +294,30 @@ impl InputState {
         }
     }
 
+    /// Whether any trigger bound to `action` is in `keys` or `buttons`.
+    fn action_in(&self, action: &str, keys: &HashSet<KeyCode>, buttons: &HashSet<MouseButton>) -> bool {
+        self.bindings.actions.get(action).is_some_and(|triggers| {
+            triggers.iter().any(|trigger| match trigger.resolve() {
+                Some(Resolved::Key(code)) => keys.contains(&code),
+                Some(Resolved::Mouse(button)) => buttons.contains(&button),
+                None => false,
+            })
+        })
+    }
+
     /// Check if a semantic action is currently held.
     pub fn pressed(&self, action: &str) -> bool {
-        if let Some(triggers) = self.bindings.actions.get(action) {
-            for trigger in triggers {
-                match trigger {
-                    InputTrigger::Key(name) => {
-                        if let Some(code) = key_name_to_code(name) {
-                            if self.keys_held.contains(&code) {
-                                return true;
-                            }
-                        }
-                    }
-                    InputTrigger::Mouse(name) => {
-                        let btn = match name.as_str() {
-                            "Left" => MouseButton::Left,
-                            "Right" => MouseButton::Right,
-                            "Middle" => MouseButton::Middle,
-                            _ => continue,
-                        };
-                        if self.mouse_buttons_held.contains(&btn) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
+        self.action_in(action, &self.keys_held, &self.mouse_buttons_held)
     }
 
     /// Check if a semantic action was just pressed this frame.
     pub fn just_pressed(&self, action: &str) -> bool {
-        if let Some(triggers) = self.bindings.actions.get(action) {
-            for trigger in triggers {
-                match trigger {
-                    InputTrigger::Key(name) => {
-                        if let Some(code) = key_name_to_code(name) {
-                            if self.keys_just_pressed.contains(&code) {
-                                return true;
-                            }
-                        }
-                    }
-                    InputTrigger::Mouse(name) => {
-                        let btn = match name.as_str() {
-                            "Left" => MouseButton::Left,
-                            "Right" => MouseButton::Right,
-                            "Middle" => MouseButton::Middle,
-                            _ => continue,
-                        };
-                        if self.mouse_buttons_just_pressed.contains(&btn) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
+        self.action_in(action, &self.keys_just_pressed, &self.mouse_buttons_just_pressed)
     }
 
     /// Check if a semantic action was just released this frame.
     pub fn just_released(&self, action: &str) -> bool {
-        if let Some(triggers) = self.bindings.actions.get(action) {
-            for trigger in triggers {
-                match trigger {
-                    InputTrigger::Key(name) => {
-                        if let Some(code) = key_name_to_code(name) {
-                            if self.keys_just_released.contains(&code) {
-                                return true;
-                            }
-                        }
-                    }
-                    InputTrigger::Mouse(name) => {
-                        let btn = match name.as_str() {
-                            "Left" => MouseButton::Left,
-                            "Right" => MouseButton::Right,
-                            "Middle" => MouseButton::Middle,
-                            _ => continue,
-                        };
-                        if self.mouse_buttons_just_released.contains(&btn) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
+        self.action_in(action, &self.keys_just_released, &self.mouse_buttons_just_released)
     }
 
     /// Check if any mapped action was just pressed this frame.
@@ -477,6 +449,25 @@ mod tests {
         assert_eq!(key_name_to_code("Space"), Some(KeyCode::Space));
         assert_eq!(key_name_to_code("ShiftLeft"), Some(KeyCode::ShiftLeft));
         assert_eq!(key_name_to_code("Invalid"), None);
+    }
+
+    #[test]
+    fn mouse_buttons_in_bindings_yaml_are_mouse_buttons() {
+        // A plain string in bindings.yaml always loads as a Key trigger.
+        let bindings: InputBindings = serde_yaml::from_str("actions:\n  attack:\n    - Left\n  aim:\n    - Right\n").unwrap();
+        assert!(matches!(&bindings.actions["attack"][0], InputTrigger::Key(name) if name == "Left"));
+
+        let mut state = InputState::new(bindings);
+        state.inject_mouse_press(MouseButton::Left);
+        state.begin_frame();
+        assert!(state.pressed("attack") && state.just_pressed("attack"));
+        assert!(!state.pressed("aim"));
+
+        // The arrow key is not the left mouse button.
+        state.inject_mouse_release(MouseButton::Left);
+        state.inject_key_press("ArrowLeft");
+        state.begin_frame();
+        assert!(!state.pressed("attack") && state.just_released("attack"));
     }
 
     #[test]

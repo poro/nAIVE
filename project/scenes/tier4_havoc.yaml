@@ -1,0 +1,129 @@
+name: "Tier 4: HAVOC waves 1 to 3"
+# A horde-survival prototype on the GPU swarm. Three waves of goblins
+# (1,000, 2,500, then 5,000) come at the player from the arena's edges.
+# Hold the left mouse button to fire a piercing rifle; E slams the ground
+# around you. Clear a wave to heal and get a few seconds' rest.
+#
+# logic/havoc_director.lua runs the waves; logic/havoc_player.lua is the
+# player's weapons and HUD. tests/test_havoc.lua plays it headlessly.
+settings:
+  ambient_light: [0.28, 0.28, 0.34]
+  gravity: [0, -9.81, 0]
+entities:
+  - id: player
+    tags: [player]
+    components:
+      transform: { position: [0, 2, 0] }
+      camera: { fov: 75, near: 0.1, far: 500, role: main }
+      character_controller:
+        move_speed: 7.0
+        sprint_multiplier: 1.8
+        jump_impulse: 7.0
+        step_height: 0.3
+        height: 1.8
+        radius: 0.35
+      health: { max: 100 }
+      script: { source: logic/havoc_player.lua }
+
+  - id: director
+    components:
+      transform: { position: [0, 0, 0] }
+      script: { source: logic/havoc_director.lua }
+
+  - id: sun
+    components:
+      transform: { position: [0, 60, 0] }
+      directional_light: { direction: [0.4, -1.0, 0.3], color: [1.0, 0.92, 0.85], intensity: 3.0, shadow_extent: 120.0 }
+
+  - id: ground
+    components:
+      transform: { position: [0, -0.5, 0], scale: [240, 1, 240] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/stone.yaml }
+      collider: { shape: box, half_extents: [120, 0.5, 120] }
+
+  # The arena's edge.
+  - id: edge_north
+    components:
+      transform: { position: [0, 3, -100], scale: [204, 6, 4] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/obsidian.yaml }
+      collider: { shape: box, half_extents: [102, 3, 2] }
+  - id: edge_south
+    components:
+      transform: { position: [0, 3, 100], scale: [204, 6, 4] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/obsidian.yaml }
+      collider: { shape: box, half_extents: [102, 3, 2] }
+  - id: edge_west
+    components:
+      transform: { position: [-100, 3, 0], scale: [4, 6, 196] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/obsidian.yaml }
+      collider: { shape: box, half_extents: [2, 3, 98] }
+  - id: edge_east
+    components:
+      transform: { position: [100, 3, 0], scale: [4, 6, 196] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/obsidian.yaml }
+      collider: { shape: box, half_extents: [2, 3, 98] }
+
+  # Ruins the horde has to path around.
+  - id: ruin_north
+    components:
+      transform: { position: [-8, 2, -30], scale: [36, 4, 3] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/red.yaml }
+      collider: { shape: box, half_extents: [18, 2, 1.5] }
+  - id: ruin_east
+    components:
+      transform: { position: [32, 2, 6], scale: [3, 4, 30] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/red.yaml }
+      collider: { shape: box, half_extents: [1.5, 2, 15] }
+  - id: ruin_south
+    components:
+      transform: { position: [10, 2, 34], scale: [24, 4, 3] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/red.yaml }
+      collider: { shape: box, half_extents: [12, 2, 1.5] }
+  - id: ruin_west
+    components:
+      transform: { position: [-34, 2, 12], scale: [3, 4, 22] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/red.yaml }
+      collider: { shape: box, half_extents: [1.5, 2, 11] }
+  - id: pillar_a
+    components:
+      transform: { position: [-55, 3, -55], scale: [6, 6, 6] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/obsidian.yaml }
+      collider: { shape: box, half_extents: [3, 3, 3] }
+  - id: pillar_b
+    components:
+      transform: { position: [58, 3, -48], scale: [6, 6, 6] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/obsidian.yaml }
+      collider: { shape: box, half_extents: [3, 3, 3] }
+  - id: pillar_c
+    components:
+      transform: { position: [50, 3, 60], scale: [6, 6, 6] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/obsidian.yaml }
+      collider: { shape: box, half_extents: [3, 3, 3] }
+  - id: pillar_d
+    components:
+      transform: { position: [-60, 3, 52], scale: [6, 6, 6] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/obsidian.yaml }
+      collider: { shape: box, half_extents: [3, 3, 3] }
+
+  - id: goblins
+    components:
+      # Members walk on the plane at this height, inside a 256 m square.
+      transform: { position: [0, 0.5, 0] }
+      gpu_swarm:
+        count: 5000
+        initial: 0
+        mesh: procedural:cube
+        material: assets/materials/goblin.yaml
+        scale: 1.0
+        speed: 5.5
+        acceleration: 4.0
+        spacing: 1.1
+        separation: 3.0
+        arrive_radius: 3.0
+        field_size: 256
+        target_entity: player
+        health: 30
+        attack_damage: 3
+        attack_range: 1.8
+        attack_interval: 1.0
+        seed: 3

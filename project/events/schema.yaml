@@ -29,3 +29,29 @@ events:
   game.level_complete:
     description: "The level was completed"
     fields: []
+  swarm.kills:
+    description: "Members of a GPU swarm were killed (reported a frame or two late)"
+    fields:
+      - swarm
+      - count
+      - alive
+  swarm.hit:
+    description: "Members of a GPU swarm attacked their target"
+    fields:
+      - swarm
+      - target
+      - hits
+      - damage
+  swarm.cleared:
+    description: "A GPU swarm's last members died and no spawns are on the way"
+    fields:
+      - swarm
+  havoc.wave_started:
+    description: "HAVOC prototype: a wave was spawned"
+    fields:
+      - wave
+      - count
+  havoc.wave_cleared:
+    description: "HAVOC prototype: every goblin of the wave is dead"
+    fields:
+      - wave

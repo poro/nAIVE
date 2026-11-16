@@ -37,6 +37,7 @@ pub mod shader;
 pub mod sim;
 pub mod splat;
 pub mod swarm;
+pub mod swarm_api;
 pub mod test_runner;
 pub mod texture_cache;
 pub mod ui;

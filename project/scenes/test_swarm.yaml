@@ -1,0 +1,37 @@
+name: "Swarm combat test"
+# A pool of 300 members, all dead at the start, and a dummy with 100
+# health for them to attack. tests/test_swarm.lua drives it.
+settings:
+  ambient_light: [0.3, 0.3, 0.35]
+  gravity: [0, -9.81, 0]
+entities:
+  - id: ground
+    components:
+      transform: { position: [0, -0.5, 0], scale: [120, 1, 120] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/stone.yaml }
+      collider: { shape: box, half_extents: [60, 0.5, 60] }
+
+  - id: dummy
+    components:
+      transform: { position: [0, 1, 0] }
+      health: { max: 100 }
+      script: { source: logic/test_swarm_dummy.lua }
+
+  - id: horde
+    components:
+      transform: { position: [0, 0.5, 0] }
+      gpu_swarm:
+        count: 300
+        initial: 0
+        scale: 1.0
+        speed: 6.0
+        acceleration: 4.0
+        spacing: 1.1
+        arrive_radius: 2.0
+        field_size: 128
+        target_entity: dummy
+        health: 10
+        attack_damage: 2
+        attack_range: 1.8
+        attack_interval: 0.5
+        seed: 5
