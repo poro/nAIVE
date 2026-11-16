@@ -2681,10 +2681,10 @@ let mut scene_world = scene_world.borrow_mut();
             })?;
             env.set("print", print_fn)?;
 
-            let value = lua.load(code)
+            let chunk = lua.load(code)
                 .set_name("run_lua")
-                .set_environment(env)
-                .eval::<mlua::Value>()?;
+                .set_environment(env);
+            let value = script_runtime.run_limited(|| chunk.eval::<mlua::Value>())?;
 
             // Format return value
             let result_str = match &value {
@@ -3106,6 +3106,13 @@ let input = input.borrow();
 
         // Tier 2: Dispatch Lua event listeners
         self.dispatch_lua_events(dt);
+
+        // Show any script or listener that was stopped for exceeding a limit
+        if let Some(script_runtime) = &self.script_runtime {
+            for message in script_runtime.take_limit_reports() {
+                self.reload_notifications.push((message, instant::Instant::now(), [1.0, 0.3, 0.3, 1.0]));
+            }
+        }
 
         let _tween_results = self.tween_system.update(dt);
         self.audio_system.borrow_mut().cleanup();

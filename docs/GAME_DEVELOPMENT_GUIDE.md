@@ -291,6 +291,16 @@ end
 
 **Note:** Scripts do not receive an `entity` object. Instead, the variable `_entity_string_id` contains the entity's YAML `id` string. Use it with the `entity.*` API functions below. Per-script state can be stored on the `self` table.
 
+### Script Limits
+
+Scripts run with a restricted standard library and with resource limits:
+
+- **Libraries.** `math`, `string`, `table`, `utf8` and the base functions (`pairs`, `pcall`, `print`, and so on) are available. `os`, `io`, `require`, `package`, `coroutine` and `debug` are not.
+- **CPU.** One call into a script may run 50 million Lua instructions, on the order of a tenth of a second of pure Lua. A call is one hook such as `update`, the script's top-level code, or one event listener.
+- **Memory.** All scripts together may hold 256 MB.
+
+A script that goes over a limit is stopped: its functions and state are dropped, the engine keeps running, and a red message appears on screen and in the log. Save the script file to load it again. An event listener that goes over a limit is removed.
+
 ### Entity API
 
 The `entity` table is a global API where every function takes an entity's string ID as the first argument:

@@ -118,7 +118,8 @@ my-game/
 - Third-person camera with wall collision
 
 ### Scripting
-- Lua 5.4 with per-entity sandboxing
+- Lua 5.4 with a per-entity environment and no access to the filesystem, the shell or module loading
+- CPU and memory limits — a script that runs away is stopped instead of hanging the engine
 - 40+ API functions (transform, physics, audio, UI, events, input)
 - Hot-reload with state migration via `on_reload()`
 - Lifecycle hooks: `init()`, `update(dt)`, `on_collision()`, `on_damage()`, `on_death()`
