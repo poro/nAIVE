@@ -12,7 +12,8 @@ use crate::physics::{
     CharacterController, Collider as ColliderComp, RigidBody as RigidBodyComp, FIXED_TIMESTEP,
 };
 use crate::scripting::{
-    Script, ScriptRuntime, SharedEventBus, SharedInputState, SharedPhysicsWorld, SharedSceneWorld,
+    LimitExceeded, Script, ScriptRuntime, SharedEventBus, SharedInputState, SharedPhysicsWorld,
+    SharedSceneWorld,
 };
 
 /// Move every player-controlled character for a frame that lasted `dt`
@@ -227,7 +228,7 @@ pub fn dispatch_lua_events(
                 .get(&event.event_type)
                 .map(|keys| keys.iter().map(|k| script_runtime.lua.registry_value::<mlua::Function>(k)).collect())
                 .unwrap_or_default();
-            for func_result in listener_keys {
+            for (index, func_result) in listener_keys.into_iter().enumerate() {
                 if let Ok(func) = func_result {
                     let lua = &script_runtime.lua;
                     if let Ok(tbl) = lua.create_table() {
@@ -251,12 +252,59 @@ pub fn dispatch_lua_events(
                             }
                             let _ = tbl.set("data", data_tbl);
                         }
-                        if let Err(e) = func.call::<()>(tbl) {
-                            tracing::error!("Lua event listener error: {}", e);
+                        let result = script_runtime.run_limited(|| func.call::<()>(tbl));
+                        match script_runtime.limit_exceeded(result.as_ref().err()) {
+                            Some(limit) => disable_listener(
+                                listeners,
+                                script_runtime,
+                                &event.event_type,
+                                index,
+                                limit,
+                            ),
+                            None => {
+                                if let Err(e) = result {
+                                    tracing::error!("Lua event listener error: {}", e);
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/// Replace a listener that exceeded a limit with one that does nothing. Its
+/// slot is kept, so the ids of the other listeners stay valid.
+fn disable_listener(
+    listeners: &RefCell<HashMap<String, Vec<mlua::RegistryKey>>>,
+    script_runtime: &ScriptRuntime,
+    event_type: &str,
+    index: usize,
+    limit: LimitExceeded,
+) {
+    tracing::error!(
+        "Event listener for '{}' removed: it {}.",
+        event_type,
+        script_runtime.describe_limit(limit)
+    );
+    let limit_name = match limit {
+        LimitExceeded::Cpu => "CPU",
+        LimitExceeded::Memory => "memory",
+    };
+    script_runtime.report_limit(format!(
+        "Listener removed: '{}' hit the {} limit",
+        event_type, limit_name
+    ));
+
+    let lua = &script_runtime.lua;
+    let do_nothing = lua
+        .create_function(|_, _: mlua::MultiValue| Ok(()))
+        .and_then(|f| lua.create_registry_value(f));
+    if let Ok(do_nothing) = do_nothing {
+        let mut listeners = listeners.borrow_mut();
+        if let Some(slot) = listeners.get_mut(event_type).and_then(|keys| keys.get_mut(index)) {
+            *slot = do_nothing;
         }
     }
 }
@@ -270,8 +318,50 @@ mod tests {
     use glam::{Quat, Vec3};
     use mlua::prelude::*;
 
+    use crate::events::EventBus;
     use crate::physics::{PhysicsBodyType, PhysicsShape, PhysicsWorld};
+    use crate::scripting::ScriptLimits;
     use crate::world::SceneWorld;
+
+    #[test]
+    fn runaway_event_listener_is_cut_off_and_replaced() {
+        let event_bus: SharedEventBus = Rc::new(RefCell::new(EventBus::new(100)));
+        let listeners = Rc::new(RefCell::new(HashMap::new()));
+        let runtime = ScriptRuntime::with_limits(ScriptLimits {
+            instructions_per_call: 200_000,
+            memory_bytes: 16 * 1024 * 1024,
+        });
+        runtime
+            .register_event_api(
+                event_bus.clone(),
+                listeners.clone(),
+                Rc::new(RefCell::new(0)),
+                Rc::new(RefCell::new(HashMap::new())),
+            )
+            .unwrap();
+        runtime
+            .lua
+            .load(
+                r#"
+                heard = 0
+                events.on("boom", function() while true do end end)
+                events.on("boom", function() heard = heard + 1 end)
+            "#,
+            )
+            .exec()
+            .unwrap();
+
+        for _ in 0..2 {
+            event_bus.borrow_mut().emit("boom", HashMap::new());
+            dispatch_lua_events(&event_bus, &listeners, Some(&runtime), 1.0 / 60.0);
+        }
+
+        // The runaway listener was cut off once and then replaced, so it is
+        // reported once. The healthy listener heard both events.
+        assert_eq!(runtime.take_limit_reports().len(), 1);
+        let heard: i64 = runtime.lua.globals().get("heard").unwrap();
+        assert_eq!(heard, 2);
+    }
 
     #[test]
     fn on_collision_can_call_back_into_physics() {

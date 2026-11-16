@@ -50,6 +50,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 - **Shared mutable state via `Rc<RefCell<T>>`:** Lua API closures capture `Rc<RefCell<PhysicsWorld>>` / `Rc<RefCell<SceneWorld>>` (and similar shared types — see `SharedSceneWorld`, `SharedPhysicsWorld`, etc. in `scripting.rs`) so mlua's `'static` closures can mutate engine state without `Arc<Mutex<>>` locking. Borrow discipline matters: always drop a `borrow_mut()` before dispatching events or calling user code that might re-enter.
 - **In-place replacement for scene transitions:** `scene.load()` clears the ECS and re-initializes the shared `PhysicsWorld` via `borrow_mut()` so captured `Rc` handles remain valid across scene changes.
 - **Pool manager:** Entity recycling for projectiles and spawned entities to avoid allocation churn.
+- **Script limits:** `ScriptRuntime` loads only `math`, `string`, `table` and `utf8`, caps Lua memory, and counts VM instructions per call. Every call from the engine into Lua must go through `ScriptRuntime::run_limited`; a script that exceeds a limit is stopped and reported on the HUD.
 
 ## Tier Status
 

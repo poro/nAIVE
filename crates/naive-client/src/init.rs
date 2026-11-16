@@ -194,6 +194,11 @@ Scripts are attached to entities. Each script runs in its own sandbox.
 The variable `_entity_string_id` contains this entity's YAML id.
 Use the `self` table for per-script persistent state.
 
+Only `math`, `string`, `table`, `utf8` and the base functions are available:
+there is no `os`, `io`, `require`, `package`, `coroutine` or `debug`.
+A script that runs too long in one call (50 million Lua instructions) or uses
+too much memory (256 MB across all scripts) is stopped until its file is saved again.
+
 ```lua
 function init()              -- called once on entity creation
 function update(dt)          -- called every frame (dt = seconds)

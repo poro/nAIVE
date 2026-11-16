@@ -1,10 +1,11 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use glam::Vec3;
 use mlua::prelude::*;
+use mlua::{HookTriggers, LuaOptions, StdLib, VmState};
 
 use crate::audio::AudioSystem;
 use crate::components::{EntityId, Health, MaterialOverride, ParticleEmitter, PointLight, Tags, Transform};
@@ -54,6 +55,88 @@ impl CameraShakeState {
     }
 }
 
+/// How often the CPU limit is checked, in Lua VM instructions.
+const HOOK_INTERVAL: u32 = 10_000;
+
+/// Resource limits for scripts. Every script shares one Lua state, so the
+/// memory limit is a total, while the CPU limit applies to each call.
+#[derive(Debug, Clone, Copy)]
+pub struct ScriptLimits {
+    /// Lua VM instructions that one call from the engine may execute. A call
+    /// is one hook such as `update`, a script's top-level code, one event
+    /// listener, or one `run_lua` command.
+    pub instructions_per_call: u64,
+    /// Memory the Lua state may hold, in bytes.
+    pub memory_bytes: usize,
+}
+
+impl Default for ScriptLimits {
+    fn default() -> Self {
+        Self {
+            instructions_per_call: 50_000_000,
+            memory_bytes: 256 * 1024 * 1024,
+        }
+    }
+}
+
+/// The limit a script ran into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LimitExceeded {
+    Cpu,
+    Memory,
+}
+
+/// Instruction count of the call in progress, shared with the VM hook.
+struct CallBudget {
+    limit: u64,
+    used: Cell<u64>,
+    /// Set once the call in progress has gone over `limit`.
+    exhausted: Cell<bool>,
+    /// How many `run_limited` calls are on the stack. Zero means no script
+    /// call is in progress.
+    depth: Cell<u32>,
+}
+
+/// Install the VM hook that enforces the CPU limit, checking every
+/// `interval` instructions.
+fn install_cpu_hook(lua: &Lua, budget: Rc<CallBudget>, interval: u32) {
+    lua.set_hook(
+        HookTriggers::new().every_nth_instruction(interval),
+        move |lua, _debug| {
+            if budget.depth.get() == 0 {
+                // Engine setup code, not a script call.
+                return Ok(VmState::Continue);
+            }
+            if !budget.exhausted.get() {
+                let used = budget.used.get() + u64::from(interval);
+                budget.used.set(used);
+                if used <= budget.limit {
+                    return Ok(VmState::Continue);
+                }
+                budget.exhausted.set(true);
+                // Check before every instruction from here on. With a wider
+                // interval, a script that catches the error with `pcall`
+                // inside a loop would keep running between checks.
+                install_cpu_hook(lua, budget.clone(), 1);
+            }
+            Err(LuaError::RuntimeError(format!(
+                "script exceeded its CPU limit of {} instructions in one call",
+                budget.limit
+            )))
+        },
+    );
+}
+
+/// Whether `error` is, or wraps, a Lua out-of-memory error.
+fn is_memory_error(error: &LuaError) -> bool {
+    match error {
+        LuaError::MemoryError(_) => true,
+        LuaError::CallbackError { cause, .. } => is_memory_error(cause),
+        LuaError::WithContext { cause, .. } => is_memory_error(cause),
+        _ => false,
+    }
+}
+
 /// Central scripting runtime managing all Lua VMs.
 pub struct ScriptRuntime {
     pub lua: Lua,
@@ -61,23 +144,120 @@ pub struct ScriptRuntime {
     pub entity_envs: HashMap<hecs::Entity, LuaRegistryKey>,
     /// Cached script sources for hot-reload comparison.
     pub script_sources: HashMap<PathBuf, String>,
+    limits: ScriptLimits,
+    budget: Rc<CallBudget>,
+    /// One line per script stopped for exceeding a limit, until the engine
+    /// takes them for display.
+    limit_reports: RefCell<Vec<String>>,
 }
 
 impl ScriptRuntime {
     pub fn new() -> Self {
-        let lua = Lua::new();
+        Self::with_limits(ScriptLimits::default())
+    }
 
-        // Disable dangerous standard library functions
-        lua.globals().set("os", LuaNil).unwrap_or(());
-        lua.globals().set("io", LuaNil).unwrap_or(());
+    /// Create a runtime with specific CPU and memory limits.
+    pub fn with_limits(limits: ScriptLimits) -> Self {
+        // Load only the libraries scripts need. `os` and `io` would give
+        // scripts the shell and the filesystem, and `package` would hand both
+        // back through `require` and `package.loaded`. `coroutine` is left out
+        // because the CPU hook only covers the main thread, so a loop inside
+        // a coroutine would escape the limit. `debug` could remove the hook.
+        let libs = StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH;
+        let lua = Lua::new_with(libs, LuaOptions::default())
+            .expect("failed to create the Lua state");
+
+        // The base library is always loaded; drop its file loaders.
         lua.globals().set("loadfile", LuaNil).unwrap_or(());
         lua.globals().set("dofile", LuaNil).unwrap_or(());
+
+        if let Err(e) = lua.set_memory_limit(limits.memory_bytes) {
+            tracing::warn!("Could not set the Lua memory limit: {}", e);
+        }
+
+        let budget = Rc::new(CallBudget {
+            limit: limits.instructions_per_call,
+            used: Cell::new(0),
+            exhausted: Cell::new(false),
+            depth: Cell::new(0),
+        });
+        install_cpu_hook(&lua, budget.clone(), HOOK_INTERVAL);
 
         Self {
             lua,
             entity_envs: HashMap::new(),
             script_sources: HashMap::new(),
+            limits,
+            budget,
+            limit_reports: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Run `f`, which calls into Lua, under the per-call CPU limit. Every
+    /// call from the engine into script code goes through here. A nested
+    /// call shares the budget of the outermost one.
+    pub fn run_limited<R>(&self, f: impl FnOnce() -> LuaResult<R>) -> LuaResult<R> {
+        struct Leave<'a>(&'a CallBudget);
+        impl Drop for Leave<'_> {
+            fn drop(&mut self) {
+                self.0.depth.set(self.0.depth.get() - 1);
+            }
+        }
+
+        let budget = &self.budget;
+        if budget.depth.get() == 0 {
+            budget.used.set(0);
+            budget.exhausted.set(false);
+        }
+        budget.depth.set(budget.depth.get() + 1);
+        let result = {
+            let _leave = Leave(budget);
+            f()
+        };
+
+        if budget.depth.get() == 0 && budget.exhausted.get() {
+            // The hook was checking every instruction; go back to the normal
+            // interval for the next call.
+            install_cpu_hook(&self.lua, budget.clone(), HOOK_INTERVAL);
+        }
+        result
+    }
+
+    /// The limit that the `run_limited` call which just returned ran into, if
+    /// any. Pass that call's error. A script can swallow the CPU error with
+    /// `pcall`, so that limit is reported even when the call returned `Ok`.
+    pub fn limit_exceeded(&self, error: Option<&LuaError>) -> Option<LimitExceeded> {
+        if self.budget.exhausted.get() {
+            return Some(LimitExceeded::Cpu);
+        }
+        match error {
+            Some(e) if is_memory_error(e) => Some(LimitExceeded::Memory),
+            _ => None,
+        }
+    }
+
+    /// Describe `limit` for a log line or an on-screen message.
+    pub fn describe_limit(&self, limit: LimitExceeded) -> String {
+        match limit {
+            LimitExceeded::Cpu => format!(
+                "ran more than {} instructions in one call",
+                self.limits.instructions_per_call
+            ),
+            LimitExceeded::Memory => format!(
+                "pushed Lua memory past {} MB",
+                self.limits.memory_bytes / (1024 * 1024)
+            ),
+        }
+    }
+
+    /// Record a one-line message about a script that hit a limit.
+    pub fn report_limit(&self, message: String) {
+        self.limit_reports.borrow_mut().push(message);
+    }
+
+    /// Take the messages recorded since the last call, for display.
+    pub fn take_limit_reports(&self) -> Vec<String> {
+        std::mem::take(&mut *self.limit_reports.borrow_mut())
     }
 
     /// Load and initialize a script for an entity.
@@ -111,10 +291,12 @@ impl ScriptRuntime {
         env.set("self", entity_table).map_err(|e| e.to_string())?;
 
         // Load and execute the script in the environment
-        let chunk = self.lua.load(&code).set_name(source.to_string_lossy());
-        chunk
-            .set_environment(env.clone())
-            .exec()
+        let chunk = self
+            .lua
+            .load(&code)
+            .set_name(source.to_string_lossy())
+            .set_environment(env.clone());
+        self.run_limited(|| chunk.exec())
             .map_err(|e| format!("Script error in {:?}: {}", source, e))?;
 
         // Store the environment
@@ -184,9 +366,50 @@ impl ScriptRuntime {
             Ok(f) => f,
             Err(_) => return, // Hook not defined, that's fine
         };
-        if let Err(e) = func.call::<()>(args) {
-            tracing::error!("Script error in {:?}.{}: {}", entity, name, e);
+        let result = self.run_limited(|| func.call::<()>(args));
+        match self.limit_exceeded(result.as_ref().err()) {
+            Some(limit) => self.stop_script(entity, &env, name, limit),
+            None => {
+                if let Err(e) = result {
+                    tracing::error!("Script error in {:?}.{}: {}", entity, name, e);
+                }
+            }
         }
+    }
+
+    /// Stop an entity's script after it exceeded a limit. Its functions and
+    /// state are dropped, so it is not called again and its memory can be
+    /// reclaimed. Saving the script file loads it afresh.
+    fn stop_script(&self, entity: hecs::Entity, env: &LuaTable, hook: &str, limit: LimitExceeded) {
+        let numeric_id = env.raw_get::<LuaValue>("_entity_id").unwrap_or(LuaNil);
+        let string_id = env
+            .raw_get::<LuaValue>("_entity_string_id")
+            .unwrap_or(LuaNil);
+        let name = match &string_id {
+            LuaValue::String(s) => s.to_string_lossy(),
+            _ => format!("{:?}", entity),
+        };
+
+        tracing::error!(
+            "Script stopped: '{}' {} (in `{}`). Fix the script and save it to reload.",
+            name,
+            self.describe_limit(limit),
+            hook
+        );
+        let limit_name = match limit {
+            LimitExceeded::Cpu => "CPU",
+            LimitExceeded::Memory => "memory",
+        };
+        self.report_limit(format!("Script stopped: {} hit the {} limit", name, limit_name));
+
+        // Empty the environment but keep the ids, which a reload carries over.
+        let _ = env.clear();
+        let _ = env.raw_set("_entity_id", numeric_id);
+        let _ = env.raw_set("_entity_string_id", string_id);
+
+        // Two passes: the second frees what the first one's finalizers released.
+        let _ = self.lua.gc_collect();
+        let _ = self.lua.gc_collect();
     }
 
     /// Register the engine API functions into a Lua environment.
@@ -1597,12 +1820,17 @@ impl ScriptRuntime {
 
         tracing::info!("Hot-reloading script: {:?}", source);
 
-        // Preserve state from old environment
-        let old_state: Option<LuaTable> = self.entity_envs.get(&entity).and_then(|key| {
-            self.lua.registry_value::<LuaTable>(key).ok().and_then(|env| {
-                env.get::<LuaTable>("self").ok()
-            })
-        });
+        // Preserve state and the entity's string id from the old environment
+        let old_env: Option<LuaTable> = self
+            .entity_envs
+            .get(&entity)
+            .and_then(|key| self.lua.registry_value::<LuaTable>(key).ok());
+        let old_state: Option<LuaTable> = old_env
+            .as_ref()
+            .and_then(|env| env.raw_get::<LuaTable>("self").ok());
+        let old_string_id: Option<String> = old_env
+            .as_ref()
+            .and_then(|env| env.raw_get::<Option<String>>("_entity_string_id").ok().flatten());
 
         // Remove old environment
         if let Some(key) = self.entity_envs.remove(&entity) {
@@ -1612,11 +1840,14 @@ impl ScriptRuntime {
         // Reload
         self.load_script(entity, project_root, source)?;
 
-        // Restore state
-        if let Some(state) = old_state {
-            if let Some(key) = self.entity_envs.get(&entity) {
-                if let Ok(env) = self.lua.registry_value::<LuaTable>(key) {
+        // Restore state and id
+        if let Some(key) = self.entity_envs.get(&entity) {
+            if let Ok(env) = self.lua.registry_value::<LuaTable>(key) {
+                if let Some(state) = old_state {
                     let _ = env.set("self", state);
+                }
+                if let Some(string_id) = old_string_id {
+                    let _ = env.set("_entity_string_id", string_id);
                 }
             }
         }
@@ -1789,6 +2020,289 @@ mod tests {
         assert_eq!(count, 2); // init sets to 1, update increments to 2
 
         // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A scratch directory for one test's script files.
+    fn script_dir(test: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("naive_test_scripting_{test}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The script environment of `entity`.
+    fn env_of(runtime: &ScriptRuntime, entity: hecs::Entity) -> LuaTable {
+        runtime
+            .lua
+            .registry_value(runtime.entity_envs.get(&entity).unwrap())
+            .unwrap()
+    }
+
+    #[test]
+    fn sandbox_has_no_filesystem_shell_or_module_access() {
+        let runtime = ScriptRuntime::new();
+        let blocked = [
+            "os", "io", "package", "require", "coroutine", "debug", "loadfile", "dofile",
+        ];
+        for name in blocked {
+            let present: bool = runtime
+                .lua
+                .load(format!("return {name} ~= nil"))
+                .eval()
+                .unwrap();
+            assert!(!present, "`{name}` should not be available to scripts");
+        }
+
+        // The libraries scripts rely on are still there.
+        let usable: bool = runtime
+            .lua
+            .load(
+                r#"return type(math.sin) == "function"
+                    and type(string.format) == "function"
+                    and type(table.insert) == "function""#,
+            )
+            .eval()
+            .unwrap();
+        assert!(usable);
+    }
+
+    /// Limits small enough to trip quickly in a test.
+    fn tight_limits() -> ScriptLimits {
+        ScriptLimits {
+            instructions_per_call: 200_000,
+            memory_bytes: 16 * 1024 * 1024,
+        }
+    }
+
+    /// Write `code` to a script file and load it for `entity`.
+    fn load(
+        runtime: &mut ScriptRuntime,
+        entity: hecs::Entity,
+        test: &str,
+        code: &str,
+    ) -> Result<(), String> {
+        let dir = script_dir(test);
+        std::fs::write(dir.join("script.lua"), code).unwrap();
+        let result = runtime.load_script(entity, &dir, Path::new("script.lua"));
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    #[test]
+    fn runaway_hook_is_stopped_and_stays_stopped() {
+        let mut runtime = ScriptRuntime::with_limits(tight_limits());
+        let entity = hecs::World::new().reserve_entity();
+        load(
+            &mut runtime,
+            entity,
+            "runaway_hook",
+            r#"
+            function update(dt)
+                while true do end
+            end
+        "#,
+        )
+        .unwrap();
+        runtime.set_entity_string_id(entity, "spinner").unwrap();
+
+        // Returns instead of hanging.
+        runtime.call_update(entity, 0.016);
+
+        let reports = runtime.take_limit_reports();
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert!(
+            reports[0].contains("spinner") && reports[0].contains("CPU"),
+            "{reports:?}"
+        );
+
+        // The script's code is gone, so the next frame does not run it again.
+        let env = env_of(&runtime, entity);
+        assert!(env.raw_get::<LuaValue>("update").unwrap().is_nil());
+        runtime.call_update(entity, 0.016);
+        assert!(runtime.take_limit_reports().is_empty());
+
+        // It still knows which entity it belongs to, for a reload.
+        assert_eq!(env.raw_get::<String>("_entity_string_id").unwrap(), "spinner");
+    }
+
+    #[test]
+    fn cpu_limit_cannot_be_swallowed_with_pcall() {
+        let mut runtime = ScriptRuntime::with_limits(tight_limits());
+        let entity = hecs::World::new().reserve_entity();
+        load(
+            &mut runtime,
+            entity,
+            "pcall_retry",
+            r#"
+            function update(dt)
+                -- A retry loop around code that never finishes.
+                while true do
+                    pcall(function() while true do end end)
+                end
+            end
+        "#,
+        )
+        .unwrap();
+
+        runtime.call_update(entity, 0.016);
+
+        assert_eq!(runtime.take_limit_reports().len(), 1);
+    }
+
+    #[test]
+    fn cpu_limit_applies_to_each_call_separately() {
+        let mut runtime = ScriptRuntime::with_limits(tight_limits());
+        let entity = hecs::World::new().reserve_entity();
+        load(
+            &mut runtime,
+            entity,
+            "per_call_budget",
+            r#"
+            count = 0
+            function update(dt)
+                for i = 1, 10000 do count = count + 1 end
+            end
+        "#,
+        )
+        .unwrap();
+
+        // Fifty calls use far more than one call's budget in total.
+        for _ in 0..50 {
+            runtime.call_update(entity, 0.016);
+        }
+
+        assert!(runtime.take_limit_reports().is_empty());
+        let count: i64 = env_of(&runtime, entity).raw_get("count").unwrap();
+        assert_eq!(count, 500_000);
+    }
+
+    #[test]
+    fn memory_hog_is_stopped_and_its_memory_reclaimed() {
+        let mut runtime = ScriptRuntime::with_limits(ScriptLimits {
+            memory_bytes: 16 * 1024 * 1024,
+            ..ScriptLimits::default()
+        });
+        let world = hecs::World::new();
+        let hog = world.reserve_entity();
+        let bystander = world.reserve_entity();
+        load(
+            &mut runtime,
+            hog,
+            "memory_hog",
+            r#"
+            hoard = {}
+            function update(dt)
+                while true do
+                    hoard[#hoard + 1] = string.rep("x", 1024 * 1024)
+                end
+            end
+        "#,
+        )
+        .unwrap();
+        load(
+            &mut runtime,
+            bystander,
+            "memory_bystander",
+            r#"
+            ticks = 0
+            function update(dt) ticks = ticks + 1 end
+        "#,
+        )
+        .unwrap();
+
+        runtime.call_update(hog, 0.016);
+
+        let reports = runtime.take_limit_reports();
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert!(reports[0].contains("memory"), "{reports:?}");
+        let used = runtime.lua.used_memory();
+        assert!(used < 4 * 1024 * 1024, "hoard not reclaimed: {used} bytes in use");
+
+        // Other scripts carry on.
+        runtime.call_update(bystander, 0.016);
+        let ticks: i64 = env_of(&runtime, bystander).raw_get("ticks").unwrap();
+        assert_eq!(ticks, 1);
+    }
+
+    #[test]
+    fn script_that_never_finishes_loading_is_rejected() {
+        let mut runtime = ScriptRuntime::with_limits(tight_limits());
+        let entity = hecs::World::new().reserve_entity();
+
+        let err = load(&mut runtime, entity, "runaway_load", "while true do end").unwrap_err();
+        assert!(err.contains("CPU limit"), "{err}");
+        assert!(runtime.entity_envs.is_empty());
+
+        // A well-behaved script loads and runs normally afterwards.
+        load(
+            &mut runtime,
+            entity,
+            "after_runaway_load",
+            "count = 0  function update(dt) count = count + 1 end",
+        )
+        .unwrap();
+        runtime.call_update(entity, 0.016);
+        assert!(runtime.take_limit_reports().is_empty());
+        let count: i64 = env_of(&runtime, entity).raw_get("count").unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn stopped_script_runs_again_after_a_reload() {
+        let mut runtime = ScriptRuntime::with_limits(tight_limits());
+        let dir = script_dir("stopped_then_reloaded");
+        let entity = hecs::World::new().reserve_entity();
+
+        std::fs::write(
+            dir.join("fixme.lua"),
+            "function update(dt) while true do end end",
+        )
+        .unwrap();
+        runtime.load_script(entity, &dir, Path::new("fixme.lua")).unwrap();
+        runtime.set_entity_string_id(entity, "fixme").unwrap();
+        runtime.call_update(entity, 0.016);
+        assert_eq!(runtime.take_limit_reports().len(), 1);
+
+        // Fixing the file and saving it brings the script back.
+        std::fs::write(
+            dir.join("fixme.lua"),
+            "count = 0  function update(dt) count = count + 1 end",
+        )
+        .unwrap();
+        assert!(runtime
+            .hot_reload_script(entity, &dir, Path::new("fixme.lua"))
+            .unwrap());
+        runtime.call_update(entity, 0.016);
+
+        let env = env_of(&runtime, entity);
+        assert_eq!(env.raw_get::<i64>("count").unwrap(), 1);
+        assert_eq!(env.raw_get::<String>("_entity_string_id").unwrap(), "fixme");
+        assert!(runtime.take_limit_reports().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hot_reload_keeps_the_entity_string_id() {
+        let mut runtime = ScriptRuntime::new();
+        let dir = script_dir("hot_reload_id");
+        let world = hecs::World::new();
+        let entity = world.reserve_entity();
+
+        std::fs::write(dir.join("hero.lua"), "version = 1").unwrap();
+        runtime.load_script(entity, &dir, Path::new("hero.lua")).unwrap();
+        runtime.set_entity_string_id(entity, "hero").unwrap();
+
+        std::fs::write(dir.join("hero.lua"), "version = 2").unwrap();
+        assert!(runtime
+            .hot_reload_script(entity, &dir, Path::new("hero.lua"))
+            .unwrap());
+
+        let env = env_of(&runtime, entity);
+        assert_eq!(env.get::<i32>("version").unwrap(), 2);
+        assert_eq!(
+            env.get::<Option<String>>("_entity_string_id").unwrap().as_deref(),
+            Some("hero")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
