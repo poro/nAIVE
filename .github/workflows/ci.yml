@@ -43,6 +43,11 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace --exclude naive-web --locked
 
+      # Headless Lua tests of the demo scenes. They need no GPU or window.
+      - name: Scene tests
+        working-directory: project
+        run: cargo run --locked -p naive-runtime --bin naive -- test
+
       # Fails on clippy errors only. The existing warnings are not denied yet.
       - name: Clippy
         run: cargo clippy --workspace --exclude naive-web --locked
