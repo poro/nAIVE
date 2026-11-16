@@ -1385,115 +1385,12 @@ let mut scene_world = scene_world.borrow_mut();
     }
 
     /// Update the FPS camera controller: mouse look + WASD movement + physics.
-    fn update_fps_controller(&mut self) {
-        let input = match &self.input_state {
-    Some(input) => input,
-    None => return,
-};
-let input = input.borrow();
-        let scene_world = match &self.scene_world {
-    Some(scene_world) => scene_world,
-    None => return,
-};
-let scene_world = scene_world.borrow_mut();
-        let physics_world = match &self.physics_world {
-    Some(physics_world) => physics_world,
-    None => return,
-};
-let mut physics_world = physics_world.borrow_mut();
-
-        let dt = self.delta_time;
-
-        // Collect player entity data
-        let mut player_updates: Vec<(hecs::Entity, glam::Vec3, f32, f32, rapier3d::prelude::RigidBodyHandle, rapier3d::prelude::ColliderHandle, f32, f32, f32, bool, glam::Vec3)> = Vec::new();
-
-        for (entity, (player, cc, rb, col)) in scene_world
-            .world
-            .query::<(&Player, &CharacterController, &RigidBodyComp, &ColliderComp)>()
-            .iter()
+    fn update_fps_controller(&self) {
+        if let (Some(input), Some(scene_world), Some(physics_world)) =
+            (&self.input_state, &self.scene_world, &self.physics_world)
         {
-            // Mouse look
-            let mouse_delta = input.mouse_delta();
-            let sensitivity = 0.002;
-            let new_yaw = player.yaw - mouse_delta.x * sensitivity;
-
-            // Get pitch limits from CameraMode if available
-            let (pitch_min, pitch_max) = if let Ok(camera_mode) = scene_world.world.get::<&CameraMode>(entity) {
-                match &*camera_mode {
-                    CameraMode::ThirdPerson { pitch_min, pitch_max, .. } => (*pitch_min, *pitch_max),
-                    CameraMode::FirstPerson => (-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01),
-                }
-            } else {
-                (-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01)
-            };
-            let new_pitch = (player.pitch - mouse_delta.y * sensitivity).clamp(pitch_min, pitch_max);
-
-            // Movement
-            let move_input = input.axis_2d("move_forward", "move_backward", "move_left", "move_right");
-            let speed = if input.pressed("sprint") {
-                cc.move_speed * cc.sprint_multiplier
-            } else {
-                cc.move_speed
-            };
-
-            // Calculate movement direction relative to yaw
-            let forward = glam::Vec3::new(-new_yaw.sin(), 0.0, -new_yaw.cos());
-            let right = glam::Vec3::new(-forward.z, 0.0, forward.x);
-            let move_dir = (forward * move_input.y + right * move_input.x).normalize_or_zero();
-            let mut desired = move_dir * speed * dt;
-
-            // Vertical velocity for gravity + jump
-            let mut vel_y = cc.velocity.y;
-            if cc.grounded {
-                vel_y = 0.0;
-                if input.just_pressed("jump") {
-                    vel_y = cc.jump_impulse;
-                }
-            }
-            vel_y += physics_world.gravity.y * dt;
-            desired.y = vel_y * dt;
-
-            player_updates.push((
-                entity,
-                desired,
-                new_yaw,
-                new_pitch,
-                rb.handle,
-                col.handle,
-                vel_y,
-                player.height,
-                player.radius,
-                cc.grounded,
-                cc.velocity,
-            ));
+            crate::sim::update_fps_controller(input, scene_world, physics_world, self.delta_time);
         }
-
-        // Apply updates
-        for (entity, desired, new_yaw, new_pitch, rb_handle, col_handle, vel_y, _height, _radius, _was_grounded, _old_vel) in player_updates {
-            let (_effective, grounded) = physics_world.move_character(rb_handle, col_handle, desired, dt);
-
-            // Update ECS components
-            if let Ok(mut player) = scene_world.world.get::<&mut Player>(entity) {
-                player.yaw = new_yaw;
-                player.pitch = new_pitch;
-            }
-            if let Ok(mut cc) = scene_world.world.get::<&mut CharacterController>(entity) {
-                cc.grounded = grounded;
-                cc.velocity.y = if grounded && vel_y < 0.0 { 0.0 } else { vel_y };
-            }
-
-            // The physics body position is already updated by move_character
-            // Sync it back to the transform
-            if let Some(body) = physics_world.rigid_body_set.get(rb_handle) {
-                let pos = body.position().translation;
-                if let Ok(mut transform) = scene_world.world.get::<&mut Transform>(entity) {
-                    transform.position = glam::Vec3::new(pos.x, pos.y, pos.z);
-                    transform.rotation = glam::Quat::from_rotation_y(new_yaw);
-                    transform.dirty = true;
-                }
-            }
-        }
-
     }
 
     /// Process collision damage: auto-damage on physics contact.
@@ -3176,7 +3073,7 @@ let input = input.borrow();
         if let (Some(scene_world), Some(physics_world)) =
             (&self.scene_world, &self.physics_world)
         {
-            crate::scripting::run_fixed_steps(
+            crate::sim::run_fixed_steps(
                 physics_world,
                 scene_world,
                 self.script_runtime.as_ref(),
@@ -3240,22 +3137,7 @@ let input = input.borrow();
         if let (Some(scene_world), Some(physics_world), Some(script_runtime)) =
             (&self.scene_world, &self.physics_world, &self.script_runtime)
         {
-            let sw = scene_world.borrow();
-            let pw = physics_world.borrow();
-            // Build reverse lookup: entity -> string id
-            let entity_to_id: HashMap<hecs::Entity, &str> = sw
-                .entity_registry
-                .iter()
-                .map(|(id, &e)| (e, id.as_str()))
-                .collect();
-
-            for event in &pw.collision_events {
-                let id_a = entity_to_id.get(&event.entity_a).copied().unwrap_or("unknown");
-                let id_b = entity_to_id.get(&event.entity_b).copied().unwrap_or("unknown");
-                // Dispatch both directions
-                script_runtime.call_on_collision(event.entity_a, id_b);
-                script_runtime.call_on_collision(event.entity_b, id_a);
-            }
+            crate::sim::dispatch_collision_events(scene_world, physics_world, script_runtime);
         }
     }
 
@@ -3264,59 +3146,18 @@ let input = input.borrow();
         if let (Some(scene_world), Some(script_runtime)) =
             (&self.scene_world, &self.script_runtime)
         {
-            let scripted: Vec<hecs::Entity> = {
-                let sw = scene_world.borrow();
-                let mut query = sw.world.query::<&Script>();
-                query.iter().map(|(e, _)| e).collect()
-            };
-            for entity in scripted {
-                script_runtime.call_update(entity, dt);
-            }
+            crate::sim::update_scripts(scene_world, script_runtime, dt);
         }
     }
 
     /// Advance the event bus and hand this frame's events to Lua listeners.
     fn dispatch_lua_events(&self, dt: f32) {
-        self.event_bus.borrow_mut().tick(dt as f64);
-        let flushed_events = self.event_bus.borrow_mut().flush();
-        if let Some(script_runtime) = &self.script_runtime {
-            for event in &flushed_events {
-                let listener_keys: Vec<_> = self.lua_event_listeners.borrow()
-                    .get(&event.event_type)
-                    .map(|keys| keys.iter().map(|k| script_runtime.lua.registry_value::<mlua::Function>(k)).collect())
-                    .unwrap_or_default();
-                for func_result in listener_keys {
-                    if let Ok(func) = func_result {
-                        let lua = &script_runtime.lua;
-                        if let Ok(tbl) = lua.create_table() {
-                            let _ = tbl.set("type", event.event_type.clone());
-                            if let Ok(data_tbl) = lua.create_table() {
-                                for (k, v) in &event.data {
-                                    match v {
-                                        serde_json::Value::Number(n) => {
-                                            if let Some(f) = n.as_f64() {
-                                                let _ = data_tbl.set(k.as_str(), f);
-                                            }
-                                        }
-                                        serde_json::Value::String(s) => {
-                                            let _ = data_tbl.set(k.as_str(), s.as_str());
-                                        }
-                                        serde_json::Value::Bool(b) => {
-                                            let _ = data_tbl.set(k.as_str(), *b);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                let _ = tbl.set("data", data_tbl);
-                            }
-                            if let Err(e) = func.call::<()>(tbl) {
-                                tracing::error!("Lua event listener error: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        crate::sim::dispatch_lua_events(
+            &self.event_bus,
+            &self.lua_event_listeners,
+            self.script_runtime.as_ref(),
+            dt,
+        );
     }
 
     /// Get the scene ready to draw: world transforms, camera, GPU draw

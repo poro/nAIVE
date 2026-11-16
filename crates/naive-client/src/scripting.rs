@@ -11,7 +11,7 @@ use crate::components::{EntityId, Health, MaterialOverride, ParticleEmitter, Poi
 use crate::events::EventBus;
 use crate::font::BitmapFont;
 use crate::input::InputState;
-use crate::physics::{PhysicsWorld, FIXED_TIMESTEP};
+use crate::physics::PhysicsWorld;
 use crate::ui::UiRenderer;
 use crate::world::{EntityCommandQueue, EntityPoolManager, PoolOp, ProjectileSpawnCommand, SceneWorld};
 
@@ -1732,53 +1732,6 @@ impl ScriptRuntime {
         globals.set("animation", anim_table).map_err(|e| e.to_string())?;
         Ok(())
     }
-}
-
-/// Advance physics for a frame that lasted `frame_dt` seconds, in fixed steps.
-/// Before each step, `fixed_update` is called on every scripted entity; after
-/// it, transforms are synced back from the physics bodies. Returns the number
-/// of steps run, which is zero on a frame shorter than a step.
-///
-/// The engine loop and the headless test runner both go through here, so they
-/// step physics the same way. No engine state stays borrowed while scripts
-/// run, because `fixed_update` may call back into the physics and entity APIs.
-pub fn run_fixed_steps(
-    physics_world: &SharedPhysicsWorld,
-    scene_world: &SharedSceneWorld,
-    script_runtime: Option<&ScriptRuntime>,
-    frame_dt: f32,
-) -> u32 {
-    let steps = physics_world.borrow_mut().begin_frame(frame_dt);
-
-    let scripted: Vec<hecs::Entity> = if steps > 0 && script_runtime.is_some() {
-        let sw = scene_world.borrow();
-        let mut query = sw.world.query::<&Script>();
-        query.iter().map(|(e, _)| e).collect()
-    } else {
-        Vec::new()
-    };
-
-    let sync_transforms = || {
-        let pw = physics_world.borrow();
-        let mut sw = scene_world.borrow_mut();
-        pw.sync_to_ecs(&mut sw.world);
-    };
-
-    for _ in 0..steps {
-        if let Some(runtime) = script_runtime {
-            for &entity in &scripted {
-                runtime.call_fixed_update(entity, FIXED_TIMESTEP);
-            }
-        }
-        physics_world.borrow_mut().step_fixed();
-        sync_transforms();
-    }
-    if steps == 0 {
-        // Transforms stay pinned to their bodies even when no step ran.
-        sync_transforms();
-    }
-
-    steps
 }
 
 #[cfg(test)]
