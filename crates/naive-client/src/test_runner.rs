@@ -16,7 +16,7 @@ use crate::input::InputState;
 use crate::physics::PhysicsWorld;
 use crate::scripting::{Script, ScriptRuntime};
 use crate::tween::TweenSystem;
-use crate::world::SceneWorld;
+use crate::world::{EntityCommandQueue, EntityPoolManager, SceneWorld};
 
 /// Result of a single test function execution.
 #[derive(Debug)]
@@ -43,6 +43,10 @@ pub struct TestRunner {
     lua_event_listeners: Rc<RefCell<HashMap<String, Vec<mlua::RegistryKey>>>>,
     next_lua_listener_id: Rc<RefCell<u64>>,
     lua_listener_id_map: Rc<RefCell<HashMap<u64, (String, usize)>>>,
+    entity_commands: Rc<RefCell<EntityCommandQueue>>,
+    pool_manager: Rc<RefCell<EntityPoolManager>>,
+    /// Whether the note about commands that need a GPU has been logged.
+    warned_about_dropped_commands: bool,
 }
 
 impl TestRunner {
@@ -62,6 +66,9 @@ impl TestRunner {
             lua_event_listeners: Rc::new(RefCell::new(HashMap::new())),
             next_lua_listener_id: Rc::new(RefCell::new(0)),
             lua_listener_id_map: Rc::new(RefCell::new(HashMap::new())),
+            entity_commands: Rc::new(RefCell::new(EntityCommandQueue::new())),
+            pool_manager: Rc::new(RefCell::new(EntityPoolManager::new())),
+            warned_about_dropped_commands: false,
         }
     }
 
@@ -99,6 +106,14 @@ impl TestRunner {
         self.script_runtime
             .register_entity_api(self.scene_world.clone(), self.physics_world.clone())
             .map_err(|e| format!("Entity API: {}", e))?;
+        *self.entity_commands.borrow_mut() = EntityCommandQueue::new();
+        self.script_runtime
+            .register_entity_command_api(
+                self.scene_world.clone(),
+                self.entity_commands.clone(),
+                self.pool_manager.clone(),
+            )
+            .map_err(|e| format!("Entity command API: {}", e))?;
         self.script_runtime
             .register_event_api(
                 self.event_bus.clone(),
@@ -189,7 +204,16 @@ impl TestRunner {
         crate::sim::update_fps_controller(&self.input_state, &self.scene_world, &self.physics_world, dt);
         crate::sim::run_fixed_steps(&self.physics_world, &self.scene_world, Some(&self.script_runtime), dt);
         crate::sim::dispatch_collision_events(&self.scene_world, &self.physics_world, &self.script_runtime);
+        crate::sim::process_collision_damage(
+            &self.scene_world,
+            &self.physics_world,
+            &self.script_runtime,
+            &self.entity_commands,
+        );
+        crate::sim::update_projectiles(&self.scene_world, &self.entity_commands, dt);
+        crate::sim::process_health(&self.scene_world, &self.script_runtime);
         crate::sim::update_scripts(&self.scene_world, &self.script_runtime, dt);
+        self.process_entity_commands();
         crate::sim::dispatch_lua_events(&self.event_bus, &self.lua_event_listeners, Some(&self.script_runtime), dt);
         let _tween_results = self.tween_system.update(dt);
 
@@ -201,6 +225,45 @@ impl TestRunner {
 
         self.total_time += dt;
         self.frame_count += 1;
+    }
+
+    /// Apply the deferred entity commands that need no GPU. Destroying an
+    /// entity works headlessly. Spawning and the other commands need meshes
+    /// or textures, so they are dropped.
+    fn process_entity_commands(&mut self) {
+        crate::sim::process_destroys(
+            &self.scene_world,
+            Some(&self.physics_world),
+            Some(&self.script_runtime),
+            &self.entity_commands,
+        );
+
+        let mut queue = self.entity_commands.borrow_mut();
+        let dropped = queue.spawns.len()
+            + queue.scale_updates.len()
+            + queue.visibility_updates.len()
+            + queue.projectile_spawns.len()
+            + queue.dynamic_spawns.len()
+            + queue.pool_ops.len()
+            + queue.texture_swaps.len()
+            + queue.mesh_creates.len()
+            + usize::from(queue.pending_scene_load.is_some());
+        queue.spawns.clear();
+        queue.scale_updates.clear();
+        queue.visibility_updates.clear();
+        queue.projectile_spawns.clear();
+        queue.dynamic_spawns.clear();
+        queue.pool_ops.clear();
+        queue.texture_swaps.clear();
+        queue.mesh_creates.clear();
+        queue.pending_scene_load = None;
+        if dropped > 0 && !self.warned_about_dropped_commands {
+            self.warned_about_dropped_commands = true;
+            tracing::warn!(
+                "Headless test runner: dropping entity commands that need the full engine \
+                 (spawning, pooling, scale, visibility, textures, meshes, scene loads)"
+            );
+        }
     }
 
     /// Advance multiple frames.
@@ -456,9 +519,15 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
                                 }
                             }
                             "health" => {
-                                let tbl = lua.create_table()?;
-                                tbl.set("current", 100)?; // placeholder
-                                Ok(LuaValue::Table(tbl))
+                                if let Ok(health) = sw.world.get::<&crate::components::Health>(entity) {
+                                    let tbl = lua.create_table()?;
+                                    tbl.set("current", health.current)?;
+                                    tbl.set("max", health.max)?;
+                                    tbl.set("dead", health.dead)?;
+                                    Ok(LuaValue::Table(tbl))
+                                } else {
+                                    Ok(LuaNil)
+                                }
                             }
                             _ => Ok(LuaNil),
                         }

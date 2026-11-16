@@ -7,13 +7,13 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::components::{CameraMode, Player, Transform};
+use crate::components::{CameraMode, CollisionDamage, Health, Player, Projectile, Transform};
 use crate::physics::{
     CharacterController, Collider as ColliderComp, RigidBody as RigidBodyComp, FIXED_TIMESTEP,
 };
 use crate::scripting::{
-    LimitExceeded, Script, ScriptRuntime, SharedEventBus, SharedInputState, SharedPhysicsWorld,
-    SharedSceneWorld,
+    LimitExceeded, Script, ScriptRuntime, SharedEntityCommandQueue, SharedEventBus,
+    SharedInputState, SharedPhysicsWorld, SharedSceneWorld,
 };
 
 /// What `update_fps_controller` works out for one player before moving it.
@@ -204,6 +204,174 @@ pub fn dispatch_collision_events(
         // Dispatch both directions
         script_runtime.call_on_collision(entity_a, &id_b);
         script_runtime.call_on_collision(entity_b, &id_a);
+    }
+}
+
+/// Apply collision damage for the contacts that began this frame. An entity
+/// with `CollisionDamage` hurts whatever it touches that has `Health`, the
+/// target's `on_damage` runs, and a `destroy_on_hit` damager is queued for
+/// destruction.
+pub fn process_collision_damage(
+    scene_world: &SharedSceneWorld,
+    physics_world: &SharedPhysicsWorld,
+    script_runtime: &ScriptRuntime,
+    entity_commands: &SharedEntityCommandQueue,
+) {
+    // Gather the contact pairs and ids first, so that nothing stays borrowed
+    // while `on_damage` runs: it may call back into the entity and physics APIs.
+    let (pairs, entity_to_id) = {
+        let sw = scene_world.borrow();
+        let pw = physics_world.borrow();
+        let entity_to_id: HashMap<hecs::Entity, String> = sw
+            .entity_registry
+            .iter()
+            .map(|(id, &e)| (e, id.clone()))
+            .collect();
+        let mut pairs = Vec::new();
+        for event in pw.collision_events.iter().filter(|event| event.started) {
+            // Check both directions
+            pairs.push((event.entity_a, event.entity_b));
+            pairs.push((event.entity_b, event.entity_a));
+        }
+        (pairs, entity_to_id)
+    };
+
+    let mut destroys: Vec<String> = Vec::new();
+    for (dmg_entity, target_entity) in pairs {
+        let hit = {
+            let sw = scene_world.borrow();
+            apply_collision_damage(&sw.world, dmg_entity, target_entity, &entity_to_id)
+        };
+        let Some((damage, destroy_on_hit)) = hit else {
+            continue;
+        };
+
+        // Call on_damage on the target
+        let source_id = entity_to_id.get(&dmg_entity).cloned().unwrap_or_default();
+        script_runtime.call_on_damage(target_entity, damage, source_id);
+
+        // Queue destruction of damage entity if destroy_on_hit
+        if destroy_on_hit {
+            if let Some(id) = entity_to_id.get(&dmg_entity) {
+                if !destroys.contains(id) {
+                    destroys.push(id.clone());
+                }
+            }
+        }
+    }
+
+    entity_commands.borrow_mut().destroys.extend(destroys);
+}
+
+/// Take the damage `dmg_entity` deals off `target_entity`'s health, if the
+/// pair qualifies. Returns the damage dealt and whether the damager destroys
+/// itself on a hit.
+fn apply_collision_damage(
+    world: &hecs::World,
+    dmg_entity: hecs::Entity,
+    target_entity: hecs::Entity,
+    entity_to_id: &HashMap<hecs::Entity, String>,
+) -> Option<(f32, bool)> {
+    let (damage, destroy_on_hit) = {
+        let cd = world.get::<&CollisionDamage>(dmg_entity).ok()?;
+        (cd.damage, cd.destroy_on_hit)
+    };
+
+    // Owner skip: a projectile does not hurt the entity that fired it.
+    if let Ok(proj) = world.get::<&Projectile>(dmg_entity) {
+        let target_id = entity_to_id.get(&target_entity).map(|s| s.as_str()).unwrap_or("");
+        if target_id == proj.owner_id {
+            return None;
+        }
+    }
+
+    // Skip if target has no health
+    let mut health = world.get::<&mut Health>(target_entity).ok()?;
+    health.current = (health.current - damage).max(0.0);
+    Some((damage, destroy_on_hit))
+}
+
+/// Age every projectile by `dt` and queue the expired ones for destruction.
+pub fn update_projectiles(
+    scene_world: &SharedSceneWorld,
+    entity_commands: &SharedEntityCommandQueue,
+    dt: f32,
+) {
+    let scene_world = scene_world.borrow();
+
+    let mut expired = Vec::new();
+    for (entity, projectile) in scene_world.world.query::<&mut Projectile>().iter() {
+        projectile.age += dt;
+        if projectile.age >= projectile.lifetime {
+            expired.push(entity);
+        }
+    }
+    if expired.is_empty() {
+        return;
+    }
+
+    // Build entity->id lookup for expired projectiles
+    let entity_to_id: HashMap<hecs::Entity, String> = scene_world
+        .entity_registry
+        .iter()
+        .map(|(id, &e)| (e, id.clone()))
+        .collect();
+
+    let mut commands = entity_commands.borrow_mut();
+    for entity in expired {
+        if let Some(id) = entity_to_id.get(&entity) {
+            commands.destroys.push(id.clone());
+        }
+    }
+}
+
+/// Mark entities whose health reached zero as dead and call `on_death` on each, once.
+pub fn process_health(scene_world: &SharedSceneWorld, script_runtime: &ScriptRuntime) {
+    // Collect first: `on_death` may call back into the entity API.
+    let newly_dead: Vec<hecs::Entity> = {
+        let sw = scene_world.borrow();
+        let mut newly_dead = Vec::new();
+        for (entity, health) in sw.world.query::<&mut Health>().iter() {
+            if health.current <= 0.0 && !health.dead {
+                health.dead = true;
+                newly_dead.push(entity);
+            }
+        }
+        newly_dead
+    };
+
+    for entity in newly_dead {
+        script_runtime.call_on_death(entity);
+    }
+}
+
+/// Destroy the entities queued for destruction: run `on_destroy`, remove the
+/// physics body, then remove the entity.
+pub fn process_destroys(
+    scene_world: &SharedSceneWorld,
+    physics_world: Option<&SharedPhysicsWorld>,
+    script_runtime: Option<&ScriptRuntime>,
+    entity_commands: &SharedEntityCommandQueue,
+) {
+    let destroys: Vec<String> = std::mem::take(&mut entity_commands.borrow_mut().destroys);
+    for id in destroys {
+        let entity = scene_world.borrow().entity_registry.get(&id).copied();
+        if let Some(entity) = entity {
+            // Call on_destroy before despawning, with nothing borrowed.
+            if let Some(runtime) = script_runtime {
+                runtime.call_on_destroy(entity);
+            }
+            // Clean up physics body if entity has one
+            let body = {
+                let sw = scene_world.borrow();
+                let handle = sw.world.get::<&RigidBodyComp>(entity).ok().map(|rb| rb.handle);
+                handle
+            };
+            if let (Some(handle), Some(physics_world)) = (body, physics_world) {
+                physics_world.borrow_mut().remove_body(handle);
+            }
+        }
+        crate::world::destroy_runtime_entity(&mut scene_world.borrow_mut(), &id);
     }
 }
 

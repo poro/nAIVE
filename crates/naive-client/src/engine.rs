@@ -15,7 +15,7 @@ use crate::audio::AudioSystem;
 use crate::camera::CameraState;
 use crate::cli::CliArgs;
 use crate::command::CommandServer;
-use crate::components::{Camera, CameraMode, CameraRole, CollisionDamage, GaussianSplat, Health, MeshRenderer, Player, Projectile, Transform};
+use crate::components::{Camera, CameraMode, CameraRole, GaussianSplat, MeshRenderer, Player, Transform};
 use crate::editor_camera::EditorCamera;
 use crate::events::EventBus;
 use crate::font::BitmapFont;
@@ -1395,114 +1395,22 @@ let mut scene_world = scene_world.borrow_mut();
 
     /// Process collision damage: auto-damage on physics contact.
     fn process_collision_damage(&mut self) {
-        let scene_world = match &self.scene_world {
-            Some(sw) => sw,
-            None => return,
-        };
-        let physics_world = match &self.physics_world {
-            Some(pw) => pw,
-            None => return,
-        };
-        let script_runtime = match &self.script_runtime {
-            Some(sr) => sr,
-            None => return,
-        };
-        let sw = scene_world.borrow_mut();
-        let physics_world = physics_world.borrow();
-
-        // Build reverse lookup: entity -> string ID
-        let entity_to_id: HashMap<hecs::Entity, String> = sw
-            .entity_registry
-            .iter()
-            .map(|(id, &e)| (e, id.clone()))
-            .collect();
-
-        let mut destroys = Vec::new();
-
-        for event in &physics_world.collision_events {
-            if !event.started {
-                continue;
-            }
-
-            // Check both directions
-            for &(dmg_entity, target_entity) in &[
-                (event.entity_a, event.entity_b),
-                (event.entity_b, event.entity_a),
-            ] {
-                let cd = match sw.world.get::<&CollisionDamage>(dmg_entity) {
-                    Ok(cd) => (cd.damage, cd.destroy_on_hit),
-                    Err(_) => continue,
-                };
-                let (damage, destroy_on_hit) = cd;
-
-                // Skip if target has no health
-                if sw.world.get::<&Health>(target_entity).is_err() {
-                    continue;
-                }
-
-                // Owner skip: if damage entity is a projectile, skip if target is the owner
-                if let Ok(proj) = sw.world.get::<&Projectile>(dmg_entity) {
-                    let target_id = entity_to_id.get(&target_entity).map(|s| s.as_str()).unwrap_or("");
-                    if target_id == proj.owner_id {
-                        continue;
-                    }
-                }
-
-                // Apply damage
-                if let Ok(mut health) = sw.world.get::<&mut Health>(target_entity) {
-                    health.current = (health.current - damage).max(0.0);
-                }
-
-                // Call on_damage on the target
-                let source_id = entity_to_id.get(&dmg_entity).cloned().unwrap_or_default();
-                script_runtime.call_on_damage(target_entity, damage, source_id);
-
-                // Queue destruction of damage entity if destroy_on_hit
-                if destroy_on_hit {
-                    if let Some(id) = entity_to_id.get(&dmg_entity) {
-                        if !destroys.contains(id) {
-                            destroys.push(id.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Queue destroys
-        for id in destroys {
-            self.entity_commands.borrow_mut().destroys.push(id);
+        if let (Some(scene_world), Some(physics_world), Some(script_runtime)) =
+            (&self.scene_world, &self.physics_world, &self.script_runtime)
+        {
+            crate::sim::process_collision_damage(
+                scene_world,
+                physics_world,
+                script_runtime,
+                &self.entity_commands,
+            );
         }
     }
 
     /// Update projectile ages and destroy expired ones.
     fn update_projectiles(&mut self) {
-        let scene_world_rc = match &self.scene_world {
-            Some(sw) => sw,
-            None => return,
-        };
-        let scene_world = scene_world_rc.borrow_mut();
-        let dt = self.delta_time;
-
-        let mut expired = Vec::new();
-
-        for (entity, projectile) in scene_world.world.query::<&mut Projectile>().iter() {
-            projectile.age += dt;
-            if projectile.age >= projectile.lifetime {
-                expired.push(entity);
-            }
-        }
-
-        // Build entity->id lookup for expired projectiles
-        let entity_to_id: HashMap<hecs::Entity, String> = scene_world
-            .entity_registry
-            .iter()
-            .map(|(id, &e)| (e, id.clone()))
-            .collect();
-
-        for entity in expired {
-            if let Some(id) = entity_to_id.get(&entity) {
-                self.entity_commands.borrow_mut().destroys.push(id.clone());
-            }
+        if let Some(scene_world) = &self.scene_world {
+            crate::sim::update_projectiles(scene_world, &self.entity_commands, self.delta_time);
         }
     }
 
@@ -1582,27 +1490,8 @@ let mut scene_world = scene_world.borrow_mut();
 
     /// Process the health system: detect deaths and fire on_death callbacks.
     fn process_health_system(&mut self) {
-        let scene_world_rc = match &self.scene_world {
-            Some(sw) => sw,
-            None => return,
-        };
-        let scene_world = scene_world_rc.borrow_mut();
-        let script_runtime = match &self.script_runtime {
-            Some(sr) => sr,
-            None => return,
-        };
-
-        let mut newly_dead = Vec::new();
-
-        for (entity, health) in scene_world.world.query::<&mut Health>().iter() {
-            if health.current <= 0.0 && !health.dead {
-                health.dead = true;
-                newly_dead.push(entity);
-            }
-        }
-
-        for entity in newly_dead {
-            script_runtime.call_on_death(entity);
+        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime) {
+            crate::sim::process_health(scene_world, script_runtime);
         }
     }
 
@@ -1614,27 +1503,13 @@ let mut scene_world = scene_world.borrow_mut();
         };
 
         // Tier 2: Process destroys FIRST (fixes destroy+spawn same-frame bug)
-        let destroys: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().destroys);
-        for id in destroys {
-            if let Some(scene_world) = &self.scene_world {
-                let mut scene_world = scene_world.borrow_mut();
-                // Call on_destroy hook before despawning
-                if let Some(&entity) = scene_world.entity_registry.get(&id) {
-                    if let Some(script_runtime) = &self.script_runtime {
-                        script_runtime.call_on_destroy(entity);
-                    }
-                    // Clean up physics body if entity has one
-                    if let Ok(rb) = scene_world.world.get::<&crate::physics::RigidBody>(entity) {
-                        let rb_handle = rb.handle;
-                        drop(rb);
-                        if let Some(physics_world) = &self.physics_world {
-                            let mut physics_world = physics_world.borrow_mut();
-                            physics_world.remove_body(rb_handle);
-                        }
-                    }
-                }
-                crate::world::destroy_runtime_entity(&mut scene_world, &id);
-            }
+        if let Some(scene_world) = &self.scene_world {
+            crate::sim::process_destroys(
+                scene_world,
+                self.physics_world.as_ref(),
+                self.script_runtime.as_ref(),
+                &self.entity_commands,
+            );
         }
 
         // Process spawns (after destroys, so destroy+spawn same ID works)
