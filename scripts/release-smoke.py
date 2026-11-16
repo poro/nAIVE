@@ -13,6 +13,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 import zlib
@@ -33,6 +34,15 @@ def command(socket_path, cmd, **params):
     if result.get("status") != "ok":
         raise RuntimeError(f"{cmd}: {result}")
     return result.get("data") or {}
+
+
+def wait_until(predicate, description, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.02)
+    raise AssertionError(description)
 
 
 def verify_png(path):
@@ -163,6 +173,70 @@ def main():
             assert returned["data"]["result"] == "release-ok", returned
             command(socket_path, "capture_frame", path="captures/release.png")
             verify_png(bundle / "captures" / "release.png")
+
+            # Authoring round trip: preserve script, health, physics and flags.
+            command(socket_path, "run_lua", code='entity.set_health("smoke_cube", 73, 100)')
+            command(socket_path, "save_scene", path="scenes/roundtrip.yaml")
+            roundtrip = subprocess.run([binary, "test", "tests/roundtrip.lua"], cwd=bundle,
+                capture_output=True, text=True, timeout=60)
+            if roundtrip.returncode:
+                raise AssertionError(roundtrip.stdout + roundtrip.stderr)
+            assert "All 1 tests passed." in roundtrip.stdout, roundtrip.stdout
+
+            # MCP construction must apply components together and initialize once.
+            command(socket_path, "spawn_entity", entity_id="mcp_actor", components={
+                "transform": {"position": [4, 2, 0]},
+                "mesh_renderer": {"mesh": "procedural:cube", "material": "procedural:default"},
+                "point_light": {"intensity": 7}, "health": {"max": 60},
+                "rigid_body": {"type": "static"}, "collider": {"shape": "box"},
+                "script": {"source": "logic/spawned.lua"}})
+            light = command(socket_path, "query_entity", entity_id="mcp_actor", component="point_light")
+            assert light["point_light"]["intensity"] == 7, light
+            assert float(command(socket_path, "run_lua", code='return entity.get_health("mcp_actor")')["result"]) == 60
+            command(socket_path, "run_lua", code='entity.spawn_ex({id="lua_actor", mesh="procedural:cube", material="procedural:default", script="logic/spawned.lua", position={6,2,0}})')
+            wait_until(lambda: command(socket_path, "query_events", filter="release.spawn_initialized")["count"] >= 2,
+                       "spawned scripts did not initialize")
+            initialized = command(socket_path, "query_events", filter="release.spawn_initialized")["events"]
+            assert sorted(event["data"]["id"] for event in initialized) == ["lua_actor", "mcp_actor"], initialized
+            assert command(socket_path, "query_events", filter="release.initialized")["count"] == 1, "saving another document reloaded the active scene"
+
+            # A failed script load must roll back the whole MCP entity, including physics.
+            try:
+                command(socket_path, "spawn_entity", entity_id="failed_actor", components={
+                    "transform": {"position": [8, 2, 0]},
+                    "rigid_body": {"type": "static"}, "collider": {"shape": "box"},
+                    "script": {"source": "logic/missing.lua"}})
+            except RuntimeError as error:
+                assert "Failed to load script" in str(error), str(error)
+            else:
+                raise AssertionError("MCP accepted a missing script")
+            assert command(socket_path, "run_lua", code='return entity.exists("failed_actor")')["result"] == "false"
+            assert command(socket_path, "run_lua", code='return physics.raycast(8, 5, 0, 0, -1, 0, 4)')["result"] == "false"
+
+            # Destroying an entity removes both the physical object and callbacks.
+            ray = 'return physics.raycast(4, 5, 0, 0, -1, 0, 4)'
+            assert command(socket_path, "run_lua", code=ray)["result"] == "true"
+            command(socket_path, "destroy_entity", entity_id="mcp_actor")
+            assert command(socket_path, "run_lua", code='return entity.exists("mcp_actor")')["result"] == "false"
+            assert command(socket_path, "run_lua", code=ray)["result"] == "false", "destroy left a collider"
+            command(socket_path, "destroy_entity", entity_id="lua_actor")
+            command(socket_path, "emit_event", event_type="release.ping", data={})
+            command(socket_path, "benchmark", frames=2)
+            assert command(socket_path, "query_events", filter="release.ghost")["count"] == 0, "destroyed listener still ran"
+
+            # Reopening a saved scene exercises on_destroy setters and physics reload.
+            # The bus preserves event history across transitions.
+            stale_before = command(socket_path, "query_events", filter="release.stale_event")["count"]
+            command(socket_path, "spawn_entity", entity_id="transition_marker", components={"transform": {}})
+            command(socket_path, "run_lua", code='scene.load("scenes/roundtrip.yaml")')
+            wait_until(lambda: command(socket_path, "run_lua", code='return entity.exists("transition_marker")')["result"] == "false",
+                       "scene transition did not complete")
+            assert process.poll() is None, "on_destroy crashed scene transition"
+            assert float(command(socket_path, "run_lua", code='return entity.get_health("smoke_cube")')["result"]) == 73
+            assert command(socket_path, "run_lua", code='return physics.raycast(0, 3, 0, 0, -1, 0, 2)')["result"] == "true", "saved collider missing"
+            command(socket_path, "benchmark", frames=2)
+            stale_after = command(socket_path, "query_events", filter="release.stale_event")["count"]
+            assert stale_after == stale_before, f"old scene event reached new scene listeners: {stale_before} -> {stale_after}"
             # Save confinement must apply in the actual packaged engine too.
             with socket.socket(socket.AF_UNIX) as stream:
                 stream.settimeout(10)

@@ -34,6 +34,7 @@ pub mod project_path;
 pub mod publish;
 pub mod reflect;
 pub mod renderer;
+pub mod scene_snapshot;
 pub mod scripting;
 pub mod shader;
 pub mod sim;

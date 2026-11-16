@@ -11,6 +11,46 @@ use crate::world::SceneWorld;
 
 pub use naive_core::command::{CommandRequest, CommandResponse};
 
+/// Decode MCP spawning using the same component definitions as scene files.
+/// Unknown components are preserved when loading authored YAML, but a live
+/// command must not claim it created a component the engine cannot construct.
+pub fn spawn_definition(req: &CommandRequest) -> Result<crate::scene::EntityDef, String> {
+    let naive_core::command::Command::SpawnEntity {
+        entity_id,
+        components,
+        tags,
+    } = req.validate()?
+    else {
+        return Err("Expected spawn_entity command".into());
+    };
+    if entity_id.trim().is_empty() {
+        return Err("entity_id must not be empty".into());
+    }
+    let components: crate::scene::ComponentMap =
+        serde_json::from_value(Value::Object(components.unwrap_or_default()))
+            .map_err(|error| format!("Invalid entity components: {error}"))?;
+    if !components.extra.is_empty() {
+        let mut names: Vec<_> = components.extra.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        return Err(format!("Unsupported live components: {}", names.join(", ")));
+    }
+    if components.gaussian_splat.is_some() && components.mesh_renderer.is_some() {
+        return Err("An entity cannot combine gaussian_splat and mesh_renderer".into());
+    }
+    if components.rigid_body.is_some()
+        && components.collider.is_none()
+        && components.character_controller.is_none()
+    {
+        return Err("A rigid_body requires a collider or character_controller".into());
+    }
+    Ok(crate::scene::EntityDef {
+        id: entity_id,
+        tags: tags.unwrap_or_default(),
+        extends: None,
+        components,
+    })
+}
+
 /// A pending command awaiting processing on the main thread.
 pub struct PendingCommand {
     pub request: CommandRequest,
@@ -276,14 +316,9 @@ pub fn handle_command_rc(
             Some(sw) => cmd_modify_entity(req, sw),
             None => CommandResponse::error("No scene loaded"),
         },
-        CommandKind::SpawnEntity => match scene_world {
-            Some(sw) => cmd_spawn_entity(req, sw),
-            None => CommandResponse::error("No scene loaded"),
-        },
-        CommandKind::DestroyEntity => match scene_world {
-            Some(sw) => cmd_destroy_entity(req, sw),
-            None => CommandResponse::error("No scene loaded"),
-        },
+        CommandKind::SpawnEntity | CommandKind::DestroyEntity => {
+            CommandResponse::error("Entity lifecycle commands require engine resource context")
+        }
         CommandKind::EmitEvent => cmd_emit_event(req, event_bus),
         CommandKind::QueryEvents => cmd_query_events(req, event_bus),
         CommandKind::InjectInput => match input_state {
@@ -483,114 +518,6 @@ fn cmd_modify_entity(req: &CommandRequest, sw: &mut SceneWorld) -> CommandRespon
     CommandResponse::ok_empty()
 }
 
-fn cmd_spawn_entity(req: &CommandRequest, sw: &mut SceneWorld) -> CommandResponse {
-    let entity_id = match get_str_param(req, "entity_id") {
-        Some(id) => id.to_string(),
-        None => return CommandResponse::error("Missing 'entity_id' parameter"),
-    };
-    if sw.entity_registry.contains_key(&entity_id) {
-        return CommandResponse::error(format!("Entity '{}' already exists", entity_id));
-    }
-
-    let components = req.params.get("components");
-    let tags_param = req
-        .params
-        .get("tags")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    let mut transform = Transform::default();
-    if let Some(t) = components.and_then(|c| c.get("transform")) {
-        if let Some(arr) = t.get("position").and_then(|v| v.as_array()) {
-            if let Some(v) = json_array_to_vec3(arr) {
-                transform.position = v;
-            }
-        }
-        if let Some(arr) = t.get("scale").and_then(|v| v.as_array()) {
-            if let Some(v) = json_array_to_vec3(arr) {
-                transform.scale = v;
-            }
-        }
-        if let Some(arr) = t.get("rotation").and_then(|v| v.as_array()) {
-            if arr.len() == 3 {
-                transform.rotation = crate::world::euler_degrees_to_quat([
-                    arr[0].as_f64().unwrap_or(0.0) as f32,
-                    arr[1].as_f64().unwrap_or(0.0) as f32,
-                    arr[2].as_f64().unwrap_or(0.0) as f32,
-                ]);
-            }
-        }
-    }
-
-    let eid = EntityId(entity_id.clone());
-    let tags = Tags(tags_param);
-
-    let entity = if let Some(pl) = components.and_then(|c| c.get("point_light")) {
-        let color = pl
-            .get("color")
-            .and_then(|v| v.as_array())
-            .and_then(|a| json_array_to_vec3(a))
-            .unwrap_or(glam::Vec3::ONE);
-        let intensity = pl.get("intensity").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-        let range = pl.get("range").and_then(|v| v.as_f64()).unwrap_or(10.0) as f32;
-        sw.world.spawn((
-            eid,
-            tags,
-            transform,
-            PointLight {
-                color,
-                intensity,
-                range,
-            },
-        ))
-    } else if let Some(cam) = components.and_then(|c| c.get("camera")) {
-        let fov = cam.get("fov").and_then(|v| v.as_f64()).unwrap_or(75.0) as f32;
-        let near = cam.get("near").and_then(|v| v.as_f64()).unwrap_or(0.1) as f32;
-        let far = cam.get("far").and_then(|v| v.as_f64()).unwrap_or(100.0) as f32;
-        let role_str = cam.get("role").and_then(|v| v.as_str()).unwrap_or("other");
-        let role = if role_str == "main" {
-            CameraRole::Main
-        } else {
-            CameraRole::Other(role_str.into())
-        };
-        sw.world.spawn((
-            eid,
-            tags,
-            transform,
-            Camera {
-                fov_degrees: fov,
-                near,
-                far,
-                role,
-                aspect_ratio: 16.0 / 9.0,
-            },
-        ))
-    } else {
-        sw.world.spawn((eid, tags, transform))
-    };
-
-    sw.entity_registry.insert(entity_id.clone(), entity);
-    CommandResponse::ok(json!({"entity_id": entity_id}))
-}
-
-fn cmd_destroy_entity(req: &CommandRequest, sw: &mut SceneWorld) -> CommandResponse {
-    let entity_id = match get_str_param(req, "entity_id") {
-        Some(id) => id.to_string(),
-        None => return CommandResponse::error("Missing 'entity_id' parameter"),
-    };
-    let entity = match sw.entity_registry.remove(&entity_id) {
-        Some(e) => e,
-        None => return CommandResponse::error(format!("Entity '{}' not found", entity_id)),
-    };
-    let _ = sw.world.despawn(entity);
-    CommandResponse::ok_empty()
-}
-
 // --- Event commands ---
 
 fn cmd_emit_event(req: &CommandRequest, event_bus: &mut EventBus) -> CommandResponse {
@@ -711,6 +638,45 @@ fn cmd_runtime_control(req: &CommandRequest, paused: &mut bool) -> CommandRespon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_spawn_decodes_combined_scene_components_and_rejects_invalid_values() {
+        let request: CommandRequest = serde_json::from_value(json!({
+            "cmd": "spawn_entity", "entity_id": "actor", "tags": ["enemy"],
+            "components": {
+                "mesh_renderer": {"mesh": "procedural:cube", "material": "procedural:default"},
+                "point_light": {"intensity": 7}, "health": {"max": 100},
+                "rigid_body": {"type": "kinematic"}, "collider": {"shape": "box"},
+                "script": {"source": "logic/actor.lua"}
+            }
+        }))
+        .unwrap();
+        let definition = spawn_definition(&request).unwrap();
+        assert_eq!(definition.tags, ["enemy"]);
+        assert!(definition.components.mesh_renderer.is_some());
+        assert_eq!(definition.components.point_light.unwrap().intensity, 7.0);
+        assert_eq!(definition.components.health.unwrap().max, 100.0);
+        assert_eq!(
+            definition.components.rigid_body.unwrap().body_type,
+            "kinematic"
+        );
+        assert_eq!(
+            definition.components.script.unwrap().source,
+            "logic/actor.lua"
+        );
+        for components in [
+            json!({"health":{"max":"bad"}}),
+            json!({"unknown_component":{}}),
+            json!({"rigid_body":{"type":"dynamic"}}),
+            json!({"gaussian_splat":{"source":"test.ply"},"mesh_renderer":{"mesh":"procedural:cube","material":"materials/default.yaml"}}),
+        ] {
+            let request = serde_json::from_value(
+                json!({"cmd":"spawn_entity", "entity_id":"bad", "components":components}),
+            )
+            .unwrap();
+            assert!(spawn_definition(&request).is_err());
+        }
+    }
 
     fn test_socket_path() -> String {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

@@ -98,6 +98,8 @@ impl Default for BoneMatrixPalette {
 /// Animation system: ticks animation controllers, computes bone matrices.
 pub struct AnimationSystem {
     pub skeleton_store: SkeletonStore,
+    /// Cached meshes may be reused after their skin data has been consumed.
+    mesh_skeletons: std::collections::HashMap<usize, SkeletonHandle>,
     /// Per-entity scratch space for joint transforms during sampling.
     scratch_transforms: Vec<JointTransform>,
 }
@@ -106,6 +108,7 @@ impl AnimationSystem {
     pub fn new() -> Self {
         Self {
             skeleton_store: SkeletonStore::new(),
+            mesh_skeletons: std::collections::HashMap::new(),
             scratch_transforms: Vec::new(),
         }
     }
@@ -118,6 +121,7 @@ impl AnimationSystem {
         let mut registered = Vec::new();
         for (mesh_idx, skin_data) in mesh_cache.take_skin_data() {
             let handle = self.skeleton_store.add(skin_data.skeleton, skin_data.clips);
+            self.mesh_skeletons.insert(mesh_idx, handle);
             registered.push((mesh_idx, handle));
             tracing::info!(
                 "Registered skeleton handle {:?} for mesh {}",
@@ -126,6 +130,45 @@ impl AnimationSystem {
             );
         }
         registered
+    }
+
+    /// Attach animation to new entities even when their mesh was loaded earlier.
+    /// Authored playback settings are applied once, leaving live controllers alone.
+    pub fn attach_animators(&self, scene_world: &mut crate::world::SceneWorld) {
+        let pending: Vec<_> = scene_world
+            .world
+            .query::<&crate::components::MeshRenderer>()
+            .iter()
+            .filter_map(|(entity, mesh)| {
+                self.mesh_skeletons
+                    .get(&mesh.mesh_handle.0)
+                    .map(|&skeleton| (entity, skeleton))
+            })
+            .collect();
+        for (entity, skeleton_handle) in pending {
+            if scene_world.world.get::<&Animator>(entity).is_ok() {
+                continue;
+            }
+            let controller = {
+                let authored = scene_world
+                    .world
+                    .get::<&crate::world::SceneEntityDefinition>(entity)
+                    .ok();
+                animation_controller(
+                    authored
+                        .as_ref()
+                        .and_then(|definition| definition.0.components.animator.as_ref()),
+                )
+            };
+            let _ = scene_world.world.insert_one(
+                entity,
+                Animator {
+                    skeleton_handle,
+                    controller,
+                },
+            );
+            let _ = scene_world.world.insert_one(entity, skeleton_handle);
+        }
     }
 
     /// Tick a single entity's animation and compute its bone matrix palette.
@@ -198,8 +241,91 @@ impl AnimationSystem {
     }
 }
 
+fn animation_controller(
+    definition: Option<&naive_core::scene::AnimatorDef>,
+) -> naive_core::animation::AnimationController {
+    let Some(definition) = definition else {
+        return Default::default();
+    };
+    naive_core::animation::AnimationController {
+        current_state: naive_core::animation::AnimState::from_name(&definition.state),
+        speed: definition.speed,
+        looping: definition.looping,
+        ..Default::default()
+    }
+}
+
 impl Default for AnimationSystem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::{MaterialHandle, MeshHandle, MeshRenderer};
+    use crate::scene::{AnimatorDef, ComponentMap, EntityDef};
+    use crate::world::{SceneEntityDefinition, SceneWorld};
+
+    #[test]
+    fn cached_mesh_spawns_keep_authored_animation_and_live_progress() {
+        let mut system = AnimationSystem::new();
+        let skeleton = system
+            .skeleton_store
+            .add(Skeleton::new(Vec::new()), Vec::new());
+        system.mesh_skeletons.insert(3, skeleton);
+        let mut world = SceneWorld::new();
+        let authored = EntityDef {
+            id: "first".into(),
+            tags: Vec::new(),
+            extends: None,
+            components: ComponentMap {
+                animator: Some(AnimatorDef {
+                    state: "dance".into(),
+                    speed: 2.5,
+                    looping: false,
+                }),
+                ..Default::default()
+            },
+        };
+        let first = world.world.spawn((
+            MeshRenderer {
+                mesh_handle: MeshHandle(3),
+                material_handle: MaterialHandle(0),
+            },
+            SceneEntityDefinition(authored.clone()),
+        ));
+        system.attach_animators(&mut world);
+        {
+            let mut animator = world.world.get::<&mut Animator>(first).unwrap();
+            assert_eq!(animator.controller.current_state.clip_name(), "dance");
+            assert_eq!(animator.controller.speed, 2.5);
+            assert!(!animator.controller.looping);
+            animator.controller.current_time = 7.0;
+        }
+        // No newly registered skin data: a second instance still gets a controller.
+        let second = world.world.spawn((
+            MeshRenderer {
+                mesh_handle: MeshHandle(3),
+                material_handle: MaterialHandle(0),
+            },
+            SceneEntityDefinition(authored),
+        ));
+        system.attach_animators(&mut world);
+        assert_eq!(
+            world
+                .world
+                .get::<&Animator>(first)
+                .unwrap()
+                .controller
+                .current_time,
+            7.0
+        );
+        let animator = world.world.get::<&Animator>(second).unwrap();
+        assert_eq!(animator.controller.current_state.clip_name(), "dance");
+        assert_eq!(animator.controller.speed, 2.5);
+        assert!(!animator.controller.looping);
+        assert_eq!(animator.skeleton_handle, skeleton);
     }
 }

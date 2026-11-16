@@ -70,7 +70,13 @@ pub fn run() {
                     Some(config_path) => config_path.parent().unwrap().to_path_buf(),
                     None => std::path::PathBuf::from(&args.project),
                 };
-                let test_path = project_root.join(file);
+                let test_path = match naive_client::project_path::resolve(&project_root, file) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        eprintln!("Error: {error}");
+                        std::process::exit(1);
+                    }
+                };
                 run_single_test(&project_root, &test_path);
             }
             None => {
@@ -90,12 +96,16 @@ pub fn run() {
                         std::process::exit(1);
                     }
                 };
-                let test_files =
-                    naive_client::project_config::discover_test_files(&config, project_root);
-                if test_files.is_empty() {
-                    println!("No test files found.");
-                    return;
-                }
+                let test_files = match naive_client::project_config::discover_test_files(
+                    &config,
+                    project_root,
+                ) {
+                    Ok(files) => files,
+                    Err(error) => {
+                        eprintln!("Error: {error}");
+                        std::process::exit(1);
+                    }
+                };
                 println!("Running {} test file(s)...\n", test_files.len());
                 let mut total_passed = 0;
                 let mut total_failed = 0;

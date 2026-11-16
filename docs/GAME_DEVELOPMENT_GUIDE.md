@@ -590,7 +590,7 @@ end
 
 nAIVE includes a headless test runner that executes Lua test scripts without a GPU or window.
 
-The runner uses the same simulation code as the engine: the character controller, physics, scripts, events, collision damage, health and entity destruction all run. Commands that need the GPU do not: spawning entities and projectiles, pooling, scale and visibility changes, and texture or mesh changes are dropped.
+The runner uses the same simulation code as the engine: the character controller, physics, scripts, events, collision damage, health, entity spawning and destruction, pooling, scale and visibility changes, and scene transitions all run. Audio uses a silent backend. Operations that require GPU resources, such as texture and mesh changes, fail explicitly instead of being silently skipped. Use the packaged release smoke test to verify rendering and native command handling.
 
 ### Running Tests
 
@@ -605,6 +605,11 @@ naive test tests/test_combat.lua
 ### Writing Tests
 
 Test files are Lua scripts where every `function test_*()` is automatically discovered and run. Each test gets an isolated runner with fresh game state.
+
+Game script load, initialization, update, collision and event-listener errors fail
+the test, even when the test catches a Lua error or subsequently loads another
+scene. Missing configured files, discovery errors, and runs that discover no tests
+exit with a failure status. A passing command therefore means tests actually ran.
 
 ```lua
 -- tests/test_player.lua

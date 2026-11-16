@@ -24,10 +24,7 @@ use crate::font::BitmapFont;
 use crate::input::InputState;
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
-use crate::physics::{
-    CharacterController, Collider as ColliderComp, PhysicsBodyType, PhysicsShape, PhysicsWorld,
-    RigidBody as RigidBodyComp,
-};
+use crate::physics::{CharacterController, PhysicsWorld};
 use crate::pipeline::CompiledPipeline;
 use crate::renderer::{DrawUniformPool, GpuState};
 use crate::scripting::{CameraShakeState, Script, ScriptRuntime};
@@ -634,59 +631,13 @@ impl Engine {
         let mut script_runtime = ScriptRuntime::new();
         self.register_script_apis(&script_runtime);
 
-        // Load scripts for entities that have them
-        if let Some(sw) = &self.scene_world {
-            let mut sw = sw.borrow_mut();
-            if let Some(scene) = &sw.current_scene {
-                let scene_clone = scene.clone();
-                for entity_def in &scene_clone.entities {
-                    if let Some(script_def) = &entity_def.components.script {
-                        if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
-                            let source_path = std::path::PathBuf::from(&script_def.source);
-                            let script_comp = Script {
-                                source: source_path.clone(),
-                                initialized: false,
-                            };
-                            let _ = sw.world.insert_one(entity, script_comp);
-
-                            if let Err(e) =
-                                script_runtime.load_script(entity, &self.project_root, &source_path)
-                            {
-                                tracing::error!(
-                                    "Failed to load script for '{}': {}",
-                                    entity_def.id,
-                                    e
-                                );
-                            } else {
-                                // Set the entity's YAML string ID in its script environment
-                                let _ = script_runtime.set_entity_string_id(entity, &entity_def.id);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Call init on all scripts (collect first to release world borrow before Lua runs)
-        let uninit_entities: Vec<hecs::Entity> = if let Some(sw) = &self.scene_world {
-            let sw = sw.borrow();
-            let mut query = sw.world.query::<&Script>();
-            query
-                .iter()
-                .filter(|(_, script)| !script.initialized)
-                .map(|(entity, _)| entity)
-                .collect()
-        } else {
-            vec![]
-        };
-        for entity in uninit_entities {
-            script_runtime.call_init(entity);
-        }
-        // Mark all as initialized
-        if let Some(sw) = &self.scene_world {
-            let sw = sw.borrow_mut();
-            for (_entity, script) in sw.world.query::<&mut Script>().iter() {
-                script.initialized = true;
+        if let Some(world) = &self.scene_world {
+            if let Err(error) = crate::sim::initialize_pending_scripts(
+                world,
+                &mut script_runtime,
+                &self.project_root,
+            ) {
+                tracing::error!("{error}");
             }
         }
 
@@ -979,6 +930,16 @@ impl Engine {
         let script_runtime = ScriptRuntime::new();
         self.register_script_apis(&script_runtime);
 
+        let mut script_runtime = script_runtime;
+        if let Some(world) = &self.scene_world {
+            if let Err(error) = crate::sim::initialize_pending_scripts(
+                world,
+                &mut script_runtime,
+                &self.project_root,
+            ) {
+                tracing::error!("{error}");
+            }
+        }
         self.script_runtime = Some(script_runtime);
 
         self.last_frame_time = Some(std::time::Instant::now());
@@ -1370,8 +1331,6 @@ impl Engine {
             Some(scene_world) => scene_world,
             None => return,
         };
-        let mut scene_world = scene_world.borrow_mut();
-
         tracing::info!("Hot-reloading scene: {:?}", changed_path);
 
         let new_scene = match crate::scene::load_scene(changed_path) {
@@ -1390,6 +1349,49 @@ impl Engine {
                 return;
             }
         };
+
+        // Run destroy hooks while removed/replaced entities can still access
+        // their components, and before reconciliation borrows either world.
+        let retiring: Vec<_> = {
+            let world = scene_world.borrow();
+            world
+                .current_scene
+                .as_ref()
+                .map(|old| {
+                    old.entities
+                        .iter()
+                        .filter_map(|definition| {
+                            let replacement = new_scene
+                                .entities
+                                .iter()
+                                .find(|new| new.id == definition.id);
+                            let retire = replacement.is_none_or(|new| {
+                                crate::world::entity_needs_respawn(definition, new)
+                                    || definition
+                                        .components
+                                        .script
+                                        .as_ref()
+                                        .map(|script| &script.source)
+                                        != new
+                                            .components
+                                            .script
+                                            .as_ref()
+                                            .map(|script| &script.source)
+                            });
+                            retire
+                                .then(|| world.entity_registry.get(&definition.id).copied())
+                                .flatten()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        if let Some(runtime) = self.script_runtime.as_mut() {
+            for entity in retiring {
+                runtime.remove_entity(entity);
+            }
+        }
+        let mut scene_world = scene_world.borrow_mut();
 
         // Borrow physics_world for reconcile so new entities get physics bodies
         let mut pw_borrow = self.physics_world.as_ref().map(|pw| pw.borrow_mut());
@@ -1546,6 +1548,26 @@ impl Engine {
             }
         }
 
+        drop(pw_borrow);
+        drop(scene_world);
+        self.register_skeletons();
+        if let (Some(world), Some(runtime)) = (&self.scene_world, self.script_runtime.as_mut()) {
+            let stale: Vec<_> = runtime
+                .entity_envs
+                .keys()
+                .copied()
+                .filter(|&entity| !world.borrow().world.contains(entity))
+                .collect();
+            for entity in stale {
+                runtime.forget_entity(entity);
+            }
+            if let Err(error) =
+                crate::sim::initialize_pending_scripts(world, runtime, &self.project_root)
+            {
+                tracing::error!("scene reload: {error}");
+            }
+        }
+
         let file_name = changed_path
             .file_name()
             .map(|f| f.to_string_lossy().to_string())
@@ -1636,7 +1658,9 @@ impl Engine {
         }
 
         for path in scene_paths {
-            self.handle_scene_reload(&path);
+            if crate::watcher::is_active_scene(self.scene_path.as_deref(), &path) {
+                self.handle_scene_reload(&path);
+            }
         }
 
         for path in &splat_paths {
@@ -1723,59 +1747,11 @@ impl Engine {
     /// Register skeletons from newly loaded meshes and attach Animator components
     /// to entities whose meshes have skin data.
     fn register_skeletons(&mut self) {
-        // Take skin data from mesh cache and register with animation system
-        let registered = self
-            .animation_system
+        self.animation_system
             .register_from_mesh_cache(&mut self.mesh_cache);
-        if registered.is_empty() {
-            return;
-        }
-
-        // Build mesh_index -> skeleton_handle map
-        let mesh_to_skeleton: std::collections::HashMap<usize, crate::components::SkeletonHandle> =
-            registered.into_iter().collect();
-
-        let scene_world = match &self.scene_world {
-            Some(scene_world) => scene_world,
-            None => return,
-        };
-        let mut scene_world = scene_world.borrow_mut();
-
-        // Find entities with MeshRenderer whose mesh has a registered skeleton
-        let to_animate: Vec<(hecs::Entity, crate::components::SkeletonHandle)> = scene_world
-            .world
-            .query::<&crate::components::MeshRenderer>()
-            .iter()
-            .filter_map(|(entity, mr)| {
-                mesh_to_skeleton
-                    .get(&mr.mesh_handle.0)
-                    .map(|sh| (entity, *sh))
-            })
-            .collect();
-
-        for (entity, skeleton_handle) in to_animate {
-            // Skip if already has an Animator
-            if scene_world
-                .world
-                .get::<&crate::components::Animator>(entity)
-                .is_ok()
-            {
-                continue;
-            }
-            let animator = crate::components::Animator {
-                skeleton_handle,
-                controller: naive_core::animation::AnimationController {
-                    current_state: naive_core::animation::AnimState::Idle,
-                    ..Default::default()
-                },
-            };
-            let _ = scene_world.world.insert_one(entity, animator);
-            let _ = scene_world.world.insert_one(entity, skeleton_handle);
-            tracing::info!(
-                "Attached Animator to entity {:?} with skeleton {:?}",
-                entity,
-                skeleton_handle
-            );
+        if let Some(world) = &self.scene_world {
+            self.animation_system
+                .attach_animators(&mut world.borrow_mut());
         }
     }
 
@@ -1829,171 +1805,33 @@ impl Engine {
             crate::sim::process_destroys(
                 scene_world,
                 self.physics_world.as_ref(),
-                self.script_runtime.as_ref(),
+                self.script_runtime.as_mut(),
                 &self.entity_commands,
             );
         }
 
-        // Process spawns (after destroys, so destroy+spawn same ID works)
+        // Use the same component constructor as scene loading and headless tests.
         let spawns: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().spawns);
         for cmd in &spawns {
             if let Some(scene_world) = &self.scene_world {
-                let mut scene_world = scene_world.borrow_mut();
-                let ok = crate::world::spawn_runtime_entity(
-                    &mut scene_world,
-                    &cmd.id,
-                    &cmd.mesh,
-                    &cmd.material,
-                    cmd.position,
-                    cmd.scale,
-                    &gpu.device,
-                    &gpu.queue,
-                    &self.project_root,
-                    &mut self.mesh_cache,
-                    &mut self.material_cache,
-                    self.texture_resources.as_ref(),
-                );
-
-                // Attach collider + rigid body if specified
-                if ok {
-                    if let Some(&entity) = scene_world.entity_registry.get(&cmd.id) {
-                        let position = glam::Vec3::from(cmd.position);
-                        let rotation = glam::Quat::IDENTITY;
-
-                        // Build collider shape
-                        let shape = if let Some(col) = &cmd.collider {
-                            match col.shape.as_str() {
-                                "cuboid" | "box" => {
-                                    let he = col.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                    PhysicsShape::Box {
-                                        half_extents: glam::Vec3::from(he),
-                                    }
-                                }
-                                "capsule" => {
-                                    let r = col.radius.unwrap_or(0.5);
-                                    let he = col.half_extents.unwrap_or([0.5, 1.0, 0.5]);
-                                    PhysicsShape::Capsule {
-                                        radius: r,
-                                        half_height: he[1],
-                                    }
-                                }
-                                _ => {
-                                    let r = col.radius.unwrap_or(0.5);
-                                    PhysicsShape::Sphere { radius: r }
-                                }
-                            }
-                        } else {
-                            let r = cmd.scale[0].max(cmd.scale[1]).max(cmd.scale[2]) * 0.5;
-                            PhysicsShape::Sphere { radius: r }
-                        };
-
-                        let is_trigger =
-                            cmd.collider.as_ref().map(|c| c.is_trigger).unwrap_or(false);
-                        let restitution =
-                            cmd.collider.as_ref().map(|c| c.restitution).unwrap_or(0.3);
-                        let friction = cmd.collider.as_ref().map(|c| c.friction).unwrap_or(0.5);
-
-                        if let (Some(rb_type), Some(physics_world)) =
-                            (&cmd.rigid_body, &self.physics_world)
-                        {
-                            let mut pw = physics_world.borrow_mut();
-                            let (rb_handle, col_handle, pbt) = match rb_type.as_str() {
-                                "dynamic" => {
-                                    let (r, c) = pw.add_dynamic_body(
-                                        entity,
-                                        position,
-                                        rotation,
-                                        shape.clone(),
-                                        1.0,
-                                        restitution,
-                                        friction,
-                                        false,
-                                    );
-                                    (r, c, PhysicsBodyType::Dynamic)
-                                }
-                                "kinematic" => {
-                                    let (r, c) = pw.add_kinematic_body(
-                                        entity,
-                                        position,
-                                        rotation,
-                                        shape.clone(),
-                                        is_trigger,
-                                        restitution,
-                                        friction,
-                                    );
-                                    (r, c, PhysicsBodyType::Kinematic)
-                                }
-                                _ => {
-                                    let (r, c) = pw.add_static_body(
-                                        entity,
-                                        position,
-                                        rotation,
-                                        shape.clone(),
-                                        is_trigger,
-                                        restitution,
-                                        friction,
-                                    );
-                                    (r, c, PhysicsBodyType::Static)
-                                }
-                            };
-                            let _ = scene_world.world.insert_one(
-                                entity,
-                                RigidBodyComp {
-                                    handle: rb_handle,
-                                    body_type: pbt,
-                                },
-                            );
-                            let _ = scene_world.world.insert_one(
-                                entity,
-                                ColliderComp {
-                                    handle: col_handle,
-                                    shape,
-                                    is_trigger,
-                                },
-                            );
-                        } else if cmd.collider.is_some() {
-                            // Collider without rigid_body type: default to fixed
-                            if let Some(physics_world) = &self.physics_world {
-                                let mut pw = physics_world.borrow_mut();
-                                let (rb_handle, col_handle) = pw.add_static_body(
-                                    entity,
-                                    position,
-                                    rotation,
-                                    shape.clone(),
-                                    is_trigger,
-                                    restitution,
-                                    friction,
-                                );
-                                let _ = scene_world.world.insert_one(
-                                    entity,
-                                    RigidBodyComp {
-                                        handle: rb_handle,
-                                        body_type: PhysicsBodyType::Static,
-                                    },
-                                );
-                                let _ = scene_world.world.insert_one(
-                                    entity,
-                                    ColliderComp {
-                                        handle: col_handle,
-                                        shape,
-                                        is_trigger,
-                                    },
-                                );
-                            }
-                        }
-
-                        // Attach script if specified
-                        if let Some(script_path) = &cmd.script {
-                            let _ = scene_world.world.insert_one(
-                                entity,
-                                Script {
-                                    source: std::path::PathBuf::from(script_path),
-                                    initialized: false,
-                                },
-                            );
-                        }
-                    }
+                {
+                    let mut world = scene_world.borrow_mut();
+                    let mut physics = self.physics_world.as_ref().map(|world| world.borrow_mut());
+                    crate::world::spawn_entity(
+                        &mut world,
+                        &cmd.entity_def(),
+                        &gpu.device,
+                        &gpu.queue,
+                        &self.project_root,
+                        &mut self.mesh_cache,
+                        &mut self.material_cache,
+                        &mut self.splat_cache,
+                        physics.as_deref_mut(),
+                        self.texture_resources.as_ref(),
+                        Some(&mut self.texture_cache),
+                    );
                 }
+                crate::sim::finish_pool_spawn(scene_world, &self.pool_manager, cmd);
             }
         }
 
@@ -2121,18 +1959,34 @@ impl Engine {
                     ) {
                         Ok(tex_handle) => {
                             if let Some(scene_world) = &self.scene_world {
-                                let sw = scene_world.borrow();
+                                let mut sw = scene_world.borrow_mut();
                                 if let Some(&entity) = sw.entity_registry.get(&swap.entity_id) {
+                                    let mut changed = false;
                                     if let Ok(mr) = sw.world.get::<&MeshRenderer>(entity) {
                                         let mat = self.material_cache.get_mut(mr.material_handle);
                                         match swap.slot.as_str() {
-                                            "albedo" => mat.albedo_texture = Some(tex_handle),
-                                            "normal" => mat.normal_texture = Some(tex_handle),
+                                            "albedo" => {
+                                                mat.albedo_texture = Some(tex_handle);
+                                                changed = true;
+                                            }
+                                            "normal" => {
+                                                mat.normal_texture = Some(tex_handle);
+                                                changed = true;
+                                            }
                                             _ => tracing::warn!(
                                                 "entity.set_texture: unknown slot '{}'",
                                                 swap.slot
                                             ),
                                         }
+                                    }
+                                    if changed {
+                                        let _ = sw.world.insert_one(
+                                            entity,
+                                            crate::world::UnsavedRuntimeState(
+                                                "runtime texture changes cannot be saved"
+                                                    .to_string(),
+                                            ),
+                                        );
                                     }
                                 }
                             }
@@ -2161,11 +2015,16 @@ impl Engine {
             );
         }
 
-        // Process spawn commands that have colliders/scripts
-        // (already handled by spawn_runtime_entity above, but we need to attach
-        // colliders and scripts post-spawn for the commands that specified them)
-        // Note: this is done as a second pass since spawn_runtime_entity doesn't
-        // support these yet — we attach them after the entity exists.
+        if !spawns.is_empty() || !proj_spawns.is_empty() || !dyn_spawns.is_empty() {
+            self.register_skeletons();
+        }
+        if let (Some(world), Some(runtime)) = (&self.scene_world, self.script_runtime.as_mut()) {
+            if let Err(error) =
+                crate::sim::initialize_pending_scripts(world, runtime, &self.project_root)
+            {
+                tracing::error!("{error}");
+            }
+        }
     }
 
     /// Process a pending scene load (deferred from Lua `scene.load(path)`).
@@ -2195,21 +2054,29 @@ impl Engine {
             }
         };
 
-        // 1. Call on_destroy on all scripted entities
-        if let (Some(sw), Some(sr)) = (&self.scene_world, &self.script_runtime) {
-            let sw = sw.borrow();
-            let scripted: Vec<hecs::Entity> =
-                sw.world.query::<&Script>().iter().map(|(e, _)| e).collect();
-            for entity in scripted {
-                sr.call_on_destroy(entity);
+        // Destroy through the same path as Lua and MCP. Never hold world borrows
+        // while invoking user callbacks.
+        if let Some(world) = &self.scene_world {
+            let ids: Vec<_> = world.borrow().entity_registry.keys().cloned().collect();
+            for id in ids {
+                crate::sim::destroy_entity(
+                    world,
+                    self.physics_world.as_ref(),
+                    self.script_runtime.as_mut(),
+                    &id,
+                );
             }
         }
-
-        // 2. Clear script environments
-        if let Some(sr) = &mut self.script_runtime {
-            sr.entity_envs.clear();
-            sr.script_sources.clear();
+        if let Some(runtime) = self.script_runtime.as_mut() {
+            let stale: Vec<_> = runtime.entity_envs.keys().copied().collect();
+            for entity in stale {
+                runtime.forget_entity(entity);
+            }
         }
+        self.entity_commands.borrow_mut().clear();
+        // Events from the previous scene, including teardown hooks, must not
+        // reach subscriptions registered by the replacement scene.
+        self.event_bus.borrow_mut().discard_pending();
 
         // 3. Clear ECS world and entity registry in-place
         if let Some(sw) = &self.scene_world {
@@ -2440,59 +2307,12 @@ impl Engine {
             }
         }
 
-        // 8. Re-load scripts for the new scene
-        if let Some(sw) = &self.scene_world {
-            let mut sw = sw.borrow_mut();
-            if let Some(sr) = &mut self.script_runtime {
-                if let Some(scene_data) = &sw.current_scene.clone() {
-                    for entity_def in &scene_data.entities {
-                        if let Some(script_def) = &entity_def.components.script {
-                            if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
-                                let source_path = std::path::PathBuf::from(&script_def.source);
-                                let script_comp = Script {
-                                    source: source_path.clone(),
-                                    initialized: false,
-                                };
-                                let _ = sw.world.insert_one(entity, script_comp);
-                                if let Err(e) =
-                                    sr.load_script(entity, &self.project_root, &source_path)
-                                {
-                                    tracing::error!(
-                                        "scene.load: script for '{}' failed: {}",
-                                        entity_def.id,
-                                        e
-                                    );
-                                } else {
-                                    let _ = sr.set_entity_string_id(entity, &entity_def.id);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Call init on all scripts (collect first to release world borrow before Lua runs)
-        let uninit: Vec<hecs::Entity> = if let Some(sw) = &self.scene_world {
-            let sw = sw.borrow();
-            let mut query = sw.world.query::<&Script>();
-            query
-                .iter()
-                .filter(|(_, s)| !s.initialized)
-                .map(|(e, _)| e)
-                .collect()
-        } else {
-            vec![]
-        };
-        if let Some(sr) = &self.script_runtime {
-            for entity in uninit {
-                sr.call_init(entity);
-            }
-        }
-        if let Some(sw) = &self.scene_world {
-            let sw = sw.borrow_mut();
-            for (_entity, script) in sw.world.query::<&mut Script>().iter() {
-                script.initialized = true;
+        // Load and initialize scripts only after construction releases its borrows.
+        if let (Some(world), Some(runtime)) = (&self.scene_world, self.script_runtime.as_mut()) {
+            if let Err(error) =
+                crate::sim::initialize_pending_scripts(world, runtime, &self.project_root)
+            {
+                tracing::error!("scene.load: {error}");
             }
         }
 

@@ -100,36 +100,68 @@ pub fn to_cli_args(config: &NaiveConfig, project_root: &Path, socket: &str) -> C
 }
 
 /// Discover test files from config or by scanning the tests/ directory.
-pub fn discover_test_files(config: &NaiveConfig, project_root: &Path) -> Vec<PathBuf> {
+pub fn discover_test_files(
+    config: &NaiveConfig,
+    project_root: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let canonical_root = project_root.canonicalize().map_err(|e| e.to_string())?;
     // Explicit file list takes priority
     if let Some(files) = &config.test.files {
+        if files.is_empty() {
+            return Err("Configured test file list is empty".into());
+        }
         return files
             .iter()
-            .map(|f| project_root.join(f))
-            .filter(|p| p.exists())
+            .map(|f| {
+                let path = crate::project_path::resolve(project_root, f)?;
+                if !path.is_file() {
+                    return Err(format!(
+                        "Configured test file not found: {}",
+                        path.display()
+                    ));
+                }
+                Ok(path)
+            })
             .collect();
     }
 
     // Scan directory (default: "tests")
-    let test_dir = project_root.join(config.test.directory.as_deref().unwrap_or("tests"));
+    let test_dir = crate::project_path::resolve(
+        project_root,
+        config.test.directory.as_deref().unwrap_or("tests"),
+    )?;
 
     if !test_dir.is_dir() {
-        return Vec::new();
+        return Err(format!("Test directory not found: {}", test_dir.display()));
     }
 
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&test_dir)
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
+    let mut files = Vec::new();
+    for entry in
+        std::fs::read_dir(&test_dir).map_err(|e| format!("Cannot read test directory: {e}"))?
+    {
+        let path = entry
+            .map_err(|e| format!("Cannot inspect test directory: {e}"))?
+            .path();
+        if path.is_file() && {
+            let p = &path;
             p.extension().is_some_and(|ext| ext == "lua")
                 && p.file_name()
                     .and_then(|n| n.to_str())
                     .is_some_and(|n| n.starts_with("test_"))
-        })
-        .collect();
+        } {
+            let relative = path
+                .strip_prefix(&canonical_root)
+                .map_err(|e| e.to_string())?;
+            files.push(crate::project_path::resolve(project_root, relative)?);
+        }
+    }
 
     files.sort();
-    files
+    if files.is_empty() {
+        return Err(format!(
+            "No test_*.lua files found in {}",
+            test_dir.display()
+        ));
+    }
+    Ok(files)
 }

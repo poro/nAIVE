@@ -1,6 +1,6 @@
 //! Lua events API registration.
 
-use super::{ScriptRuntime, SharedEventBus};
+use super::{EventSubscriptions, ScriptRuntime, SharedEventBus};
 use mlua::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -17,6 +17,10 @@ impl ScriptRuntime {
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let events_table = self.lua.create_table().map_err(|e| e.to_string())?;
+        *self.subscriptions.borrow_mut() = Some(EventSubscriptions {
+            listeners: lua_listeners.clone(),
+            ids: listener_id_map.clone(),
+        });
 
         // events.emit(event_type, data_table)
         let bus = event_bus.clone();
@@ -53,6 +57,9 @@ impl ScriptRuntime {
         let listeners = lua_listeners.clone();
         let next_id = next_listener_id.clone();
         let id_map = listener_id_map.clone();
+        let owners = self.listener_owners.clone();
+        let environments = self.listener_environments.clone();
+        let active_entity = self.active_entity.clone();
         let on_fn = self
             .lua
             .create_function(move |lua, (event_type, callback): (String, LuaFunction)| {
@@ -60,8 +67,24 @@ impl ScriptRuntime {
                 let mut next_id = next_id.borrow_mut();
                 let mut id_map = id_map.borrow_mut();
 
+                let owner = active_entity.get();
+                let environment = callback.environment();
+                let active = active_entity.clone();
+                let wrapped = lua.create_function(move |_, args: LuaMultiValue| {
+                    struct Restore<'a>(
+                        &'a std::cell::Cell<Option<hecs::Entity>>,
+                        Option<hecs::Entity>,
+                    );
+                    impl Drop for Restore<'_> {
+                        fn drop(&mut self) {
+                            self.0.set(self.1);
+                        }
+                    }
+                    let _restore = Restore(&active, active.replace(owner));
+                    callback.call::<()>(args)
+                })?;
                 let owned_key = lua
-                    .create_registry_value(callback)
+                    .create_registry_value(wrapped)
                     .map_err(mlua::Error::external)?;
                 let list = listeners.entry(event_type.clone()).or_default();
                 let index = list.len();
@@ -70,6 +93,12 @@ impl ScriptRuntime {
                 let listener_id = *next_id;
                 *next_id += 1;
                 id_map.insert(listener_id, (event_type, index));
+                if let Some(owner) = owner {
+                    owners.borrow_mut().insert(listener_id, owner);
+                    if let Some(environment) = environment {
+                        environments.borrow_mut().insert(listener_id, environment);
+                    }
+                }
 
                 Ok(listener_id)
             })
@@ -79,9 +108,18 @@ impl ScriptRuntime {
         // events.off(listener_id) - remove a listener
         let listeners = lua_listeners.clone();
         let id_map = listener_id_map.clone();
+        let owners = self.listener_owners.clone();
+        let environments = self.listener_environments.clone();
+        let staged_removals = self.staged_listener_removals.clone();
         let off_fn = self
             .lua
             .create_function(move |_, listener_id: u64| {
+                if let Some(removals) = staged_removals.borrow_mut().as_mut() {
+                    removals.push(listener_id);
+                    return Ok(());
+                }
+                owners.borrow_mut().remove(&listener_id);
+                environments.borrow_mut().remove(&listener_id);
                 let mut listeners = listeners.borrow_mut();
                 let mut id_map = id_map.borrow_mut();
 
