@@ -1,0 +1,22 @@
+[package]
+name = "naive-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+description = "nAIVE simulation without a GPU or window: physics and project paths so far"
+
+# Must never depend on wgpu, winit or an audio backend: CI checks it. It is
+# what headless tests, a future server and the web build share with the
+# engine. See docs/sim-split-plan.md.
+
+[dependencies]
+naive-core = { workspace = true }
+glam = { workspace = true }
+hecs = { workspace = true }
+rapier3d = { workspace = true }
+gltf = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

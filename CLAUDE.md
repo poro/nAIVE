@@ -17,7 +17,8 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | Crate | Purpose |
 |-------|---------|
 | `naive-core` | Scene schema, shared types, typed command requests/responses and MCP tool schemas |
-| `naive-client` | Engine loop, renderer, physics, scripting, world management |
+| `naive-sim` | Simulation without GPU, window or audio (so far `physics` and `project_path`, re-exported by `naive-client`). Must never depend on wgpu/winit/kira; CI checks. Plan: `docs/sim-split-plan.md` |
+| `naive-client` | Engine loop, renderer, scripting, world management |
 | `naive-runtime` | CLI binary (`naive`, `naive-runtime`, `naive_mcp`) |
 | `naive-player` | `naive` built without Slang; `naive build` ships it in game bundles. Build it alone (`cargo build -p naive-player`) so feature unification cannot link Slang into it |
 | `naive-server` | Multiplayer server (stub — future) |
@@ -32,7 +33,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/engine.rs` | Main `Engine` struct, game loop (`run_frame` → `tick_simulation`, `prepare_render`, `render_frame`), camera, scene loading |
 | `crates/naive-client/src/engine/commands.rs` | Editor/MCP dispatch, entity creation, persistence, Lua evaluation, frame capture and benchmarking |
 | `crates/naive-client/src/sim.rs` | GPU-free frame steps shared by the engine and the headless test runner (character controller, fixed physics steps, collision/event dispatch, collision damage, projectiles, health, entity destruction, script updates). Collect what a script callback needs first, release every borrow, then call the script. |
-| `crates/naive-client/src/physics.rs` | `PhysicsWorld` — Rapier3D wrapper (bodies, colliders, CCD, impulse/force) |
+| `crates/naive-sim/src/physics.rs` | `PhysicsWorld` — Rapier3D wrapper (bodies, colliders, CCD, impulse/force) |
 | `crates/naive-client/src/world.rs` | `SceneWorld` (ECS + registry), `EntityCommandQueue`, entity spawning, pooling |
 | `crates/naive-client/src/scene_snapshot.rs` | Scene-authoring snapshots from retained entity definitions and supported live ECS values; rejects unrepresentable runtime edits |
 | `crates/naive-client/src/scripting.rs` | Sandboxed Lua runtime, CPU/memory limits, shared API handles, script loading, hooks and hot reload |
@@ -45,7 +46,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/swarm_api.rs` | The `swarm` Lua table (spawn, damage spheres and lines, targets, counts) and the `SwarmBus` carrying requests to swarms and reports back; `sim::process_swarm_reports` turns reports into target damage and `swarm.kills` / `swarm.hit` / `swarm.cleared` events |
 | `crates/naive-client/src/debug_draw.rs` | Wireframe physics collider visualization (toggle: H key) |
 | `crates/naive-client/src/command.rs` | Command socket — newline-delimited JSON over a Unix domain socket (default `/tmp/naive-runtime.sock`); `naive_mcp` bridges it to MCP |
-| `crates/naive-client/src/project_path.rs` | Project-relative path confinement, symlink validation and glTF external-resource validation |
+| `crates/naive-sim/src/project_path.rs` | Project-relative path confinement, symlink validation and glTF external-resource validation |
 | `crates/naive-client/src/test_runner.rs` | Headless test runner for `naive test` CLI command |
 | `crates/naive-client/src/dev_log.rs` | `naive submit-log` — POST dev.log as GitHub Issue |
 | `crates/naive-client/src/demos.rs` | `naive demo` — 19 embedded demos with interactive browser |
