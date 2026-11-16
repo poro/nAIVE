@@ -100,7 +100,12 @@ pub fn create_bitmap_font(device: &wgpu::Device, queue: &wgpu::Queue) -> BitmapF
         ],
     });
 
-    tracing::info!("Bitmap font atlas created ({}x{}, {} glyphs)", atlas_w, atlas_h, GLYPH_COUNT);
+    tracing::info!(
+        "Bitmap font atlas created ({}x{}, {} glyphs)",
+        atlas_w,
+        atlas_h,
+        GLYPH_COUNT
+    );
 
     BitmapFont {
         _texture: texture,
@@ -160,7 +165,7 @@ fn generate_font_atlas() -> (u32, u32, Vec<u8>) {
                     let px = x0 + dx;
                     let py = y0 + dy;
                     let off = ((py * w + px) * 4) as usize;
-                    pixels[off] = 255;     // R
+                    pixels[off] = 255; // R
                     pixels[off + 1] = 255; // G
                     pixels[off + 2] = 255; // B
                     pixels[off + 3] = 255; // A

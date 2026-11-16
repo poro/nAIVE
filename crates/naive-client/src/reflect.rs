@@ -131,27 +131,21 @@ fn slang_type_to_wgpu_binding(
         TypeKind::Resource => {
             // Check resource shape to distinguish textures from buffers
             match type_layout.resource_shape() {
-                Some(shader_slang::ResourceShape::SlangTexture2d) => {
-                    wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    }
-                }
-                Some(shader_slang::ResourceShape::SlangTextureCube) => {
-                    wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::Cube,
-                        multisampled: false,
-                    }
-                }
-                Some(shader_slang::ResourceShape::SlangTexture3d) => {
-                    wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D3,
-                        multisampled: false,
-                    }
-                }
+                Some(shader_slang::ResourceShape::SlangTexture2d) => wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                Some(shader_slang::ResourceShape::SlangTextureCube) => wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::Cube,
+                    multisampled: false,
+                },
+                Some(shader_slang::ResourceShape::SlangTexture3d) => wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
                 Some(shader_slang::ResourceShape::SlangStructuredBuffer) => {
                     wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -169,9 +163,7 @@ fn slang_type_to_wgpu_binding(
                 }
             }
         }
-        TypeKind::SamplerState => {
-            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
-        }
+        TypeKind::SamplerState => wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
         TypeKind::ParameterBlock => wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
@@ -187,9 +179,7 @@ fn slang_type_to_wgpu_binding(
 
 /// Fallback when `slang` feature is disabled: returns empty reflection.
 #[cfg(not(feature = "slang"))]
-pub fn reflect_shader(
-    _linked: &(),
-) -> Result<ShaderReflection, ShaderError> {
+pub fn reflect_shader(_linked: &()) -> Result<ShaderReflection, ShaderError> {
     Ok(ShaderReflection {
         bind_group_layouts: Vec::new(),
         entry_points: Vec::new(),

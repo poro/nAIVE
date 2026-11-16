@@ -1,16 +1,16 @@
-pub mod def;
-pub mod resource;
 pub mod compiler;
+pub mod def;
 pub mod executor;
+pub mod resource;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 // Re-export all public items so external code using `crate::pipeline::*` continues to work.
-pub use def::*;
-pub use resource::*;
 pub use compiler::compile_pipeline;
+pub use def::*;
 pub use executor::{execute_pipeline, execute_pipeline_to_view, rebuild_bind_groups};
+pub use resource::*;
 
 // ---------------------------------------------------------------------------
 // Runtime render debug state (toggled interactively via number keys)
@@ -309,7 +309,10 @@ passes:
     #[test]
     fn test_pass_type_from_str() {
         assert_eq!(PassType::from_name("rasterize"), Some(PassType::Rasterize));
-        assert_eq!(PassType::from_name("fullscreen"), Some(PassType::Fullscreen));
+        assert_eq!(
+            PassType::from_name("fullscreen"),
+            Some(PassType::Fullscreen)
+        );
         assert_eq!(PassType::from_name("compute"), Some(PassType::Compute));
         assert_eq!(PassType::from_name("splat"), Some(PassType::Splat));
         assert_eq!(PassType::from_name("shadow"), Some(PassType::Shadow));

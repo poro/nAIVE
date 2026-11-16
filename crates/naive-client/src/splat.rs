@@ -101,12 +101,7 @@ impl SplatCache {
 
     /// Sort splats back-to-front for correct alpha blending.
     /// Updates the sorted_index_buffer on GPU.
-    pub fn sort_splats(
-        &self,
-        handle: SplatHandle,
-        view_matrix: &Mat4,
-        queue: &wgpu::Queue,
-    ) {
+    pub fn sort_splats(&self, handle: SplatHandle, view_matrix: &Mat4, queue: &wgpu::Queue) {
         let gpu_splat = &self.splats[handle.0];
         let count = gpu_splat.splat_count as usize;
         if count == 0 {
@@ -141,7 +136,11 @@ impl SplatCache {
     pub fn invalidate(&mut self, splat_path: &str) {
         let key = PathBuf::from(splat_path);
         if let Some(handle) = self.path_to_handle.remove(&key) {
-            tracing::info!("Invalidated splat cache: {} (handle {})", splat_path, handle.0);
+            tracing::info!(
+                "Invalidated splat cache: {} (handle {})",
+                splat_path,
+                handle.0
+            );
             // The GpuSplat remains in the vec but the path mapping is removed,
             // so next get_or_load will reload it (with a new handle).
         }
@@ -176,7 +175,8 @@ fn load_ply(
     project_root: &Path,
     splat_path: &str,
 ) -> Result<GpuSplat, SplatError> {
-    let full_path = project_root.join(splat_path);
+    let full_path =
+        crate::project_path::resolve(project_root, splat_path).map_err(SplatError::IoError)?;
 
     if !full_path.exists() {
         // Generate a small procedural splat cloud as fallback
@@ -187,8 +187,7 @@ fn load_ply(
         return Ok(create_procedural_splats(device));
     }
 
-    let file =
-        std::fs::File::open(&full_path).map_err(|e| SplatError::IoError(e.to_string()))?;
+    let file = std::fs::File::open(&full_path).map_err(|e| SplatError::IoError(e.to_string()))?;
     let mut reader = std::io::BufReader::new(file);
 
     let parser = ply_rs::parser::Parser::<ply_rs::ply::DefaultElement>::new();
@@ -196,10 +195,7 @@ fn load_ply(
         .read_ply(&mut reader)
         .map_err(|e| SplatError::PlyError(format!("{:?}", e)))?;
 
-    let vertices = ply
-        .payload
-        .get("vertex")
-        .ok_or(SplatError::NoVertices)?;
+    let vertices = ply.payload.get("vertex").ok_or(SplatError::NoVertices)?;
 
     if vertices.is_empty() {
         return Err(SplatError::NoVertices);

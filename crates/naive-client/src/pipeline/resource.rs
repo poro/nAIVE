@@ -109,8 +109,7 @@ pub fn allocate_resources(
             ResourceSize::Fixed(w, h) => (w, h),
         };
 
-        let usage =
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&def.name),
@@ -129,7 +128,13 @@ pub fn allocate_resources(
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        tracing::debug!("Allocated pipeline resource '{}': {:?} {}x{}", def.name, format, width, height);
+        tracing::debug!(
+            "Allocated pipeline resource '{}': {:?} {}x{}",
+            def.name,
+            format,
+            width,
+            height
+        );
 
         resources.insert(
             def.name.clone(),
@@ -170,19 +175,13 @@ pub fn resize_resources(
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: resource.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         resource.texture = texture;
         resource.view = view;
-        tracing::debug!(
-            "Resized pipeline resource '{}': {}x{}",
-            resource.name,
-            w,
-            h
-        );
+        tracing::debug!("Resized pipeline resource '{}': {}x{}", resource.name, w, h);
     }
 }
 

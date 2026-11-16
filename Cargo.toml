@@ -11,8 +11,8 @@ members = [
 [workspace.package]
 version = "0.1.21"
 edition = "2021"
-# Lowest Rust the dependencies accept (image 0.25 needs 1.85).
-rust-version = "1.85"
+# Required by the audited dependency lockfile (image/ICU need 1.88).
+rust-version = "1.88"
 
 [workspace.dependencies]
 # Math
@@ -63,7 +63,7 @@ rapier3d = { version = "0.22", features = ["simd-stable"] }
 mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }
 
 # Audio
-kira = "0.9"
+kira = { version = "0.12.6", default-features = false, features = ["cpal", "mp3", "ogg", "vorbis", "flac", "wav", "pcm"] }
 
 # HTTP client (for submit-log)
 ureq = { version = "2", features = ["json"] }
@@ -75,11 +75,11 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Async / IPC
-tokio = { version = "1", features = ["net", "io-util", "rt", "sync", "macros"] }
+tokio = { version = "1", features = ["net", "io-util", "rt", "sync", "macros", "time"] }
 
 # Internal crates
 naive-core = { path = "crates/naive-core" }
-naive-client = { path = "crates/naive-client" }
+naive-client = { path = "crates/naive-client", default-features = false }
 
 [profile.dev]
 opt-level = 1

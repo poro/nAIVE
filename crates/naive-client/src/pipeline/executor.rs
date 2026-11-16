@@ -14,7 +14,7 @@ use crate::swarm::SwarmDraw;
 use crate::texture_cache::TextureHandle;
 use crate::world::SceneWorld;
 
-use super::resource::{LightingUniforms, PointLightUniform, ShadowUniforms, MAX_LIGHTS, PassType};
+use super::resource::{LightingUniforms, PassType, PointLightUniform, ShadowUniforms, MAX_LIGHTS};
 use super::{CompiledPass, CompiledPipeline, RenderDebugState};
 
 // ---------------------------------------------------------------------------
@@ -55,9 +55,21 @@ pub fn execute_pipeline(
         .create_view(&wgpu::TextureViewDescriptor::default());
 
     let encoder = execute_pipeline_to_view(
-        gpu, compiled, scene_world, camera_state, draw_pool,
-        mesh_cache, material_cache, splat_cache, &swapchain_view, debug,
-        texture_resources, bone_palettes, texture_cache, swarms, None,
+        gpu,
+        compiled,
+        scene_world,
+        camera_state,
+        draw_pool,
+        mesh_cache,
+        material_cache,
+        splat_cache,
+        &swapchain_view,
+        debug,
+        texture_resources,
+        bone_palettes,
+        texture_cache,
+        swarms,
+        None,
     );
 
     gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -83,7 +95,6 @@ pub fn execute_pipeline_to_view(
     swarms: &[SwarmDraw],
     timer: Option<&GpuTimer>,
 ) -> wgpu::CommandEncoder {
-
     // Per-entity draw data for both mesh passes, uploaded once in batch order.
     let draws = collect_draws(
         scene_world,
@@ -99,8 +110,10 @@ pub fn execute_pipeline_to_view(
     // Upload light uniforms (point lights + directional light)
     let mut light_data = LightingUniforms::default();
     if debug.point_lights_enabled {
-        for (_entity, (transform, light)) in
-            scene_world.world.query::<(&Transform, &PointLight)>().iter()
+        for (_entity, (transform, light)) in scene_world
+            .world
+            .query::<(&Transform, &PointLight)>()
+            .iter()
         {
             if (light_data.light_count as usize) < MAX_LIGHTS {
                 let idx = light_data.light_count as usize;
@@ -123,8 +136,7 @@ pub fn execute_pipeline_to_view(
     // Query directional light and compute shadow VP matrix
     let mut light_vp = glam::Mat4::IDENTITY;
     // Only one directional light is supported, so take the first.
-    if let Some((_entity, dir_light)) =
-        scene_world.world.query::<&DirectionalLight>().iter().next()
+    if let Some((_entity, dir_light)) = scene_world.world.query::<&DirectionalLight>().iter().next()
     {
         light_data.has_directional = 1;
         light_data.dir_light_direction = dir_light.direction.to_array();
@@ -154,11 +166,8 @@ pub fn execute_pipeline_to_view(
         let shadow_data = ShadowUniforms {
             light_view_projection: light_vp.to_cols_array_2d(),
         };
-        gpu.queue.write_buffer(
-            shadow_buf,
-            0,
-            bytemuck::cast_slice(&[shadow_data]),
-        );
+        gpu.queue
+            .write_buffer(shadow_buf, 0, bytemuck::cast_slice(&[shadow_data]));
     }
 
     // Create command encoder
@@ -262,7 +271,11 @@ fn directional_shadow_view_projection(direction: glam::Vec3, extent: f32) -> gla
     let dir = direction.try_normalize().unwrap_or(glam::Vec3::NEG_Y);
     let extent = extent.max(0.01);
     // look_at needs an up vector that is not parallel to the view direction.
-    let up = if dir.y.abs() > 0.99 { glam::Vec3::Z } else { glam::Vec3::Y };
+    let up = if dir.y.abs() > 0.99 {
+        glam::Vec3::Z
+    } else {
+        glam::Vec3::Y
+    };
     let light_view = glam::Mat4::look_at_rh(-dir * extent, glam::Vec3::ZERO, up);
     let light_proj =
         glam::Mat4::orthographic_rh(-extent, extent, -extent, extent, 0.0, 2.0 * extent);
@@ -356,7 +369,8 @@ fn collect_draws<'a>(
             .unwrap_or(material.uniform.base_color);
 
         let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
-        let has_texture = material.albedo_texture.is_some() || gpu_mesh.texture_bind_group.is_some();
+        let has_texture =
+            material.albedo_texture.is_some() || gpu_mesh.texture_bind_group.is_some();
 
         // Entities with skeletal animation. All of them read the one skin
         // buffer, so they share the palette of the last one found.
@@ -430,7 +444,9 @@ fn upload_draws(gpu: &GpuState, draw_pool: &DrawUniformPool, draws: &FrameDraws)
         return;
     };
     for (slot, &i) in staging
-        .chunks_exact_mut(DRAW_UNIFORM_SIZE as usize)
+        .as_chunks_mut::<{ DRAW_UNIFORM_SIZE as usize }>()
+        .0
+        .iter_mut()
         .zip(&draws.order)
     {
         slot.copy_from_slice(bytemuck::bytes_of(&draws.uniforms[i as usize]));
@@ -488,10 +504,8 @@ fn execute_shadow_pass(
         for batch in &draws.batches {
             let gpu_mesh = mesh_cache.get(batch.mesh());
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(
-                gpu_mesh.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
+            render_pass
+                .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.instances());
         }
 
@@ -500,10 +514,8 @@ fn execute_shadow_pass(
             let gpu_mesh = mesh_cache.get(swarm.mesh);
             render_pass.set_bind_group(1, swarm.draws, &[]);
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(
-                gpu_mesh.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
+            render_pass
+                .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..swarm.count);
         }
     }
@@ -541,10 +553,13 @@ fn upload_skin_palette(
         return;
     };
     match palette {
-        Some(palette) => gpu.queue.write_buffer(skin_buffer, 0, bytemuck::bytes_of(palette)),
+        Some(palette) => gpu
+            .queue
+            .write_buffer(skin_buffer, 0, bytemuck::bytes_of(palette)),
         None => {
             let identity = crate::anim_system::BoneMatrixPalette::default();
-            gpu.queue.write_buffer(skin_buffer, 0, bytemuck::bytes_of(&identity));
+            gpu.queue
+                .write_buffer(skin_buffer, 0, bytemuck::bytes_of(&identity));
         }
     }
 }
@@ -633,10 +648,8 @@ fn execute_rasterize_pass(
             }
 
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(
-                gpu_mesh.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
+            render_pass
+                .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.instances());
         }
 
@@ -645,14 +658,13 @@ fn execute_rasterize_pass(
             let gpu_mesh = mesh_cache.get(swarm.mesh);
             render_pass.set_bind_group(1, swarm.draws, &[]);
             if let Some(tex_res) = texture_resources {
-                let tex_bg = albedo_bind_group(tex_res, texture_cache, swarm.albedo_texture, gpu_mesh);
+                let tex_bg =
+                    albedo_bind_group(tex_res, texture_cache, swarm.albedo_texture, gpu_mesh);
                 render_pass.set_bind_group(2, tex_bg, &[]);
             }
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(
-                gpu_mesh.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
+            render_pass
+                .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..swarm.count);
         }
 
@@ -783,10 +795,7 @@ fn execute_fullscreen_pass(
     let is_tonemap = pass.name.contains("tonemap");
     let is_bloom = pass.name.contains("bloom");
     let is_fxaa = pass.name.contains("fxaa");
-    let writes_to_swapchain = pass
-        .color_targets
-        .iter()
-        .any(|t| t == "swapchain");
+    let writes_to_swapchain = pass.color_targets.iter().any(|t| t == "swapchain");
 
     // Determine the output view
     let output_view = if writes_to_swapchain {
@@ -857,33 +866,18 @@ fn execute_fullscreen_pass(
 
 /// Rebuild bind groups after resources are resized.
 /// Call this after `resize_resources()` to update texture view references.
-pub fn rebuild_bind_groups(
-    device: &wgpu::Device,
-    compiled: &mut CompiledPipeline,
-) {
+pub fn rebuild_bind_groups(device: &wgpu::Device, compiled: &mut CompiledPipeline) {
     // Rebuild G-buffer bind group
     if let Some(layout) = &compiled.gbuffer_bind_group_layout {
-        let albedo_view = compiled
-            .resources
-            .get("gbuffer_albedo")
-            .map(|r| &r.view);
-        let normal_view = compiled
-            .resources
-            .get("gbuffer_normal")
-            .map(|r| &r.view);
-        let depth_view = compiled
-            .resources
-            .get("gbuffer_depth")
-            .map(|r| &r.view);
-        let emission_view = compiled
-            .resources
-            .get("gbuffer_emission")
-            .map(|r| &r.view);
+        let albedo_view = compiled.resources.get("gbuffer_albedo").map(|r| &r.view);
+        let normal_view = compiled.resources.get("gbuffer_normal").map(|r| &r.view);
+        let depth_view = compiled.resources.get("gbuffer_depth").map(|r| &r.view);
+        let emission_view = compiled.resources.get("gbuffer_emission").map(|r| &r.view);
 
         if let (Some(albedo), Some(normal), Some(depth)) = (albedo_view, normal_view, depth_view) {
             let emission = emission_view.unwrap_or(albedo);
-            compiled.gbuffer_bind_group = Some(device.create_bind_group(
-                &wgpu::BindGroupDescriptor {
+            compiled.gbuffer_bind_group =
+                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("GBuffer Input Bind Group (resized)"),
                     layout,
                     entries: &[
@@ -908,8 +902,7 @@ pub fn rebuild_bind_groups(
                             resource: wgpu::BindingResource::TextureView(emission),
                         },
                     ],
-                },
-            ));
+                }));
         }
     }
 
@@ -922,8 +915,8 @@ pub fn rebuild_bind_groups(
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             });
-            compiled.bloom_bind_group = Some(device.create_bind_group(
-                &wgpu::BindGroupDescriptor {
+            compiled.bloom_bind_group =
+                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Bloom Input Bind Group (resized)"),
                     layout,
                     entries: &[
@@ -936,8 +929,7 @@ pub fn rebuild_bind_groups(
                             resource: wgpu::BindingResource::Sampler(&hdr_sampler),
                         },
                     ],
-                },
-            ));
+                }));
         }
     }
 
@@ -951,12 +943,14 @@ pub fn rebuild_bind_groups(
                 ..Default::default()
             });
 
-            let bloom_view = compiled.resources.get("bloom_buffer")
+            let bloom_view = compiled
+                .resources
+                .get("bloom_buffer")
                 .map(|r| &r.view)
                 .unwrap_or(hdr_view);
 
-            compiled.tonemap_bind_group = Some(device.create_bind_group(
-                &wgpu::BindGroupDescriptor {
+            compiled.tonemap_bind_group =
+                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Tonemap Input Bind Group (resized)"),
                     layout,
                     entries: &[
@@ -973,8 +967,7 @@ pub fn rebuild_bind_groups(
                             resource: wgpu::BindingResource::TextureView(bloom_view),
                         },
                     ],
-                },
-            ));
+                }));
         }
     }
 
@@ -987,22 +980,20 @@ pub fn rebuild_bind_groups(
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             });
-            compiled.fxaa_bind_group = Some(device.create_bind_group(
-                &wgpu::BindGroupDescriptor {
-                    label: Some("FXAA Input Bind Group (resized)"),
-                    layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(ldr_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&ldr_sampler),
-                        },
-                    ],
-                },
-            ));
+            compiled.fxaa_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("FXAA Input Bind Group (resized)"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(ldr_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&ldr_sampler),
+                    },
+                ],
+            }));
         }
     }
 
@@ -1012,8 +1003,8 @@ pub fn rebuild_bind_groups(
         let splat_depth = compiled.resources.get("splat_depth").map(|r| &r.view);
 
         if let (Some(color_view), Some(depth_view)) = (splat_color, splat_depth) {
-            compiled.splat_composite_bind_group = Some(device.create_bind_group(
-                &wgpu::BindGroupDescriptor {
+            compiled.splat_composite_bind_group =
+                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Splat Composite Bind Group (resized)"),
                     layout,
                     entries: &[
@@ -1026,8 +1017,7 @@ pub fn rebuild_bind_groups(
                             resource: wgpu::BindingResource::TextureView(depth_view),
                         },
                     ],
-                },
-            ));
+                }));
         }
     }
 
@@ -1036,7 +1026,11 @@ pub fn rebuild_bind_groups(
         // Create dummy shadow map fallback
         let shadow_dummy_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Dummy Shadow Map (resized)"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -1045,7 +1039,9 @@ pub fn rebuild_bind_groups(
             view_formats: &[],
         });
         let shadow_dummy_view = shadow_dummy_tex.create_view(&Default::default());
-        let shadow_map_view = compiled.resources.get("shadow_map")
+        let shadow_map_view = compiled
+            .resources
+            .get("shadow_map")
             .map(|r| &r.view)
             .unwrap_or(&shadow_dummy_view);
 

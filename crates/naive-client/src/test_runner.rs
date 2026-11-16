@@ -61,7 +61,9 @@ impl TestRunner {
             project_root: project_root.to_path_buf(),
             scene_world: Rc::new(RefCell::new(SceneWorld::new())),
             input_state: Rc::new(RefCell::new(InputState::new(bindings))),
-            physics_world: Rc::new(RefCell::new(PhysicsWorld::new(glam::Vec3::new(0.0, -9.81, 0.0)))),
+            physics_world: Rc::new(RefCell::new(PhysicsWorld::new(glam::Vec3::new(
+                0.0, -9.81, 0.0,
+            )))),
             script_runtime: ScriptRuntime::new(),
             event_bus: Rc::new(RefCell::new(EventBus::new(1000))),
             tween_system: TweenSystem::new(),
@@ -81,7 +83,7 @@ impl TestRunner {
 
     /// Load a scene by path (relative to project root).
     pub fn load_scene(&mut self, scene_rel: &str) -> Result<(), String> {
-        let scene_path = self.project_root.join(scene_rel);
+        let scene_path = crate::project_path::resolve(&self.project_root, scene_rel)?;
         let scene = crate::scene::load_scene(&scene_path)
             .map_err(|e| format!("Failed to load scene: {:?}", e))?;
 
@@ -131,8 +133,12 @@ impl TestRunner {
             .map_err(|e| format!("Event API: {}", e))?;
         *self.swarm_bus.borrow_mut() = SwarmBus::new();
         self.cpu_swarms.clear();
-        register_swarm_api(&self.script_runtime.lua, self.swarm_bus.clone(), self.scene_world.clone())
-            .map_err(|e| format!("Swarm API: {}", e))?;
+        register_swarm_api(
+            &self.script_runtime.lua,
+            self.swarm_bus.clone(),
+            self.scene_world.clone(),
+        )
+        .map_err(|e| format!("Swarm API: {}", e))?;
 
         // Load event schema
         self.event_bus.borrow_mut().load_schema(&self.project_root);
@@ -150,18 +156,18 @@ impl TestRunner {
                             initialized: false,
                         };
                         drop(sw);
-                        let _ = self.scene_world.borrow_mut().world.insert_one(entity, script_comp);
+                        let _ = self
+                            .scene_world
+                            .borrow_mut()
+                            .world
+                            .insert_one(entity, script_comp);
 
                         if let Err(e) = self.script_runtime.load_script(
                             entity,
                             &self.project_root,
                             &source_path,
                         ) {
-                            tracing::error!(
-                                "Failed to load script for '{}': {}",
-                                entity_def.id,
-                                e
-                            );
+                            tracing::error!("Failed to load script for '{}': {}", entity_def.id, e);
                         } else {
                             let _ = self
                                 .script_runtime
@@ -176,7 +182,8 @@ impl TestRunner {
         let uninit: Vec<hecs::Entity> = {
             let sw = self.scene_world.borrow();
             let mut query = sw.world.query::<&Script>();
-            query.iter()
+            query
+                .iter()
                 .filter(|(_, s)| !s.initialized)
                 .map(|(e, _)| e)
                 .collect()
@@ -212,9 +219,23 @@ impl TestRunner {
         self.input_state.borrow_mut().cursor_captured = true;
 
         // The same steps the engine runs each frame, minus the ones that need a GPU.
-        crate::sim::update_fps_controller(&self.input_state, &self.scene_world, &self.physics_world, dt);
-        crate::sim::run_fixed_steps(&self.physics_world, &self.scene_world, Some(&self.script_runtime), dt);
-        crate::sim::dispatch_collision_events(&self.scene_world, &self.physics_world, &self.script_runtime);
+        crate::sim::update_fps_controller(
+            &self.input_state,
+            &self.scene_world,
+            &self.physics_world,
+            dt,
+        );
+        crate::sim::run_fixed_steps(
+            &self.physics_world,
+            &self.scene_world,
+            Some(&self.script_runtime),
+            dt,
+        );
+        crate::sim::dispatch_collision_events(
+            &self.scene_world,
+            &self.physics_world,
+            &self.script_runtime,
+        );
         crate::sim::process_collision_damage(
             &self.scene_world,
             &self.physics_world,
@@ -222,11 +243,21 @@ impl TestRunner {
             &self.entity_commands,
         );
         crate::sim::update_projectiles(&self.scene_world, &self.entity_commands, dt);
-        crate::sim::process_swarm_reports(&self.swarm_bus, &self.scene_world, &self.script_runtime, &self.event_bus);
+        crate::sim::process_swarm_reports(
+            &self.swarm_bus,
+            &self.scene_world,
+            &self.script_runtime,
+            &self.event_bus,
+        );
         crate::sim::process_health(&self.scene_world, &self.script_runtime);
         crate::sim::update_scripts(&self.scene_world, &self.script_runtime, dt);
         self.process_entity_commands();
-        crate::sim::dispatch_lua_events(&self.event_bus, &self.lua_event_listeners, Some(&self.script_runtime), dt);
+        crate::sim::dispatch_lua_events(
+            &self.event_bus,
+            &self.lua_event_listeners,
+            Some(&self.script_runtime),
+            dt,
+        );
         let _tween_results = self.tween_system.update(dt);
 
         // Update transforms
@@ -300,7 +331,11 @@ impl TestRunner {
     }
 
     /// Check if a specific event occurred in the log.
-    pub fn event_occurred(&self, event_type: &str, filter: &std::collections::HashMap<String, String>) -> bool {
+    pub fn event_occurred(
+        &self,
+        event_type: &str,
+        filter: &std::collections::HashMap<String, String>,
+    ) -> bool {
         let eb = self.event_bus.borrow();
         for event in eb.get_log() {
             if event.event_type == event_type {
@@ -373,7 +408,10 @@ pub fn run_test_file(project_root: &Path, test_file: &Path) -> Vec<TestResult> {
     // Find all functions named test_*
     let globals = lua.globals();
     let mut test_names = Vec::new();
-    if let Ok(pairs) = globals.pairs::<String, LuaValue>().collect::<Result<Vec<_>, _>>() {
+    if let Ok(pairs) = globals
+        .pairs::<String, LuaValue>()
+        .collect::<Result<Vec<_>, _>>()
+    {
         for (key, value) in pairs {
             if key.starts_with("test_") && matches!(value, LuaValue::Function(_)) {
                 test_names.push(key);
@@ -488,9 +526,7 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
             Ok(())
         })
         .map_err(|e| e.to_string())?;
-    log_table
-        .set("info", log_info)
-        .map_err(|e| e.to_string())?;
+    log_table.set("info", log_info).map_err(|e| e.to_string())?;
     globals.set("log", log_table).map_err(|e| e.to_string())?;
 
     // scene.load(path) — load a scene
@@ -524,41 +560,50 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
                     // entity:get("transform") -> { position = { x, y, z } }
                     let id_clone = id.clone();
                     let r2 = r.clone();
-                    let get_fn = lua.create_function(move |lua, (_self_tbl, component): (LuaTable, String)| {
-                        let runner = r2.borrow();
-                        let sw = runner.scene_world.borrow();
-                        let entity = match sw.entity_registry.get(&id_clone) {
-                            Some(&e) => e,
-                            None => return Err(LuaError::RuntimeError(format!("Entity '{}' not found", id_clone))),
-                        };
-                        match component.as_str() {
-                            "transform" => {
-                                if let Ok(t) = sw.world.get::<&Transform>(entity) {
-                                    let tbl = lua.create_table()?;
-                                    let pos = lua.create_table()?;
-                                    pos.set("x", t.position.x)?;
-                                    pos.set("y", t.position.y)?;
-                                    pos.set("z", t.position.z)?;
-                                    tbl.set("position", pos)?;
-                                    Ok(LuaValue::Table(tbl))
-                                } else {
-                                    Ok(LuaNil)
+                    let get_fn = lua.create_function(
+                        move |lua, (_self_tbl, component): (LuaTable, String)| {
+                            let runner = r2.borrow();
+                            let sw = runner.scene_world.borrow();
+                            let entity = match sw.entity_registry.get(&id_clone) {
+                                Some(&e) => e,
+                                None => {
+                                    return Err(LuaError::RuntimeError(format!(
+                                        "Entity '{}' not found",
+                                        id_clone
+                                    )))
                                 }
-                            }
-                            "health" => {
-                                if let Ok(health) = sw.world.get::<&crate::components::Health>(entity) {
-                                    let tbl = lua.create_table()?;
-                                    tbl.set("current", health.current)?;
-                                    tbl.set("max", health.max)?;
-                                    tbl.set("dead", health.dead)?;
-                                    Ok(LuaValue::Table(tbl))
-                                } else {
-                                    Ok(LuaNil)
+                            };
+                            match component.as_str() {
+                                "transform" => {
+                                    if let Ok(t) = sw.world.get::<&Transform>(entity) {
+                                        let tbl = lua.create_table()?;
+                                        let pos = lua.create_table()?;
+                                        pos.set("x", t.position.x)?;
+                                        pos.set("y", t.position.y)?;
+                                        pos.set("z", t.position.z)?;
+                                        tbl.set("position", pos)?;
+                                        Ok(LuaValue::Table(tbl))
+                                    } else {
+                                        Ok(LuaNil)
+                                    }
                                 }
+                                "health" => {
+                                    if let Ok(health) =
+                                        sw.world.get::<&crate::components::Health>(entity)
+                                    {
+                                        let tbl = lua.create_table()?;
+                                        tbl.set("current", health.current)?;
+                                        tbl.set("max", health.max)?;
+                                        tbl.set("dead", health.dead)?;
+                                        Ok(LuaValue::Table(tbl))
+                                    } else {
+                                        Ok(LuaNil)
+                                    }
+                                }
+                                _ => Ok(LuaNil),
                             }
-                            _ => Ok(LuaNil),
-                        }
-                    })?;
+                        },
+                    )?;
                     entity_ref.set("get", get_fn)?;
                     Ok(LuaValue::Table(entity_ref))
                 }
@@ -577,54 +622,56 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
     let input_table = lua.create_table().map_err(|e| e.to_string())?;
     let r = runner.clone();
     let input_inject = lua
-        .create_function(move |_, (action, kind, value): (String, String, LuaValue)| {
-            let runner = r.borrow_mut();
-            let mut input = runner.input_state.borrow_mut();
-            match kind.as_str() {
-                "press" => {
-                    let key = action_to_key(&action);
-                    match crate::input::mouse_button_named(&key) {
-                        Some(button) => input.inject_mouse_press(button),
-                        None => input.inject_key_press(&key),
-                    }
-                }
-                "release" => {
-                    let key = action_to_key(&action);
-                    match crate::input::mouse_button_named(&key) {
-                        Some(button) => input.inject_mouse_release(button),
-                        None => input.inject_key_release(&key),
-                    }
-                }
-                "axis" => {
-                    if let LuaValue::Table(tbl) = value {
-                        let x: f32 = tbl.get(1).unwrap_or(0.0);
-                        let y: f32 = tbl.get(2).unwrap_or(0.0);
-                        if y > 0.0 {
-                            input.inject_key_press("W");
-                            input.inject_key_release("S");
-                        } else if y < 0.0 {
-                            input.inject_key_release("W");
-                            input.inject_key_press("S");
-                        } else {
-                            input.inject_key_release("W");
-                            input.inject_key_release("S");
-                        }
-                        if x > 0.0 {
-                            input.inject_key_press("D");
-                            input.inject_key_release("A");
-                        } else if x < 0.0 {
-                            input.inject_key_release("D");
-                            input.inject_key_press("A");
-                        } else {
-                            input.inject_key_release("D");
-                            input.inject_key_release("A");
+        .create_function(
+            move |_, (action, kind, value): (String, String, LuaValue)| {
+                let runner = r.borrow_mut();
+                let mut input = runner.input_state.borrow_mut();
+                match kind.as_str() {
+                    "press" => {
+                        let key = action_to_key(&action);
+                        match crate::input::mouse_button_named(&key) {
+                            Some(button) => input.inject_mouse_press(button),
+                            None => input.inject_key_press(&key),
                         }
                     }
+                    "release" => {
+                        let key = action_to_key(&action);
+                        match crate::input::mouse_button_named(&key) {
+                            Some(button) => input.inject_mouse_release(button),
+                            None => input.inject_key_release(&key),
+                        }
+                    }
+                    "axis" => {
+                        if let LuaValue::Table(tbl) = value {
+                            let x: f32 = tbl.get(1).unwrap_or(0.0);
+                            let y: f32 = tbl.get(2).unwrap_or(0.0);
+                            if y > 0.0 {
+                                input.inject_key_press("W");
+                                input.inject_key_release("S");
+                            } else if y < 0.0 {
+                                input.inject_key_release("W");
+                                input.inject_key_press("S");
+                            } else {
+                                input.inject_key_release("W");
+                                input.inject_key_release("S");
+                            }
+                            if x > 0.0 {
+                                input.inject_key_press("D");
+                                input.inject_key_release("A");
+                            } else if x < 0.0 {
+                                input.inject_key_release("D");
+                                input.inject_key_press("A");
+                            } else {
+                                input.inject_key_release("D");
+                                input.inject_key_release("A");
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
-            Ok(())
-        })
+                Ok(())
+            },
+        )
         .map_err(|e| e.to_string())?;
     input_table
         .set("inject", input_inject)

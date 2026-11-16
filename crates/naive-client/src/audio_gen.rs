@@ -2,37 +2,72 @@ use std::path::Path;
 
 /// Generate default sound files if they don't already exist.
 pub fn generate_default_sounds(project_root: &Path) {
-    let audio_dir = project_root.join("assets/audio");
-    if !audio_dir.exists() {
-        let _ = std::fs::create_dir_all(&audio_dir);
-    }
-
-    let collision_path = audio_dir.join("collision.wav");
-    if !collision_path.exists() {
-        match generate_collision_wav() {
-            Ok(data) => {
-                if let Err(e) = std::fs::write(&collision_path, &data) {
-                    tracing::error!("Failed to write collision.wav: {}", e);
-                } else {
-                    tracing::info!("Generated collision.wav");
-                }
-            }
-            Err(e) => tracing::error!("Failed to generate collision.wav: {}", e),
+    for (relative, generate) in [
+        (
+            "assets/audio/collision.wav",
+            generate_collision_wav as fn() -> Result<Vec<u8>, String>,
+        ),
+        ("assets/audio/cosmic_ambient.wav", generate_ambient_wav),
+    ] {
+        if let Err(error) = generate_sound(project_root, relative, generate) {
+            tracing::error!("Failed to generate {relative}: {error}");
         }
     }
+}
 
-    let ambient_path = audio_dir.join("cosmic_ambient.wav");
-    if !ambient_path.exists() {
-        match generate_ambient_wav() {
-            Ok(data) => {
-                if let Err(e) = std::fs::write(&ambient_path, &data) {
-                    tracing::error!("Failed to write cosmic_ambient.wav: {}", e);
-                } else {
-                    tracing::info!("Generated cosmic_ambient.wav");
-                }
-            }
-            Err(e) => tracing::error!("Failed to generate cosmic_ambient.wav: {}", e),
-        }
+fn generate_sound(
+    project_root: &Path,
+    relative: &str,
+    generate: fn() -> Result<Vec<u8>, String>,
+) -> Result<(), String> {
+    use std::io::Write;
+    let path = crate::project_path::resolve(project_root, relative)?;
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let data = generate()?;
+    // Exclusive creation also refuses a final symlink if one appears after
+    // validation, and never overwrites a user's existing audio file.
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    file.write_all(&data).map_err(|e| e.to_string())?;
+    tracing::info!("Generated {relative}");
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    #[test]
+    fn default_sounds_cannot_write_through_directory_or_dangling_file_symlinks() {
+        let parent = std::env::temp_dir().join(format!("naive-audio-paths-{}", std::process::id()));
+        let project = parent.join("project");
+        let outside = parent.join("outside");
+        std::fs::create_dir_all(project.join("assets")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, project.join("assets/audio")).unwrap();
+        super::generate_default_sounds(&project);
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+        std::fs::remove_file(project.join("assets/audio")).unwrap();
+        std::fs::create_dir(project.join("assets/audio")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.join("collision.wav"),
+            project.join("assets/audio/collision.wav"),
+        )
+        .unwrap();
+        super::generate_default_sounds(&project);
+        assert!(!outside.join("collision.wav").exists());
+        assert!(project.join("assets/audio/cosmic_ambient.wav").exists());
+        std::fs::remove_dir_all(parent).unwrap();
     }
 }
 

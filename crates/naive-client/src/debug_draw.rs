@@ -1,7 +1,7 @@
 //! Debug wireframe renderer for physics collider visualization.
 //! Toggle with 'H' key. Draws world-space wireframe lines over the 3D scene.
 
-use glam::{Vec3, Quat};
+use glam::{Quat, Vec3};
 use wgpu::util::DeviceExt;
 
 use crate::camera::CameraState;
@@ -65,10 +65,10 @@ struct VOut {
 
 // ── Colors ──────────────────────────────────────────────────────────
 
-const COLOR_BOX: [f32; 4] = [0.0, 1.0, 1.0, 0.8];       // cyan
-const COLOR_SPHERE: [f32; 4] = [0.0, 1.0, 0.3, 0.8];     // green
-const COLOR_CAPSULE: [f32; 4] = [1.0, 1.0, 0.0, 0.8];    // yellow
-const COLOR_TRIMESH: [f32; 4] = [1.0, 0.3, 1.0, 0.8];    // magenta
+const COLOR_BOX: [f32; 4] = [0.0, 1.0, 1.0, 0.8]; // cyan
+const COLOR_SPHERE: [f32; 4] = [0.0, 1.0, 0.3, 0.8]; // green
+const COLOR_CAPSULE: [f32; 4] = [1.0, 1.0, 0.0, 0.8]; // yellow
+const COLOR_TRIMESH: [f32; 4] = [1.0, 0.3, 1.0, 0.8]; // magenta
 
 // ── Renderer ────────────────────────────────────────────────────────
 
@@ -212,14 +212,16 @@ fn draw_shape(
 ) {
     use rapier3d::parry::shape::ShapeType;
 
-    let transform = move |local: Vec3| -> Vec3 {
-        pos + rot * local
-    };
+    let transform = move |local: Vec3| -> Vec3 { pos + rot * local };
 
     match shape.shape_type() {
         ShapeType::Cuboid => {
             if let Some(cuboid) = shape.as_cuboid() {
-                let h = Vec3::new(cuboid.half_extents.x, cuboid.half_extents.y, cuboid.half_extents.z);
+                let h = Vec3::new(
+                    cuboid.half_extents.x,
+                    cuboid.half_extents.y,
+                    cuboid.half_extents.z,
+                );
                 push_box_wireframe(verts, &transform, h, COLOR_BOX);
             }
         }
@@ -240,9 +242,21 @@ fn draw_shape(
                 let vertices = trimesh.vertices();
                 let indices = trimesh.indices();
                 for tri in indices {
-                    let a = transform(Vec3::new(vertices[tri[0] as usize].x, vertices[tri[0] as usize].y, vertices[tri[0] as usize].z));
-                    let b = transform(Vec3::new(vertices[tri[1] as usize].x, vertices[tri[1] as usize].y, vertices[tri[1] as usize].z));
-                    let c = transform(Vec3::new(vertices[tri[2] as usize].x, vertices[tri[2] as usize].y, vertices[tri[2] as usize].z));
+                    let a = transform(Vec3::new(
+                        vertices[tri[0] as usize].x,
+                        vertices[tri[0] as usize].y,
+                        vertices[tri[0] as usize].z,
+                    ));
+                    let b = transform(Vec3::new(
+                        vertices[tri[1] as usize].x,
+                        vertices[tri[1] as usize].y,
+                        vertices[tri[1] as usize].z,
+                    ));
+                    let c = transform(Vec3::new(
+                        vertices[tri[2] as usize].x,
+                        vertices[tri[2] as usize].y,
+                        vertices[tri[2] as usize].z,
+                    ));
                     push_line(verts, a, b, COLOR_TRIMESH);
                     push_line(verts, b, c, COLOR_TRIMESH);
                     push_line(verts, c, a, COLOR_TRIMESH);
@@ -252,8 +266,19 @@ fn draw_shape(
         ShapeType::Compound => {
             if let Some(compound) = shape.as_compound() {
                 for (sub_iso, sub_shape) in compound.shapes() {
-                    let sub_pos = pos + rot * Vec3::new(sub_iso.translation.x, sub_iso.translation.y, sub_iso.translation.z);
-                    let sub_rot_q = Quat::from_xyzw(sub_iso.rotation.i, sub_iso.rotation.j, sub_iso.rotation.k, sub_iso.rotation.w);
+                    let sub_pos = pos
+                        + rot
+                            * Vec3::new(
+                                sub_iso.translation.x,
+                                sub_iso.translation.y,
+                                sub_iso.translation.z,
+                            );
+                    let sub_rot_q = Quat::from_xyzw(
+                        sub_iso.rotation.i,
+                        sub_iso.rotation.j,
+                        sub_iso.rotation.k,
+                        sub_iso.rotation.w,
+                    );
                     let sub_rot = rot * sub_rot_q;
                     draw_shape(verts, sub_pos, sub_rot, sub_shape.as_ref());
                 }
@@ -270,8 +295,16 @@ fn draw_shape(
                         let idx_a = convex.vertices_adj_to_face()[first + j] as usize;
                         let idx_b = convex.vertices_adj_to_face()[first + (j + 1) % count] as usize;
                         if idx_a < points.len() && idx_b < points.len() {
-                            let a = transform(Vec3::new(points[idx_a].x, points[idx_a].y, points[idx_a].z));
-                            let b = transform(Vec3::new(points[idx_b].x, points[idx_b].y, points[idx_b].z));
+                            let a = transform(Vec3::new(
+                                points[idx_a].x,
+                                points[idx_a].y,
+                                points[idx_a].z,
+                            ));
+                            let b = transform(Vec3::new(
+                                points[idx_b].x,
+                                points[idx_b].y,
+                                points[idx_b].z,
+                            ));
                             push_line(verts, a, b, COLOR_TRIMESH);
                         }
                     }
@@ -287,8 +320,14 @@ fn draw_shape(
 // ── Shape wireframe generators ──────────────────────────────────────
 
 fn push_line(verts: &mut Vec<DebugVertex>, a: Vec3, b: Vec3, color: [f32; 4]) {
-    verts.push(DebugVertex { position: a.into(), color });
-    verts.push(DebugVertex { position: b.into(), color });
+    verts.push(DebugVertex {
+        position: a.into(),
+        color,
+    });
+    verts.push(DebugVertex {
+        position: b.into(),
+        color,
+    });
 }
 
 fn push_box_wireframe(
@@ -299,20 +338,29 @@ fn push_box_wireframe(
 ) {
     let corners = [
         Vec3::new(-half.x, -half.y, -half.z),
-        Vec3::new( half.x, -half.y, -half.z),
-        Vec3::new( half.x,  half.y, -half.z),
-        Vec3::new(-half.x,  half.y, -half.z),
-        Vec3::new(-half.x, -half.y,  half.z),
-        Vec3::new( half.x, -half.y,  half.z),
-        Vec3::new( half.x,  half.y,  half.z),
-        Vec3::new(-half.x,  half.y,  half.z),
+        Vec3::new(half.x, -half.y, -half.z),
+        Vec3::new(half.x, half.y, -half.z),
+        Vec3::new(-half.x, half.y, -half.z),
+        Vec3::new(-half.x, -half.y, half.z),
+        Vec3::new(half.x, -half.y, half.z),
+        Vec3::new(half.x, half.y, half.z),
+        Vec3::new(-half.x, half.y, half.z),
     ];
     let world: Vec<Vec3> = corners.iter().map(|c| transform(*c)).collect();
 
     let edges = [
-        (0,1),(1,2),(2,3),(3,0),
-        (4,5),(5,6),(6,7),(7,4),
-        (0,4),(1,5),(2,6),(3,7),
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0),
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
     ];
     for (a, b) in edges {
         push_line(verts, world[a], world[b], color);
@@ -363,7 +411,12 @@ fn push_capsule_wireframe(
         let angle = (i as f32 / 4.0) * std::f32::consts::TAU;
         let x = angle.cos() * radius;
         let z = angle.sin() * radius;
-        push_line(verts, transform(Vec3::new(x, half_height, z)), transform(Vec3::new(x, -half_height, z)), color);
+        push_line(
+            verts,
+            transform(Vec3::new(x, half_height, z)),
+            transform(Vec3::new(x, -half_height, z)),
+            color,
+        );
     }
 
     // Top and bottom circles

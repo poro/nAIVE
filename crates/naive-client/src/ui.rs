@@ -292,8 +292,14 @@ impl UiRenderer {
         push_quad(
             &mut self.col_verts,
             &mut self.col_idx,
-            x, y, w, h,
-            0.0, 0.0, 0.0, 0.0,
+            x,
+            y,
+            w,
+            h,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
             color,
         );
     }
@@ -322,8 +328,14 @@ impl UiRenderer {
             push_quad(
                 &mut self.tex_verts,
                 &mut self.tex_idx,
-                cx, y, char_w, char_h,
-                u0, v0, u1, v1,
+                cx,
+                y,
+                char_w,
+                char_h,
+                u0,
+                v0,
+                u1,
+                v1,
                 color,
             );
             cx += char_w;
@@ -356,11 +368,19 @@ impl UiRenderer {
         // Tick screen flash
         if self.flash_remaining > 0.0 {
             self.flash_remaining = (self.flash_remaining - dt).max(0.0);
-            let alpha = self.flash_color[3] * (self.flash_remaining / self.flash_duration.max(0.001));
+            let alpha =
+                self.flash_color[3] * (self.flash_remaining / self.flash_duration.max(0.001));
             self.draw_rect(
-                0.0, 0.0,
-                width as f32, height as f32,
-                [self.flash_color[0], self.flash_color[1], self.flash_color[2], alpha],
+                0.0,
+                0.0,
+                width as f32,
+                height as f32,
+                [
+                    self.flash_color[0],
+                    self.flash_color[1],
+                    self.flash_color[2],
+                    alpha,
+                ],
             );
         }
 
@@ -461,14 +481,36 @@ impl UiRenderer {
 fn push_quad(
     verts: &mut Vec<Vertex2D>,
     idx: &mut Vec<u16>,
-    x: f32, y: f32, w: f32, h: f32,
-    u0: f32, v0: f32, u1: f32, v1: f32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    u0: f32,
+    v0: f32,
+    u1: f32,
+    v1: f32,
     color: [f32; 4],
 ) {
     let base = verts.len() as u16;
-    verts.push(Vertex2D { position: [x, y],         tex_coords: [u0, v0], color });
-    verts.push(Vertex2D { position: [x + w, y],     tex_coords: [u1, v0], color });
-    verts.push(Vertex2D { position: [x + w, y + h], tex_coords: [u1, v1], color });
-    verts.push(Vertex2D { position: [x, y + h],     tex_coords: [u0, v1], color });
+    verts.push(Vertex2D {
+        position: [x, y],
+        tex_coords: [u0, v0],
+        color,
+    });
+    verts.push(Vertex2D {
+        position: [x + w, y],
+        tex_coords: [u1, v0],
+        color,
+    });
+    verts.push(Vertex2D {
+        position: [x + w, y + h],
+        tex_coords: [u1, v1],
+        color,
+    });
+    verts.push(Vertex2D {
+        position: [x, y + h],
+        tex_coords: [u0, v1],
+        color,
+    });
     idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }

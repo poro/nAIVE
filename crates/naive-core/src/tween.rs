@@ -229,7 +229,14 @@ mod tests {
         let entity = world.reserve_entity();
         let mut system = TweenSystem::new();
 
-        system.add(Tween::new(entity, "opacity", 1.0, 0.0, 0.5, Easing::EaseOut));
+        system.add(Tween::new(
+            entity,
+            "opacity",
+            1.0,
+            0.0,
+            0.5,
+            Easing::EaseOut,
+        ));
         assert_eq!(system.active_count(), 1);
 
         let results = system.update(0.25);

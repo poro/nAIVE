@@ -3,7 +3,7 @@
 //! The engine renders the scene a second time into an offscreen texture and
 //! reads that back, so a capture never depends on what the window shows.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::renderer::GpuState;
 
@@ -11,21 +11,7 @@ use crate::renderer::GpuState;
 /// inside the project: absolute paths and `..` are refused, and so is
 /// anything that is not a `.png`.
 pub fn capture_path(project_root: &Path, relative: &str) -> Result<PathBuf, String> {
-    let relative = Path::new(relative);
-    let escapes = relative.is_absolute()
-        || relative
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir));
-    if escapes {
-        return Err("'path' must be relative to the project and must not contain '..'".to_string());
-    }
-    let is_png = relative
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
-    if !is_png {
-        return Err("'path' must end in .png".to_string());
-    }
-    Ok(project_root.join(relative))
+    crate::project_path::resolve_with_extension(project_root, relative, "png")
 }
 
 /// Create a texture the size and format of the window surface that the scene
@@ -64,8 +50,8 @@ pub fn save_texture_png(
 
     // Rows in the copy buffer are padded to wgpu's alignment.
     let row_bytes = width * 4;
-    let padded_row_bytes = row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
-        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded_row_bytes =
+        row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Frame capture readback"),
         size: u64::from(padded_row_bytes) * u64::from(height),
@@ -119,7 +105,7 @@ pub fn save_texture_png(
     {
         let data = slice.get_mapped_range();
         for row in data.chunks_exact(padded_row_bytes as usize) {
-            for pixel in row[..row_bytes as usize].chunks_exact(4) {
+            for pixel in row[..row_bytes as usize].as_chunks::<4>().0 {
                 if bgra {
                     rgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
                 } else {
@@ -148,22 +134,29 @@ mod tests {
 
     #[test]
     fn capture_paths_stay_inside_the_project() {
-        let root = Path::new("/games/demo");
+        let root_buf = std::env::temp_dir();
+        let root = root_buf.as_path();
 
         assert_eq!(
             capture_path(root, "captures/frame.png").unwrap(),
-            Path::new("/games/demo/captures/frame.png")
+            root.canonicalize().unwrap().join("captures/frame.png")
         );
         assert_eq!(
             capture_path(root, "./shot.PNG").unwrap(),
-            Path::new("/games/demo/./shot.PNG")
+            root.canonicalize().unwrap().join("shot.PNG")
         );
 
         for escaping in ["/tmp/frame.png", "../frame.png", "captures/../../frame.png"] {
-            assert!(capture_path(root, escaping).is_err(), "{escaping} should be refused");
+            assert!(
+                capture_path(root, escaping).is_err(),
+                "{escaping} should be refused"
+            );
         }
         for not_png in ["captures/frame.jpg", "captures/frame", "naive.yaml"] {
-            assert!(capture_path(root, not_png).is_err(), "{not_png} should be refused");
+            assert!(
+                capture_path(root, not_png).is_err(),
+                "{not_png} should be refused"
+            );
         }
     }
 }

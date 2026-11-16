@@ -16,29 +16,34 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 
 | Crate | Purpose |
 |-------|---------|
-| `naive-core` | Scene schema, shared types (YAML deserialization) |
+| `naive-core` | Scene schema, shared types, typed command requests/responses and MCP tool schemas |
 | `naive-client` | Engine loop, renderer, physics, scripting, world management |
 | `naive-runtime` | CLI binary (`naive`, `naive-runtime`, `naive_mcp`) |
 | `naive-server` | Multiplayer server (stub — future) |
-| `naive-web` | WASM + WebGPU build for browser playground (`crates/naive-web`, `cdylib`) |
+| `naive-web` | Minimal WASM + WebGPU clear-canvas prototype (`crates/naive-web`, `cdylib`); not the native game runtime |
 
 ## Key Source Files
 
 | File | Responsibility |
 |------|---------------|
 | `crates/naive-core/src/scene.rs` | YAML scene schema types (`SceneDef`, `EntityDef`, `RigidBodyDef`, etc.) |
+| `crates/naive-core/src/command.rs` | Typed command wire protocol, response envelope and shared MCP tool definitions |
 | `crates/naive-client/src/engine.rs` | Main `Engine` struct, game loop (`run_frame` → `tick_simulation`, `prepare_render`, `render_frame`), camera, scene loading |
+| `crates/naive-client/src/engine/commands.rs` | Editor/MCP dispatch, entity creation, persistence, Lua evaluation, frame capture and benchmarking |
 | `crates/naive-client/src/sim.rs` | GPU-free frame steps shared by the engine and the headless test runner (character controller, fixed physics steps, collision/event dispatch, collision damage, projectiles, health, entity destruction, script updates). Collect what a script callback needs first, release every borrow, then call the script. |
 | `crates/naive-client/src/physics.rs` | `PhysicsWorld` — Rapier3D wrapper (bodies, colliders, CCD, impulse/force) |
 | `crates/naive-client/src/world.rs` | `SceneWorld` (ECS + registry), `EntityCommandQueue`, entity spawning, pooling |
-| `crates/naive-client/src/scripting.rs` | Lua API registration (physics, entity, camera, scene, events) |
+| `crates/naive-client/src/scripting.rs` | Sandboxed Lua runtime, CPU/memory limits, shared API handles, script loading, hooks and hot reload |
+| `crates/naive-client/src/scripting/` | Lua API registration split by domain (`base`, `input`, `physics`, `entity`, `events`, `audio`, `lifecycle`, `mesh`, `camera`, `particles`, `ui`, `animation`); regression tests in `tests.rs` |
 | `crates/naive-client/src/renderer.rs` | wgpu render pipeline, instance buffers, particles |
 | `crates/naive-client/src/pipeline/` | CompiledPipeline — YAML render-pass DAG (split into `def`/`resource`/`compiler`/`executor`/`mod`) |
-| `crates/naive-client/src/swarm.rs` | GPU swarms (`gpu_swarm` component): compute passes bin living members into a neighbour grid, then revive dead ones for spawn requests, apply damage volumes, count kills and attacks on the target, steer members along a CPU-solved flow field around static colliders with separation, and write their draw data; one instanced draw per swarm per pass. Counters are read back asynchronously. `step_swarm` is the CPU reference for tests; `CpuSwarms` runs it in the headless test runner. Plan: `docs/tier4-plan.md` |
+| `crates/naive-client/src/swarm.rs` | Shared swarm layouts, region types, target resolution, step planning and report processing; public API re-exports preserve existing callers |
+| `crates/naive-client/src/swarm/` | `flow.rs`: obstacles and pathfinding; `cpu.rs`: reference simulation and headless backend; `gpu.rs`: pipelines, buffers, instanced draws and async readback; `compute.wgsl`: compute shader; `tests.rs`: CPU/GPU regression tests. Plan: `docs/tier4-plan.md` |
 | `crates/naive-client/src/gpu_timer.rs` | GPU time per render and compute pass from timestamp queries, read back asynchronously; behind the `gpu_timings` and `benchmark` commands and the render debug overlay |
 | `crates/naive-client/src/swarm_api.rs` | The `swarm` Lua table (spawn, damage spheres and lines, targets, counts) and the `SwarmBus` carrying requests to swarms and reports back; `sim::process_swarm_reports` turns reports into target damage and `swarm.kills` / `swarm.hit` / `swarm.cleared` events |
 | `crates/naive-client/src/debug_draw.rs` | Wireframe physics collider visualization (toggle: H key) |
 | `crates/naive-client/src/command.rs` | Command socket — newline-delimited JSON over a Unix domain socket (default `/tmp/naive-runtime.sock`); `naive_mcp` bridges it to MCP |
+| `crates/naive-client/src/project_path.rs` | Project-relative path confinement, symlink validation and glTF external-resource validation |
 | `crates/naive-client/src/test_runner.rs` | Headless test runner for `naive test` CLI command |
 | `crates/naive-client/src/dev_log.rs` | `naive submit-log` — POST dev.log as GitHub Issue |
 | `crates/naive-client/src/demos.rs` | `naive demo` — 19 embedded demos with interactive browser |
@@ -54,6 +59,8 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 - **In-place replacement for scene transitions:** `scene.load()` clears the ECS and re-initializes the shared `PhysicsWorld` via `borrow_mut()` so captured `Rc` handles remain valid across scene changes.
 - **Pool manager:** Entity recycling for projectiles and spawned entities to avoid allocation churn.
 - **Script limits:** `ScriptRuntime` loads only `math`, `string`, `table` and `utf8`, caps Lua memory, and counts VM instructions per call. Every call from the engine into Lua must go through `ScriptRuntime::run_limited`; a script that exceeds a limit is stopped and reported on the HUD.
+- **Project paths:** Resolve scene, script, asset and output paths with `project_path::resolve` (or `resolve_with_extension`) before filesystem access. Do not replace this with `project_root.join`: validation rejects absolute paths, parent traversal and symlinks that escape the project. glTF imports must also validate external resource URIs.
+- **Module boundaries:** Keep Lua API registration in the corresponding `scripting/` domain module, swarm simulation in `swarm/cpu.rs`, pathfinding in `swarm/flow.rs`, GPU resources in `swarm/gpu.rs`, and editor commands in `engine/commands.rs`. Shared command schemas belong in `naive-core/src/command.rs` so the engine and MCP bridge use the same definitions.
 
 ## Tier Status
 

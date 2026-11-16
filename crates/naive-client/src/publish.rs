@@ -6,7 +6,10 @@ pub fn publish_project(config: &NaiveConfig) -> Result<(), String> {
     println!();
     println!("  nAIVE World Server — Coming Soon");
     println!();
-    println!("  Your game \"{}\" v{} is ready to publish.", config.name, config.version);
+    println!(
+        "  Your game \"{}\" v{} is ready to publish.",
+        config.name, config.version
+    );
     println!();
     println!("  When the world server launches, your game will be accessible");
     println!("  at a unique four-word address:");

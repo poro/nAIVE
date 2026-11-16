@@ -98,12 +98,20 @@ impl SwarmBus {
 
     pub fn queue_spawn(&mut self, swarm: &str, order: SpawnOrder) {
         if order.count > 0 {
-            self.orders.entry(swarm.to_string()).or_default().spawns.push_back(order);
+            self.orders
+                .entry(swarm.to_string())
+                .or_default()
+                .spawns
+                .push_back(order);
         }
     }
 
     pub fn queue_volume(&mut self, swarm: &str, volume: DamageVolume) {
-        self.orders.entry(swarm.to_string()).or_default().volumes.push_back(volume);
+        self.orders
+            .entry(swarm.to_string())
+            .or_default()
+            .volumes
+            .push_back(volume);
     }
 
     pub fn set_target(&mut self, swarm: &str, target: SwarmTarget) {
@@ -133,8 +141,14 @@ impl SwarmBus {
         let Some(orders) = self.orders.get_mut(swarm) else {
             return (Vec::new(), Vec::new());
         };
-        let spawns: Vec<SpawnOrder> = orders.spawns.drain(..orders.spawns.len().min(MAX_SPAWNS)).collect();
-        let volumes: Vec<DamageVolume> = orders.volumes.drain(..orders.volumes.len().min(MAX_VOLUMES)).collect();
+        let spawns: Vec<SpawnOrder> = orders
+            .spawns
+            .drain(..orders.spawns.len().min(MAX_SPAWNS))
+            .collect();
+        let volumes: Vec<DamageVolume> = orders
+            .volumes
+            .drain(..orders.volumes.len().min(MAX_VOLUMES))
+            .collect();
         let requested: u32 = spawns.iter().map(|s| s.count).sum();
         if requested > 0 {
             if let Some(status) = self.status.get_mut(swarm) {
@@ -146,7 +160,16 @@ impl SwarmBus {
 
     /// Record what step `step` of a swarm did.
     #[allow(clippy::too_many_arguments)]
-    pub fn report(&mut self, swarm: &str, step: u64, kills: u32, hits: u32, damage: f32, target: Option<String>, alive: u32) {
+    pub fn report(
+        &mut self,
+        swarm: &str,
+        step: u64,
+        kills: u32,
+        hits: u32,
+        damage: f32,
+        target: Option<String>,
+        alive: u32,
+    ) {
         let queued = self.queued_spawns(swarm);
         let status = self.status.entry(swarm.to_string()).or_default();
         let was_alive = status.alive;
@@ -178,7 +201,11 @@ impl SwarmBus {
     /// Before a swarm's first step, it has `initial` of `capacity`.
     pub fn alive(&self, swarm: &str, initial: u32, capacity: u32) -> u32 {
         let (alive, capacity, in_flight) = match self.status.get(swarm) {
-            Some(s) => (s.alive, s.capacity, s.in_flight.iter().map(|&(_, n)| n).sum::<u32>()),
+            Some(s) => (
+                s.alive,
+                s.capacity,
+                s.in_flight.iter().map(|&(_, n)| n).sum::<u32>(),
+            ),
             None => (initial, capacity, 0),
         };
         let coming = self.queued_spawns(swarm) + in_flight;
@@ -214,7 +241,9 @@ fn finite(function: &str, values: &[f32]) -> LuaResult<()> {
     if values.iter().all(|v| v.is_finite()) {
         Ok(())
     } else {
-        Err(LuaError::RuntimeError(format!("swarm.{function}: arguments must be finite numbers")))
+        Err(LuaError::RuntimeError(format!(
+            "swarm.{function}: arguments must be finite numbers"
+        )))
     }
 }
 
@@ -223,7 +252,11 @@ type SphereArgs = (String, f32, f32, f32, f32, f32);
 type LineArgs = (String, f32, f32, f32, f32, f32, f32, f32, f32);
 
 /// Register the `swarm` table in `lua`.
-pub fn register_swarm_api(lua: &Lua, bus: SharedSwarmBus, scene_world: SharedSceneWorld) -> Result<(), String> {
+pub fn register_swarm_api(
+    lua: &Lua,
+    bus: SharedSwarmBus,
+    scene_world: SharedSceneWorld,
+) -> Result<(), String> {
     let table = lua.create_table().map_err(|e| e.to_string())?;
     let set = |name: &str, f: LuaFunction| table.set(name, f).map_err(|e| e.to_string());
 
@@ -255,7 +288,10 @@ pub fn register_swarm_api(lua: &Lua, bus: SharedSwarmBus, scene_world: SharedSce
         lua.create_function(move |_, (id, x, y, z, radius, damage): SphereArgs| {
             swarm_def(&sw, "damage_sphere", &id)?;
             finite("damage_sphere", &[x, y, z, radius, damage])?;
-            b.borrow_mut().queue_volume(&id, DamageVolume::sphere(Vec3::new(x, y, z), radius, damage));
+            b.borrow_mut().queue_volume(
+                &id,
+                DamageVolume::sphere(Vec3::new(x, y, z), radius, damage),
+            );
             Ok(())
         })
         .map_err(|e| e.to_string())?,
@@ -266,13 +302,20 @@ pub fn register_swarm_api(lua: &Lua, bus: SharedSwarmBus, scene_world: SharedSce
     let (b, sw) = (bus.clone(), scene_world.clone());
     set(
         "damage_line",
-        lua.create_function(move |_, (id, x1, y1, z1, x2, y2, z2, radius, damage): LineArgs| {
-            swarm_def(&sw, "damage_line", &id)?;
-            finite("damage_line", &[x1, y1, z1, x2, y2, z2, radius, damage])?;
-            let volume = DamageVolume::line(Vec3::new(x1, y1, z1), Vec3::new(x2, y2, z2), radius, damage);
-            b.borrow_mut().queue_volume(&id, volume);
-            Ok(())
-        })
+        lua.create_function(
+            move |_, (id, x1, y1, z1, x2, y2, z2, radius, damage): LineArgs| {
+                swarm_def(&sw, "damage_line", &id)?;
+                finite("damage_line", &[x1, y1, z1, x2, y2, z2, radius, damage])?;
+                let volume = DamageVolume::line(
+                    Vec3::new(x1, y1, z1),
+                    Vec3::new(x2, y2, z2),
+                    radius,
+                    damage,
+                );
+                b.borrow_mut().queue_volume(&id, volume);
+                Ok(())
+            },
+        )
         .map_err(|e| e.to_string())?,
     )?;
 
@@ -283,7 +326,8 @@ pub fn register_swarm_api(lua: &Lua, bus: SharedSwarmBus, scene_world: SharedSce
         lua.create_function(move |_, (id, x, y, z): (String, f32, f32, f32)| {
             swarm_def(&sw, "set_target", &id)?;
             finite("set_target", &[x, y, z])?;
-            b.borrow_mut().set_target(&id, SwarmTarget::Point(Vec3::new(x, y, z)));
+            b.borrow_mut()
+                .set_target(&id, SwarmTarget::Point(Vec3::new(x, y, z)));
             Ok(())
         })
         .map_err(|e| e.to_string())?,
@@ -296,7 +340,9 @@ pub fn register_swarm_api(lua: &Lua, bus: SharedSwarmBus, scene_world: SharedSce
         lua.create_function(move |_, (id, target): (String, String)| {
             swarm_def(&sw, "follow", &id)?;
             if !sw.borrow().entity_registry.contains_key(&target) {
-                return Err(LuaError::RuntimeError(format!("swarm.follow: no entity with id '{target}'")));
+                return Err(LuaError::RuntimeError(format!(
+                    "swarm.follow: no entity with id '{target}'"
+                )));
             }
             b.borrow_mut().set_target(&id, SwarmTarget::Entity(target));
             Ok(())
@@ -367,12 +413,20 @@ mod tests {
         bus.queue_spawn("g", order(30));
         assert_eq!(bus.alive("g", 0, 100), 30, "queued spawns count");
         bus.take_orders("g", 1);
-        assert_eq!(bus.alive("g", 0, 100), 30, "spawns handed to a step count until it reports");
+        assert_eq!(
+            bus.alive("g", 0, 100),
+            30,
+            "spawns handed to a step count until it reports"
+        );
 
         // The GPU reports step 1 two frames later; step 2 has spawned more by then.
         bus.queue_spawn("g", order(90));
         bus.take_orders("g", 2);
-        assert_eq!(bus.alive("g", 0, 100), 100, "never more than the swarm holds");
+        assert_eq!(
+            bus.alive("g", 0, 100),
+            100,
+            "never more than the swarm holds"
+        );
         bus.report("g", 1, 0, 0, 0.0, None, 30);
         assert_eq!(bus.alive("g", 0, 100), 100);
         bus.report("g", 2, 0, 0, 0.0, None, 100);
@@ -386,7 +440,10 @@ mod tests {
         bus.report("g", 1, 4, 0, 0.0, None, 6);
         bus.report("g", 2, 6, 0, 0.0, None, 0);
         let reports = bus.take_reports();
-        assert_eq!(reports.iter().map(|r| r.cleared).collect::<Vec<_>>(), [false, true]);
+        assert_eq!(
+            reports.iter().map(|r| r.cleared).collect::<Vec<_>>(),
+            [false, true]
+        );
         assert_eq!(bus.kills("g"), 10);
 
         // The last member dies in step 4, but step 5 already spawned a wave
@@ -395,7 +452,10 @@ mod tests {
         bus.queue_spawn("g", order(5));
         bus.take_orders("g", 5);
         bus.report("g", 4, 1, 0, 0.0, None, 0);
-        assert!(!bus.take_reports()[1].cleared, "a wave handed to a later step is still coming");
+        assert!(
+            !bus.take_reports()[1].cleared,
+            "a wave handed to a later step is still coming"
+        );
         bus.report("g", 5, 0, 0, 0.0, None, 5);
         bus.report("g", 6, 5, 0, 0.0, None, 0);
         assert!(bus.take_reports()[1].cleared);

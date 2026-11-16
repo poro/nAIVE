@@ -15,7 +15,9 @@ impl std::fmt::Display for SceneError {
         match self {
             Self::IoError(e) => write!(f, "IO error: {}", e),
             Self::ParseError(e) => write!(f, "YAML parse error: {}", e),
-            Self::InheritanceCycle(id) => write!(f, "Inheritance cycle detected at entity '{}'", id),
+            Self::InheritanceCycle(id) => {
+                write!(f, "Inheritance cycle detected at entity '{}'", id)
+            }
             Self::MissingParent(id) => write!(f, "Entity extends missing parent '{}'", id),
         }
     }
@@ -405,37 +407,93 @@ impl GpuSwarmDef {
     }
 }
 
-fn default_swarm_mesh() -> String { "procedural:cube".to_string() }
-fn default_swarm_material() -> String { "procedural:default".to_string() }
-fn default_one() -> f32 { 1.0 }
-fn default_swarm_speed() -> f32 { 4.0 }
-fn default_swarm_acceleration() -> f32 { 3.0 }
-fn default_swarm_spawn_radius() -> f32 { 20.0 }
-fn default_swarm_arrive_radius() -> f32 { 2.0 }
-fn default_swarm_separation() -> f32 { 3.0 }
-fn default_swarm_field_size() -> f32 { 256.0 }
-fn default_swarm_health() -> f32 { 10.0 }
-fn default_swarm_attack_range() -> f32 { 1.5 }
+fn default_swarm_mesh() -> String {
+    "procedural:cube".to_string()
+}
+fn default_swarm_material() -> String {
+    "procedural:default".to_string()
+}
+fn default_one() -> f32 {
+    1.0
+}
+fn default_swarm_speed() -> f32 {
+    4.0
+}
+fn default_swarm_acceleration() -> f32 {
+    3.0
+}
+fn default_swarm_spawn_radius() -> f32 {
+    20.0
+}
+fn default_swarm_arrive_radius() -> f32 {
+    2.0
+}
+fn default_swarm_separation() -> f32 {
+    3.0
+}
+fn default_swarm_field_size() -> f32 {
+    256.0
+}
+fn default_swarm_health() -> f32 {
+    10.0
+}
+fn default_swarm_attack_range() -> f32 {
+    1.5
+}
 
-fn default_anim_state() -> String { "idle".to_string() }
-fn default_anim_speed() -> f32 { 1.0 }
+fn default_anim_state() -> String {
+    "idle".to_string()
+}
+fn default_anim_speed() -> f32 {
+    1.0
+}
 
-fn default_max_particles() -> u32 { 100 }
-fn default_spawn_rate() -> f32 { 10.0 }
-fn default_lifetime() -> [f32; 2] { [0.5, 1.5] }
-fn default_initial_speed() -> [f32; 2] { [1.0, 3.0] }
-fn default_emitter_direction() -> [f32; 3] { [0.0, 1.0, 0.0] }
-fn default_spread() -> f32 { 30.0 }
-fn default_particle_size() -> [f32; 2] { [0.2, 0.05] }
-fn default_color_white() -> [f32; 4] { [1.0, 1.0, 1.0, 1.0] }
-fn default_color_transparent() -> [f32; 4] { [1.0, 1.0, 1.0, 0.0] }
+fn default_max_particles() -> u32 {
+    100
+}
+fn default_spawn_rate() -> f32 {
+    10.0
+}
+fn default_lifetime() -> [f32; 2] {
+    [0.5, 1.5]
+}
+fn default_initial_speed() -> [f32; 2] {
+    [1.0, 3.0]
+}
+fn default_emitter_direction() -> [f32; 3] {
+    [0.0, 1.0, 0.0]
+}
+fn default_spread() -> f32 {
+    30.0
+}
+fn default_particle_size() -> [f32; 2] {
+    [0.2, 0.05]
+}
+fn default_color_white() -> [f32; 4] {
+    [1.0, 1.0, 1.0, 1.0]
+}
+fn default_color_transparent() -> [f32; 4] {
+    [1.0, 1.0, 1.0, 0.0]
+}
 
-fn default_move_speed() -> f32 { 5.0 }
-fn default_sprint_multiplier() -> f32 { 1.8 }
-fn default_jump_impulse() -> f32 { 7.0 }
-fn default_step_height() -> f32 { 0.3 }
-fn default_player_height() -> f32 { 1.8 }
-fn default_player_radius() -> f32 { 0.3 }
+fn default_move_speed() -> f32 {
+    5.0
+}
+fn default_sprint_multiplier() -> f32 {
+    1.8
+}
+fn default_jump_impulse() -> f32 {
+    7.0
+}
+fn default_step_height() -> f32 {
+    0.3
+}
+fn default_player_height() -> f32 {
+    1.8
+}
+fn default_player_radius() -> f32 {
+    0.3
+}
 
 fn default_white() -> [f32; 3] {
     [1.0, 1.0, 1.0]

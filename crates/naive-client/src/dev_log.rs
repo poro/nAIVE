@@ -5,19 +5,17 @@ use std::path::Path;
 use crate::project_config::NaiveConfig;
 
 pub fn submit_dev_log(config: &NaiveConfig, project_root: &Path) -> Result<(), String> {
-    let dev_log_path = project_root.join("dev.log");
+    let dev_log_path = crate::project_path::resolve(project_root, "dev.log")?;
 
     if !dev_log_path.exists() {
-        return Err(
-            "No dev.log found in project root.\n  \
+        return Err("No dev.log found in project root.\n  \
              Run `naive init <name>` to create a project with a dev.log template,\n  \
              or create one manually."
-                .to_string(),
-        );
+            .to_string());
     }
 
-    let contents =
-        std::fs::read_to_string(&dev_log_path).map_err(|e| format!("Failed to read dev.log: {}", e))?;
+    let contents = std::fs::read_to_string(&dev_log_path)
+        .map_err(|e| format!("Failed to read dev.log: {}", e))?;
 
     let trimmed = contents.trim();
     if trimmed.is_empty() {
@@ -28,16 +26,14 @@ pub fn submit_dev_log(config: &NaiveConfig, project_root: &Path) -> Result<(), S
     let token = match std::env::var("NAIVE_GITHUB_TOKEN") {
         Ok(t) if !t.is_empty() => t,
         _ => {
-            return Err(
-                "NAIVE_GITHUB_TOKEN environment variable not set.\n\n\
+            return Err("NAIVE_GITHUB_TOKEN environment variable not set.\n\n\
                  To submit engine feedback:\n\
                  1. Create a GitHub Personal Access Token at https://github.com/settings/tokens\n\
                     (needs 'repo' or 'public_repo' scope)\n\
                  2. Export it:\n\
                     export NAIVE_GITHUB_TOKEN=ghp_your_token_here\n\
                  3. Run `naive submit-log` again"
-                    .to_string(),
-            );
+                .to_string());
         }
     };
 

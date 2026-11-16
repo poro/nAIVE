@@ -48,7 +48,10 @@ pub struct GpuTimings {
 
 impl GpuTimings {
     pub fn pass_ms(&self, name: &str) -> Option<f32> {
-        self.passes.iter().find(|(n, _)| n == name).map(|&(_, ms)| ms)
+        self.passes
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|&(_, ms)| ms)
     }
 }
 
@@ -123,20 +126,22 @@ impl GpuTimer {
 
     /// Timestamps for a render pass named `name`.
     pub fn render_pass(&self, name: &str) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
-        self.next_pair(name).map(|(begin, end)| wgpu::RenderPassTimestampWrites {
-            query_set: &self.queries,
-            beginning_of_pass_write_index: Some(begin),
-            end_of_pass_write_index: Some(end),
-        })
+        self.next_pair(name)
+            .map(|(begin, end)| wgpu::RenderPassTimestampWrites {
+                query_set: &self.queries,
+                beginning_of_pass_write_index: Some(begin),
+                end_of_pass_write_index: Some(end),
+            })
     }
 
     /// Timestamps for a compute pass named `name`.
     pub fn compute_pass(&self, name: &str) -> Option<wgpu::ComputePassTimestampWrites<'_>> {
-        self.next_pair(name).map(|(begin, end)| wgpu::ComputePassTimestampWrites {
-            query_set: &self.queries,
-            beginning_of_pass_write_index: Some(begin),
-            end_of_pass_write_index: Some(end),
-        })
+        self.next_pair(name)
+            .map(|(begin, end)| wgpu::ComputePassTimestampWrites {
+                query_set: &self.queries,
+                beginning_of_pass_write_index: Some(begin),
+                end_of_pass_write_index: Some(end),
+            })
     }
 
     /// Start averaging afresh.
@@ -154,7 +159,11 @@ impl GpuTimer {
         if names.is_empty() {
             return;
         }
-        let Some(k) = self.slots.iter().position(|s| s.state.load(Ordering::Acquire) == FREE) else {
+        let Some(k) = self
+            .slots
+            .iter()
+            .position(|s| s.state.load(Ordering::Acquire) == FREE)
+        else {
             return;
         };
         let used = (names.len() * 2) as u32;
@@ -168,9 +177,11 @@ impl GpuTimer {
         slot.names = names;
         slot.state.store(PENDING, Ordering::Release);
         let state = slot.state.clone();
-        slot.buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-            state.store(if result.is_ok() { READY } else { FREE }, Ordering::Release);
-        });
+        slot.buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                state.store(if result.is_ok() { READY } else { FREE }, Ordering::Release);
+            });
     }
 
     fn collect(&mut self) {
@@ -178,7 +189,8 @@ impl GpuTimer {
             if slot.state.load(Ordering::Acquire) != READY {
                 continue;
             }
-            let ticks: Vec<u64> = bytemuck::cast_slice(&slot.buffer.slice(..).get_mapped_range()).to_vec();
+            let ticks: Vec<u64> =
+                bytemuck::cast_slice(&slot.buffer.slice(..).get_mapped_range()).to_vec();
             slot.buffer.unmap();
             slot.state.store(FREE, Ordering::Release);
             let to_ms = |ticks: u64| ticks as f32 * self.period_ns / 1_000_000.0;
@@ -197,7 +209,8 @@ impl GpuTimer {
             if self.history.len() == WINDOW {
                 self.history.pop_front();
             }
-            self.history.push_back((to_ms(last.saturating_sub(first)), frame));
+            self.history
+                .push_back((to_ms(last.saturating_sub(first)), frame));
         }
     }
 
@@ -219,8 +232,15 @@ impl GpuTimer {
             }
         }
         GpuTimings {
-            frame_ms: if frames > 0 { total / frames as f32 } else { 0.0 },
-            passes: passes.into_iter().map(|(n, sum, count)| (n, sum / count as f32)).collect(),
+            frame_ms: if frames > 0 {
+                total / frames as f32
+            } else {
+                0.0
+            },
+            passes: passes
+                .into_iter()
+                .map(|(n, sum, count)| (n, sum / count as f32))
+                .collect(),
             frames,
         }
     }

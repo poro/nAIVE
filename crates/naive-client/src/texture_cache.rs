@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-
 /// Handle to a cached texture bind group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureHandle(pub usize);
@@ -36,7 +35,7 @@ impl TextureCache {
             return Ok(handle);
         }
 
-        let full_path = project_root.join(texture_path);
+        let full_path = crate::project_path::resolve(project_root, texture_path)?;
         let img = image::open(&full_path)
             .map_err(|e| format!("Failed to load texture '{}': {}", full_path.display(), e))?
             .to_rgba8();
@@ -45,7 +44,12 @@ impl TextureCache {
         let pixels = img.into_raw();
 
         let bind_group = create_texture_bind_group_from_rgba(
-            device, queue, layout, &pixels, width, height,
+            device,
+            queue,
+            layout,
+            &pixels,
+            width,
+            height,
             &format!("Texture: {}", texture_path),
         );
 
@@ -80,7 +84,11 @@ pub fn create_texture_bind_group_from_rgba(
 ) -> wgpu::BindGroup {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -102,7 +110,11 @@ pub fn create_texture_bind_group_from_rgba(
             bytes_per_row: Some(4 * width),
             rows_per_image: Some(height),
         },
-        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
     );
 
     let view = texture.create_view(&Default::default());
@@ -119,8 +131,14 @@ pub fn create_texture_bind_group_from_rgba(
         label: Some(&format!("{} BG", label)),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
         ],
     })
 }

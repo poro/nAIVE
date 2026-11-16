@@ -6,7 +6,7 @@ use std::path::Path;
 pub fn create_project(name: &str) -> Result<(), String> {
     let root = Path::new(name);
 
-    if root.exists() {
+    if root.symlink_metadata().is_ok() {
         return Err(format!("Directory '{}' already exists", name));
     }
 

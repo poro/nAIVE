@@ -8,8 +8,13 @@ description = "nAIVE runtime — single-process game binary (client + local game
 
 # Binaries are the files in src/bin: naive, naive-runtime and naive_mcp.
 
+[features]
+default = ["slang"]
+slang = ["naive-client/slang"]
+
 [dependencies]
-naive-client = { workspace = true }
+naive-client = { workspace = true, default-features = false }
+naive-core = { workspace = true }
 
 # CLI
 clap = { workspace = true }

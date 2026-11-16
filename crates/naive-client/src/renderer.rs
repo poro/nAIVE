@@ -90,20 +90,19 @@ pub struct DrawUniformPool {
 
 impl DrawUniformPool {
     pub fn new(device: &wgpu::Device) -> Self {
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Draw Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(DRAW_UNIFORM_SIZE),
-                    },
-                    count: None,
-                }],
-            });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Draw Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(DRAW_UNIFORM_SIZE),
+                },
+                count: None,
+            }],
+        });
 
         let storage_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -324,8 +323,7 @@ pub async fn init_gpu(window: Arc<Window>, initial_wgsl: &str) -> GpuState {
 
     let render_pipeline = create_render_pipeline(&device, initial_wgsl, surface_format);
 
-    let (depth_texture, depth_view) =
-        create_depth_texture(&device, config.width, config.height);
+    let (depth_texture, depth_view) = create_depth_texture(&device, config.width, config.height);
 
     GpuState {
         window,
@@ -532,8 +530,10 @@ pub fn render_scene_to_view(
 ) {
     // Write per-draw uniforms (skip hidden entities before incrementing draw_index)
     let mut draw_index = 0u32;
-    for (entity, (transform, mesh_renderer)) in
-        scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
+    for (entity, (transform, mesh_renderer)) in scene_world
+        .world
+        .query::<(&Transform, &MeshRenderer)>()
+        .iter()
     {
         if scene_world.world.get::<&Hidden>(entity).is_ok() {
             continue;
@@ -542,7 +542,11 @@ pub fn render_scene_to_view(
         let model_matrix = transform.world_matrix;
         let normal_matrix = model_matrix.inverse().transpose();
         let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
-        let has_texture = if gpu_mesh.texture_bind_group.is_some() { 1.0f32 } else { 0.0f32 };
+        let has_texture = if gpu_mesh.texture_bind_group.is_some() {
+            1.0f32
+        } else {
+            0.0f32
+        };
 
         let draw_uniform = DrawUniforms {
             model_matrix: model_matrix.to_cols_array_2d(),
@@ -596,8 +600,10 @@ pub fn render_scene_to_view(
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
         let mut draw_index = 0u32;
-        for (entity, (_, mesh_renderer)) in
-            scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
+        for (entity, (_, mesh_renderer)) in scene_world
+            .world
+            .query::<(&Transform, &MeshRenderer)>()
+            .iter()
         {
             if scene_world.world.get::<&Hidden>(entity).is_ok() {
                 continue;
@@ -609,16 +615,16 @@ pub fn render_scene_to_view(
 
             // Bind texture at group(2): use mesh's texture or fallback to white
             if let Some(tex_res) = texture_resources {
-                let tex_bg = gpu_mesh.texture_bind_group.as_ref()
+                let tex_bg = gpu_mesh
+                    .texture_bind_group
+                    .as_ref()
                     .unwrap_or(&tex_res.default_bind_group);
                 render_pass.set_bind_group(2, tex_bg, &[]);
             }
 
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(
-                gpu_mesh.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
+            render_pass
+                .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
             draw_index += 1;
         }

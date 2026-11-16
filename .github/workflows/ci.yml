@@ -27,12 +27,44 @@ env:
   RUST_TOOLCHAIN: "1.100.0"
 
 jobs:
+  format:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          rustup default "$RUST_TOOLCHAIN"
+      - run: cargo fmt --all -- --check
+
+  no-slang:
+    name: Test without Slang SDK
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          rustup default "$RUST_TOOLCHAIN"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --exclude naive-web --no-default-features --locked
+      - run: cargo clippy --workspace --exclude naive-web --all-targets --no-default-features --locked -- -D warnings
+      - name: Scene tests without Slang
+        working-directory: project
+        run: cargo run --locked -p naive-runtime --no-default-features --bin naive -- test
+
   test-macos:
     name: Test and lint (macOS)
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - name: Install Rust
         run: |
@@ -63,9 +95,11 @@ jobs:
   check-linux:
     name: Check (Linux)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          lfs: true
 
       - name: Install Rust
         run: |
@@ -76,7 +110,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev libwayland-dev libxkbcommon-dev libclang-dev pkg-config
+            libasound2-dev libwayland-dev libxkbcommon-dev libclang-dev pkg-config \
+            mesa-vulkan-drivers xvfb
 
       - name: Install SLANG SDK
         run: |
@@ -88,6 +123,11 @@ jobs:
 
       - name: Check
         run: cargo check --workspace --exclude naive-web --locked
+
+      - name: Standalone release smoke test (software Vulkan)
+        env:
+          WGPU_BACKEND: vulkan
+        run: xvfb-run -a python3 scripts/release-smoke.py
 
   check-web:
     name: Check (WebAssembly)

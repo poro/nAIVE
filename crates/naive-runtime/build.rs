@@ -8,6 +8,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=SLANG_DIR");
 
+    if std::env::var_os("CARGO_FEATURE_SLANG").is_none() {
+        return;
+    }
+
     // A packager that passes its own -rpath, as the Homebrew formula does,
     // decides where the libraries live.
     let rustflags = std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();

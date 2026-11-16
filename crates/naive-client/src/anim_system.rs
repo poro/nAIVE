@@ -1,7 +1,7 @@
-use glam::Mat4;
-use naive_core::animation::{AnimationClip, JointTransform, Skeleton, MAX_JOINTS};
 use crate::components::{Animator, SkeletonHandle};
 use crate::mesh::MeshCache;
+use glam::Mat4;
+use naive_core::animation::{AnimationClip, JointTransform, Skeleton, MAX_JOINTS};
 
 /// Stores skeletons and their animation clips, indexed by SkeletonHandle.
 pub struct SkeletonStore {
@@ -111,22 +111,25 @@ impl AnimationSystem {
     }
 
     /// Register skeletons from newly loaded meshes in the cache.
-    pub fn register_from_mesh_cache(&mut self, mesh_cache: &mut MeshCache) -> Vec<(usize, SkeletonHandle)> {
+    pub fn register_from_mesh_cache(
+        &mut self,
+        mesh_cache: &mut MeshCache,
+    ) -> Vec<(usize, SkeletonHandle)> {
         let mut registered = Vec::new();
         for (mesh_idx, skin_data) in mesh_cache.take_skin_data() {
             let handle = self.skeleton_store.add(skin_data.skeleton, skin_data.clips);
             registered.push((mesh_idx, handle));
-            tracing::info!("Registered skeleton handle {:?} for mesh {}", handle, mesh_idx);
+            tracing::info!(
+                "Registered skeleton handle {:?} for mesh {}",
+                handle,
+                mesh_idx
+            );
         }
         registered
     }
 
     /// Tick a single entity's animation and compute its bone matrix palette.
-    pub fn tick_entity(
-        &mut self,
-        animator: &mut Animator,
-        dt: f32,
-    ) -> BoneMatrixPalette {
+    pub fn tick_entity(&mut self, animator: &mut Animator, dt: f32) -> BoneMatrixPalette {
         let mut palette = BoneMatrixPalette::default();
 
         let skeleton = match self.skeleton_store.get_skeleton(animator.skeleton_handle) {
@@ -137,16 +140,17 @@ impl AnimationSystem {
         // Resolve active clip if needed
         if animator.controller.active_clip_index.is_none() {
             let clip_name = animator.controller.current_state.clip_name();
-            animator.controller.active_clip_index =
-                self.skeleton_store.find_clip(animator.skeleton_handle, clip_name)
-                    .or_else(|| {
-                        // Fallback: try first clip
-                        if self.skeleton_store.clip_count(animator.skeleton_handle) > 0 {
-                            Some(0)
-                        } else {
-                            None
-                        }
-                    });
+            animator.controller.active_clip_index = self
+                .skeleton_store
+                .find_clip(animator.skeleton_handle, clip_name)
+                .or_else(|| {
+                    // Fallback: try first clip
+                    if self.skeleton_store.clip_count(animator.skeleton_handle) > 0 {
+                        Some(0)
+                    } else {
+                        None
+                    }
+                });
         }
 
         let clip_index = match animator.controller.active_clip_index {
@@ -171,7 +175,11 @@ impl AnimationSystem {
         let joint_count = skeleton.joints.len().min(MAX_JOINTS);
         self.scratch_transforms.clear();
         self.scratch_transforms.extend(
-            skeleton.joints.iter().take(joint_count).map(|j| j.local_transform)
+            skeleton
+                .joints
+                .iter()
+                .take(joint_count)
+                .map(|j| j.local_transform),
         );
 
         // Sample animation into scratch transforms

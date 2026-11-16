@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use glam::Vec3;
-use kira::manager::{AudioManager, AudioManagerSettings, DefaultBackend};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::sound::PlaybackState;
-use kira::tween::Tween;
+use kira::Tween;
+use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend};
 
 /// Audio component for entities that emit spatial sound.
 #[derive(Debug, Clone)]
@@ -33,11 +33,7 @@ pub struct AudioSystem {
 impl AudioSystem {
     pub fn new() -> Self {
         let settings = AudioManagerSettings::<DefaultBackend> {
-            capacities: kira::manager::Capacities {
-                sound_capacity: 512,
-                command_capacity: 256,
-                ..Default::default()
-            },
+            main_track_builder: kira::track::MainTrackBuilder::new().sound_capacity(512),
             ..Default::default()
         };
         let manager = AudioManager::<DefaultBackend>::new(settings)
@@ -78,12 +74,12 @@ impl AudioSystem {
             None => return Ok(()), // Audio disabled
         };
 
-        let full_path = project_root.join(path);
+        let full_path = crate::project_path::resolve(project_root, path)?;
         let sound_data = StaticSoundData::from_file(&full_path)
             .map_err(|e| format!("Failed to load sound {:?}: {}", full_path, e))?;
 
         let handle = manager
-            .play(sound_data.volume(volume as f64 * self.master_volume as f64))
+            .play(sound_data.volume(linear_volume(volume * self.master_volume)))
             .map_err(|e| format!("Failed to play sound: {}", e))?;
 
         self.sounds.insert(id.to_string(), handle);
@@ -111,18 +107,18 @@ impl AudioSystem {
             });
         }
 
-        let full_path = project_root.join(path);
+        let full_path = crate::project_path::resolve(project_root, path)?;
         let sound_data = StaticSoundData::from_file(&full_path)
             .map_err(|e| format!("Failed to load music {:?}: {}", full_path, e))?;
 
         let handle = manager
-            .play(sound_data.volume(0.0).loop_region(..))
+            .play(sound_data.volume(Decibels::SILENCE).loop_region(..))
             .map_err(|e| format!("Failed to play music: {}", e))?;
 
         // Fade in
         let mut handle = handle;
         handle.set_volume(
-            volume as f64 * self.master_volume as f64,
+            linear_volume(volume * self.master_volume),
             Tween {
                 duration: std::time::Duration::from_secs_f32(fade_in_secs),
                 ..Default::default()
@@ -171,9 +167,8 @@ impl AudioSystem {
 
     /// Clean up finished sounds.
     pub fn cleanup(&mut self) {
-        self.sounds.retain(|_, handle| {
-            handle.state() != PlaybackState::Stopped
-        });
+        self.sounds
+            .retain(|_, handle| handle.state() != PlaybackState::Stopped);
     }
 }
 
@@ -183,9 +178,25 @@ impl Default for AudioSystem {
     }
 }
 
+/// Game scripts specify linear amplitudes; Kira 0.12 expects decibels.
+fn linear_volume(amplitude: f32) -> Decibels {
+    if !amplitude.is_finite() || amplitude <= 0.0 {
+        Decibels::SILENCE
+    } else {
+        Decibels(20.0 * amplitude.log10())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn volume_upgrade_preserves_linear_amplitude() {
+        assert_eq!(linear_volume(0.0), Decibels::SILENCE);
+        assert_eq!(linear_volume(1.0), Decibels::IDENTITY);
+        assert!((linear_volume(0.5).as_amplitude() - 0.5).abs() < 0.00001);
+    }
 
     #[test]
     fn test_audio_system_creation() {

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use crate::components::MaterialHandle;
 use crate::texture_cache::{TextureCache, TextureHandle};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub enum MaterialError {
@@ -91,7 +91,12 @@ pub struct MaterialUniform {
 impl MaterialUniform {
     pub fn from_properties(props: &MaterialProperties) -> Self {
         Self {
-            base_color: [props.base_color[0], props.base_color[1], props.base_color[2], 1.0],
+            base_color: [
+                props.base_color[0],
+                props.base_color[1],
+                props.base_color[2],
+                1.0,
+            ],
             roughness: props.roughness,
             metallic: props.metallic,
             _pad: [0.0; 2],
@@ -139,16 +144,15 @@ impl MaterialCache {
             return Ok(handle);
         }
 
-        let full_path = project_root.join(material_path);
+        let full_path = crate::project_path::resolve(project_root, material_path).map_err(|e| {
+            MaterialError::IoError(std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))
+        })?;
 
         let mat_file = if full_path.exists() {
             let contents = std::fs::read_to_string(&full_path).map_err(MaterialError::IoError)?;
             serde_yaml::from_str::<MaterialFile>(&contents).map_err(MaterialError::ParseError)?
         } else {
-            tracing::warn!(
-                "Material file not found: {:?}, using defaults",
-                full_path
-            );
+            tracing::warn!("Material file not found: {:?}, using defaults", full_path);
             MaterialFile {
                 shader: String::new(),
                 properties: MaterialProperties::default(),
@@ -161,21 +165,35 @@ impl MaterialCache {
         tracing::warn!(
             "Material '{}' base_color=[{:.3},{:.3},{:.3},{:.3}] roughness={:.2}",
             material_path,
-            uniform.base_color[0], uniform.base_color[1], uniform.base_color[2], uniform.base_color[3],
+            uniform.base_color[0],
+            uniform.base_color[1],
+            uniform.base_color[2],
+            uniform.base_color[3],
             uniform.roughness
         );
 
         // Load textures if referenced
-        let albedo_texture = if let (Some(albedo_path), Some(tex_cache), Some(tex_layout)) =
-            (&mat_file.properties.albedo_map, texture_cache.as_deref_mut(), texture_layout)
-        {
+        let albedo_texture = if let (Some(albedo_path), Some(tex_cache), Some(tex_layout)) = (
+            &mat_file.properties.albedo_map,
+            texture_cache.as_deref_mut(),
+            texture_layout,
+        ) {
             match tex_cache.get_or_load(device, queue, tex_layout, project_root, albedo_path) {
                 Ok(handle) => {
-                    tracing::info!("Material '{}' loaded albedo_map: {}", material_path, albedo_path);
+                    tracing::info!(
+                        "Material '{}' loaded albedo_map: {}",
+                        material_path,
+                        albedo_path
+                    );
                     Some(handle)
                 }
                 Err(e) => {
-                    tracing::warn!("Material '{}' failed to load albedo_map '{}': {}", material_path, albedo_path, e);
+                    tracing::warn!(
+                        "Material '{}' failed to load albedo_map '{}': {}",
+                        material_path,
+                        albedo_path,
+                        e
+                    );
                     None
                 }
             }
@@ -183,16 +201,27 @@ impl MaterialCache {
             None
         };
 
-        let normal_texture = if let (Some(normal_path), Some(tex_cache), Some(tex_layout)) =
-            (&mat_file.properties.normal_map, texture_cache, texture_layout)
-        {
+        let normal_texture = if let (Some(normal_path), Some(tex_cache), Some(tex_layout)) = (
+            &mat_file.properties.normal_map,
+            texture_cache,
+            texture_layout,
+        ) {
             match tex_cache.get_or_load(device, queue, tex_layout, project_root, normal_path) {
                 Ok(handle) => {
-                    tracing::info!("Material '{}' loaded normal_map: {}", material_path, normal_path);
+                    tracing::info!(
+                        "Material '{}' loaded normal_map: {}",
+                        material_path,
+                        normal_path
+                    );
                     Some(handle)
                 }
                 Err(e) => {
-                    tracing::warn!("Material '{}' failed to load normal_map '{}': {}", material_path, normal_path, e);
+                    tracing::warn!(
+                        "Material '{}' failed to load normal_map '{}': {}",
+                        material_path,
+                        normal_path,
+                        e
+                    );
                     None
                 }
             }
@@ -200,7 +229,11 @@ impl MaterialCache {
             None
         };
 
-        let gpu_material = GpuMaterial { uniform, albedo_texture, normal_texture };
+        let gpu_material = GpuMaterial {
+            uniform,
+            albedo_texture,
+            normal_texture,
+        };
 
         let handle = MaterialHandle(self.materials.len());
         self.materials.push(gpu_material);
@@ -228,17 +261,33 @@ impl MaterialCache {
     }
 
     #[allow(dead_code)]
-    pub fn ensure_default(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, project_root: &Path) -> MaterialHandle {
+    pub fn ensure_default(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        project_root: &Path,
+    ) -> MaterialHandle {
         if let Some(handle) = self.default_handle {
             return handle;
         }
         let handle = self
-            .get_or_load(device, queue, project_root, "assets/materials/default.yaml", None, None)
+            .get_or_load(
+                device,
+                queue,
+                project_root,
+                "assets/materials/default.yaml",
+                None,
+                None,
+            )
             .unwrap_or_else(|_| {
                 // Create a hardcoded default
                 let uniform = MaterialUniform::from_properties(&MaterialProperties::default());
                 let h = MaterialHandle(self.materials.len());
-                self.materials.push(GpuMaterial { uniform, albedo_texture: None, normal_texture: None });
+                self.materials.push(GpuMaterial {
+                    uniform,
+                    albedo_texture: None,
+                    normal_texture: None,
+                });
                 h
             });
         self.default_handle = Some(handle);
