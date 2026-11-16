@@ -10,11 +10,10 @@ use std::rc::Rc;
 
 use mlua::prelude::*;
 
-use crate::components::{Player, Transform};
+use crate::components::Transform;
 use crate::events::EventBus;
 use crate::input::InputState;
-use crate::physics::{CharacterController, PhysicsWorld};
-use crate::physics::{Collider as ColliderComp, RigidBody as RigidBodyComp};
+use crate::physics::PhysicsWorld;
 use crate::scripting::{Script, ScriptRuntime};
 use crate::tween::TweenSystem;
 use crate::world::SceneWorld;
@@ -186,24 +185,12 @@ impl TestRunner {
         // Auto-capture cursor for FPS controller
         self.input_state.borrow_mut().cursor_captured = true;
 
-        // FPS controller update
-        self.update_fps_controller(dt);
-
-        // Update all scripts (collect first to release world borrow before Lua runs)
-        let scripted: Vec<hecs::Entity> = {
-            let sw = self.scene_world.borrow();
-            let mut query = sw.world.query::<&Script>();
-            query.iter()
-                .map(|(e, _)| e)
-                .collect()
-        };
-        for entity in scripted {
-            self.script_runtime.call_update(entity, dt);
-        }
-
-        // Tick event bus and tweens
-        self.event_bus.borrow_mut().tick(dt as f64);
-        self.event_bus.borrow_mut().flush();
+        // The same steps the engine runs each frame, minus the ones that need a GPU.
+        crate::sim::update_fps_controller(&self.input_state, &self.scene_world, &self.physics_world, dt);
+        crate::sim::run_fixed_steps(&self.physics_world, &self.scene_world, Some(&self.script_runtime), dt);
+        crate::sim::dispatch_collision_events(&self.scene_world, &self.physics_world, &self.script_runtime);
+        crate::sim::update_scripts(&self.scene_world, &self.script_runtime, dt);
+        crate::sim::dispatch_lua_events(&self.event_bus, &self.lua_event_listeners, Some(&self.script_runtime), dt);
         let _tween_results = self.tween_system.update(dt);
 
         // Update transforms
@@ -266,114 +253,6 @@ impl TestRunner {
         let entity = *sw.entity_registry.get(entity_id)?;
         let transform = sw.world.get::<&Transform>(entity).ok()?;
         Some(transform.position)
-    }
-
-    /// FPS controller update (replicated from engine.rs for headless).
-    fn update_fps_controller(&mut self, dt: f32) {
-        // Collect player data first to avoid borrow conflicts
-        let player_data: Vec<_> = {
-            let sw = self.scene_world.borrow();
-            let mut query = sw.world
-                .query::<(&Player, &CharacterController, &RigidBodyComp, &ColliderComp)>();
-            query.iter()
-                .map(|(entity, (player, cc, rb, col))| {
-                    (
-                        entity,
-                        player.yaw,
-                        player.pitch,
-                        player.height,
-                        cc.move_speed,
-                        cc.sprint_multiplier,
-                        cc.jump_impulse,
-                        cc.grounded,
-                        cc.velocity,
-                        rb.handle,
-                        col.handle,
-                    )
-                })
-                .collect()
-        };
-
-        for (
-            entity,
-            yaw,
-            pitch,
-            _height,
-            move_speed,
-            sprint_multiplier,
-            jump_impulse,
-            grounded,
-            velocity,
-            rb_handle,
-            col_handle,
-        ) in player_data
-        {
-            let mouse_delta = self.input_state.borrow().mouse_delta();
-            let sensitivity = 0.002;
-            let new_yaw = yaw - mouse_delta.x * sensitivity;
-            let new_pitch = (pitch - mouse_delta.y * sensitivity).clamp(
-                -std::f32::consts::FRAC_PI_2 + 0.01,
-                std::f32::consts::FRAC_PI_2 - 0.01,
-            );
-
-            let move_input = self.input_state.borrow().axis_2d(
-                "move_forward",
-                "move_backward",
-                "move_left",
-                "move_right",
-            );
-            let speed = if self.input_state.borrow().pressed("sprint") {
-                move_speed * sprint_multiplier
-            } else {
-                move_speed
-            };
-
-            let forward = glam::Vec3::new(-new_yaw.sin(), 0.0, -new_yaw.cos());
-            let right = glam::Vec3::new(-forward.z, 0.0, forward.x);
-            let move_dir =
-                (forward * move_input.y + right * move_input.x).normalize_or_zero();
-            let mut desired = move_dir * speed * dt;
-
-            let mut vel_y = velocity.y;
-            if grounded {
-                vel_y = 0.0;
-                if self.input_state.borrow().just_pressed("jump") {
-                    vel_y = jump_impulse;
-                }
-            }
-            vel_y += self.physics_world.borrow().gravity.y * dt;
-            desired.y = vel_y * dt;
-
-            let (_effective, new_grounded) =
-                self.physics_world
-                    .borrow_mut()
-                    .move_character(rb_handle, col_handle, desired, dt);
-
-            // Update player + character controller
-            if let Ok(mut player) = self.scene_world.borrow_mut().world.get::<&mut Player>(entity) {
-                player.yaw = new_yaw;
-                player.pitch = new_pitch;
-            }
-            if let Ok(mut cc) = self.scene_world.borrow_mut().world.get::<&mut CharacterController>(entity) {
-                cc.grounded = new_grounded;
-                cc.velocity.y = vel_y;
-            }
-
-            // Sync physics → transform
-            {
-                let pw = self.physics_world.borrow();
-                let mut sw = self.scene_world.borrow_mut();
-                pw.sync_to_ecs(&mut sw.world);
-            }
-        }
-
-        // Same fixed-step loop as the engine, including `fixed_update` hooks.
-        crate::scripting::run_fixed_steps(
-            &self.physics_world,
-            &self.scene_world,
-            Some(&self.script_runtime),
-            dt,
-        );
     }
 }
 

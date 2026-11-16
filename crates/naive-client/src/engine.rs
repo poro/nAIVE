@@ -1385,115 +1385,12 @@ let mut scene_world = scene_world.borrow_mut();
     }
 
     /// Update the FPS camera controller: mouse look + WASD movement + physics.
-    fn update_fps_controller(&mut self) {
-        let input = match &self.input_state {
-    Some(input) => input,
-    None => return,
-};
-let input = input.borrow();
-        let scene_world = match &self.scene_world {
-    Some(scene_world) => scene_world,
-    None => return,
-};
-let scene_world = scene_world.borrow_mut();
-        let physics_world = match &self.physics_world {
-    Some(physics_world) => physics_world,
-    None => return,
-};
-let mut physics_world = physics_world.borrow_mut();
-
-        let dt = self.delta_time;
-
-        // Collect player entity data
-        let mut player_updates: Vec<(hecs::Entity, glam::Vec3, f32, f32, rapier3d::prelude::RigidBodyHandle, rapier3d::prelude::ColliderHandle, f32, f32, f32, bool, glam::Vec3)> = Vec::new();
-
-        for (entity, (player, cc, rb, col)) in scene_world
-            .world
-            .query::<(&Player, &CharacterController, &RigidBodyComp, &ColliderComp)>()
-            .iter()
+    fn update_fps_controller(&self) {
+        if let (Some(input), Some(scene_world), Some(physics_world)) =
+            (&self.input_state, &self.scene_world, &self.physics_world)
         {
-            // Mouse look
-            let mouse_delta = input.mouse_delta();
-            let sensitivity = 0.002;
-            let new_yaw = player.yaw - mouse_delta.x * sensitivity;
-
-            // Get pitch limits from CameraMode if available
-            let (pitch_min, pitch_max) = if let Ok(camera_mode) = scene_world.world.get::<&CameraMode>(entity) {
-                match &*camera_mode {
-                    CameraMode::ThirdPerson { pitch_min, pitch_max, .. } => (*pitch_min, *pitch_max),
-                    CameraMode::FirstPerson => (-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01),
-                }
-            } else {
-                (-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01)
-            };
-            let new_pitch = (player.pitch - mouse_delta.y * sensitivity).clamp(pitch_min, pitch_max);
-
-            // Movement
-            let move_input = input.axis_2d("move_forward", "move_backward", "move_left", "move_right");
-            let speed = if input.pressed("sprint") {
-                cc.move_speed * cc.sprint_multiplier
-            } else {
-                cc.move_speed
-            };
-
-            // Calculate movement direction relative to yaw
-            let forward = glam::Vec3::new(-new_yaw.sin(), 0.0, -new_yaw.cos());
-            let right = glam::Vec3::new(-forward.z, 0.0, forward.x);
-            let move_dir = (forward * move_input.y + right * move_input.x).normalize_or_zero();
-            let mut desired = move_dir * speed * dt;
-
-            // Vertical velocity for gravity + jump
-            let mut vel_y = cc.velocity.y;
-            if cc.grounded {
-                vel_y = 0.0;
-                if input.just_pressed("jump") {
-                    vel_y = cc.jump_impulse;
-                }
-            }
-            vel_y += physics_world.gravity.y * dt;
-            desired.y = vel_y * dt;
-
-            player_updates.push((
-                entity,
-                desired,
-                new_yaw,
-                new_pitch,
-                rb.handle,
-                col.handle,
-                vel_y,
-                player.height,
-                player.radius,
-                cc.grounded,
-                cc.velocity,
-            ));
+            crate::sim::update_fps_controller(input, scene_world, physics_world, self.delta_time);
         }
-
-        // Apply updates
-        for (entity, desired, new_yaw, new_pitch, rb_handle, col_handle, vel_y, _height, _radius, _was_grounded, _old_vel) in player_updates {
-            let (_effective, grounded) = physics_world.move_character(rb_handle, col_handle, desired, dt);
-
-            // Update ECS components
-            if let Ok(mut player) = scene_world.world.get::<&mut Player>(entity) {
-                player.yaw = new_yaw;
-                player.pitch = new_pitch;
-            }
-            if let Ok(mut cc) = scene_world.world.get::<&mut CharacterController>(entity) {
-                cc.grounded = grounded;
-                cc.velocity.y = if grounded && vel_y < 0.0 { 0.0 } else { vel_y };
-            }
-
-            // The physics body position is already updated by move_character
-            // Sync it back to the transform
-            if let Some(body) = physics_world.rigid_body_set.get(rb_handle) {
-                let pos = body.position().translation;
-                if let Ok(mut transform) = scene_world.world.get::<&mut Transform>(entity) {
-                    transform.position = glam::Vec3::new(pos.x, pos.y, pos.z);
-                    transform.rotation = glam::Quat::from_rotation_y(new_yaw);
-                    transform.dirty = true;
-                }
-            }
-        }
-
     }
 
     /// Process collision damage: auto-damage on physics contact.
@@ -3010,6 +2907,495 @@ let input = input.borrow();
             }
         }
     }
+
+    // ── Frame loop ──────────────────────────────────────────────────────
+
+    /// Run one frame: gather input, advance the simulation, then render.
+    /// Called for every `RedrawRequested` event.
+    fn run_frame(&mut self) {
+        self.update_frame_timing();
+
+        // Phase 8: Process command socket before input
+        self.process_commands();
+
+        // Editor mode: update the free camera
+        if self.args.editor_mode {
+            self.update_editor_camera();
+        }
+
+        self.update_cursor_capture();
+        self.handle_render_debug_keys();
+
+        // Poll for file changes (shader + scene + pipeline)
+        self.poll_changes();
+
+        if self.scene_world.is_some() {
+            if !self.paused {
+                self.tick_simulation();
+            }
+            self.prepare_render();
+            self.render_frame();
+
+            if let Some(gpu) = &self.gpu {
+                gpu.window.request_redraw();
+            }
+        } else {
+            // Phase 1: triangle fallback
+            if let Some(gpu) = &self.gpu {
+                crate::renderer::render(gpu);
+                gpu.window.request_redraw();
+            }
+        }
+
+        // End of frame: clear transient input state for next frame
+        if let Some(input) = &self.input_state {
+            let mut input = input.borrow_mut();
+            input.begin_frame();
+        }
+    }
+
+    /// Measure the time since the previous frame, capped at 0.1 s.
+    fn update_frame_timing(&mut self) {
+        // Calculate delta time
+        let now = instant::Instant::now();
+        if let Some(last) = self.last_frame_time {
+            self.delta_time = now.duration_since(last).as_secs_f32().min(0.1);
+        }
+        self.last_frame_time = Some(now);
+    }
+
+    /// Release the cursor on Escape and capture it again on the next game input.
+    fn update_cursor_capture(&mut self) {
+        // Handle Escape to toggle cursor capture (skip in editor mode)
+        if !self.args.editor_mode {
+            if let Some(input_rc) = &self.input_state {
+                let mut input = input_rc.borrow_mut();
+                if input.key_held(KeyCode::Escape) {
+                    if let Some(gpu) = &self.gpu {
+                        let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::None);
+                        gpu.window.set_cursor_visible(true);
+                    }
+                    input.cursor_captured = false;
+                }
+
+                // Handle mouse click or any movement key to capture cursor
+                if !input.cursor_captured {
+                    let should_capture = input.just_pressed("attack")
+                        || input.just_pressed("move_forward")
+                        || input.just_pressed("move_backward")
+                        || input.just_pressed("move_left")
+                        || input.just_pressed("move_right")
+                        || input.just_pressed("jump")
+                        || input.just_pressed("interact");
+                    if should_capture {
+                        tracing::info!("Capturing cursor for FPS mode");
+                        if let Some(gpu) = &self.gpu {
+                            let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                .or_else(|_| gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Confined));
+                            gpu.window.set_cursor_visible(false);
+                        }
+                        input.cursor_captured = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply the render-debug key toggles (0, H and, with the HUD open, 1-6).
+    fn handle_render_debug_keys(&mut self) {
+        // Render debug toggles: 0 always toggles HUD, 1-6 only when HUD is visible
+        if let Some(input) = &self.input_state {
+            let input = input.borrow_mut();
+            if input.just_pressed_key(KeyCode::Digit0) {
+                self.render_debug.show_hud = !self.render_debug.show_hud;
+            }
+            if input.just_pressed_key(KeyCode::KeyH) {
+                self.render_debug.show_colliders = !self.render_debug.show_colliders;
+                tracing::info!("Collider wireframes: {}", if self.render_debug.show_colliders { "ON" } else { "OFF" });
+            }
+            if self.render_debug.show_hud {
+                if input.just_pressed_key(KeyCode::Digit1) {
+                    self.render_debug.bloom_enabled = !self.render_debug.bloom_enabled;
+                    tracing::info!("Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" });
+                }
+                if input.just_pressed_key(KeyCode::Digit2) {
+                    // Cycle light intensity: 1x → 5x → 10x → 20x → 1x
+                    self.render_debug.light_intensity_mult = match self.render_debug.light_intensity_mult as u32 {
+                        0..=1 => 5.0,
+                        2..=5 => 10.0,
+                        6..=10 => 20.0,
+                        _ => 1.0,
+                    };
+                    tracing::info!("Light intensity: {}x", self.render_debug.light_intensity_mult);
+                }
+                if input.just_pressed_key(KeyCode::Digit3) {
+                    self.render_debug.point_lights_enabled = !self.render_debug.point_lights_enabled;
+                    tracing::info!("Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" });
+                }
+                if input.just_pressed_key(KeyCode::Digit4) {
+                    self.render_debug.emission_enabled = !self.render_debug.emission_enabled;
+                    tracing::info!("Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" });
+                }
+                if input.just_pressed_key(KeyCode::Digit5) {
+                    self.render_debug.torch_flicker_enabled = !self.render_debug.torch_flicker_enabled;
+                    tracing::info!("Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" });
+                }
+                if input.just_pressed_key(KeyCode::Digit6) {
+                    // Cycle ambient override: 0 → 0.3 → 1.0 → 3.0 → 0
+                    self.render_debug.ambient_override = match self.render_debug.ambient_override {
+                        x if x < 0.1 => 0.3,
+                        x if x < 0.5 => 1.0,
+                        x if x < 2.0 => 3.0,
+                        _ => 0.0,
+                    };
+                    tracing::info!("Ambient override: {}", self.render_debug.ambient_override);
+                }
+            }
+        }
+    }
+
+    /// Advance the game by one frame: player and physics, gameplay systems,
+    /// scripts, deferred commands, events, then audio and particles. Not
+    /// called while the engine is paused.
+    fn tick_simulation(&mut self) {
+        let dt = self.delta_time;
+
+        // Phase 5: FPS controller update (skip in editor mode — uses free camera)
+        if !self.args.editor_mode {
+            if self.input_state.as_ref().map(|i| i.borrow().cursor_captured).unwrap_or(false) {
+                self.update_fps_controller();
+            }
+        }
+
+        // Always advance physics (gravity, collisions, etc.), in
+        // fixed steps so the simulation does not depend on the
+        // frame rate. Scripts get `fixed_update` before each step.
+        if let (Some(scene_world), Some(physics_world)) =
+            (&self.scene_world, &self.physics_world)
+        {
+            crate::sim::run_fixed_steps(
+                physics_world,
+                scene_world,
+                self.script_runtime.as_ref(),
+                self.delta_time,
+            );
+        }
+
+        self.dispatch_collision_events();
+
+        // Tier 1: Process collision damage (auto-damage + projectile hits)
+        self.process_collision_damage();
+
+        // Tier 1: Update projectiles (age tracking, lifetime expiry)
+        self.update_projectiles();
+
+        // Tier 1: Process health system (on_death callbacks)
+        self.process_health_system();
+
+        // Phase 6: Update scripts
+        self.update_scripts(dt);
+
+        // Tick skeletal animations
+        self.tick_animations();
+
+        // Process deferred entity commands from Lua
+        self.process_entity_commands();
+
+        // Process deferred scene load (must be after entity commands)
+        self.process_pending_scene_load();
+
+        // Tier 2: Dispatch Lua event listeners
+        self.dispatch_lua_events(dt);
+
+        let _tween_results = self.tween_system.update(dt);
+        self.audio_system.borrow_mut().cleanup();
+
+        // Tier 2: Update particle system
+        if let Some(scene_world) = &self.scene_world {
+            let scene_world = scene_world.borrow();
+            self.particle_system.borrow_mut().update(dt, &*scene_world);
+        }
+
+        // Update listener position for spatial audio
+        if let Some(scene_world) = &self.scene_world {
+            let scene_world = scene_world.borrow();
+            // Only the first player entity drives the listener.
+            let listener_pos = scene_world
+                .world
+                .query::<(&Transform, &Player)>()
+                .iter()
+                .next()
+                .map(|(_entity, (transform, _player))| transform.position);
+            if let Some(pos) = listener_pos {
+                self.audio_system.borrow_mut().set_listener_position(pos);
+            }
+        }
+    }
+
+    /// Call `on_collision` on both scripts for each contact that began this frame.
+    fn dispatch_collision_events(&self) {
+        if let (Some(scene_world), Some(physics_world), Some(script_runtime)) =
+            (&self.scene_world, &self.physics_world, &self.script_runtime)
+        {
+            crate::sim::dispatch_collision_events(scene_world, physics_world, script_runtime);
+        }
+    }
+
+    /// Call `update(dt)` on every scripted entity.
+    fn update_scripts(&self, dt: f32) {
+        if let (Some(scene_world), Some(script_runtime)) =
+            (&self.scene_world, &self.script_runtime)
+        {
+            crate::sim::update_scripts(scene_world, script_runtime, dt);
+        }
+    }
+
+    /// Advance the event bus and hand this frame's events to Lua listeners.
+    fn dispatch_lua_events(&self, dt: f32) {
+        crate::sim::dispatch_lua_events(
+            &self.event_bus,
+            &self.lua_event_listeners,
+            self.script_runtime.as_ref(),
+            dt,
+        );
+    }
+
+    /// Get the scene ready to draw: world transforms, camera, GPU draw
+    /// buffer size, splat order and the editor overlay. Requires a loaded scene.
+    fn prepare_render(&mut self) {
+        // Update transforms and camera
+        {
+            let mut sw = self.scene_world.as_ref().unwrap().borrow_mut();
+            crate::transform::update_transforms(&mut sw.world);
+        }
+        // Editor mode: camera already updated above via update_editor_camera()
+        if !self.args.editor_mode {
+            self.update_camera();
+        }
+
+        // Tier 2: Grow GPU draw buffer if needed
+        if let (Some(gpu), Some(scene_world), Some(draw_pool)) =
+            (&self.gpu, &self.scene_world, &mut self.draw_pool)
+        {
+            let sw = scene_world.borrow();
+            let mut visible_count = 0u32;
+            for (entity, _) in sw.world.query::<&crate::components::MeshRenderer>().iter() {
+                if sw.world.get::<&crate::components::Hidden>(entity).is_ok() {
+                    continue;
+                }
+                visible_count += 1;
+            }
+            draw_pool.ensure_capacity(&gpu.device, visible_count);
+        }
+
+        // Sort splats for correct alpha blending (CPU back-to-front)
+        if let (Some(gpu), Some(scene_world), Some(camera_state)) =
+            (&self.gpu, &self.scene_world, &self.camera_state)
+        {
+            let cs = camera_state.borrow();
+            let view_matrix = cs.view_matrix();
+            let sw = scene_world.borrow();
+            for (_entity, splat) in
+                sw.world.query::<&GaussianSplat>().iter()
+            {
+                self.splat_cache.sort_splats(
+                    splat.splat_handle,
+                    &view_matrix,
+                    &gpu.queue,
+                );
+            }
+        }
+
+        // Queue editor overlay draw commands (before gpu borrow)
+        if self.args.editor_mode {
+            self.draw_editor_overlay();
+        }
+    }
+
+    /// Draw the frame: 3D scene, collider wireframes, UI overlay, then
+    /// present. Returns early, drawing nothing, if the surface is unavailable.
+    fn render_frame(&mut self) {
+        // Acquire swapchain and render 3D scene + UI overlay
+        if let Some(gpu) = &self.gpu {
+            let output = match gpu.surface.get_current_texture() {
+                Ok(t) => t,
+                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    gpu.surface.configure(&gpu.device, &gpu.config);
+                    return;
+                }
+                Err(e) => {
+                    tracing::error!("Surface error: {:?}", e);
+                    return;
+                }
+            };
+
+            let swapchain_view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+
+            // Render 3D scene
+            if self.compiled_pipeline.is_some() {
+                if let (
+                    Some(scene_world),
+                    Some(camera_state),
+                    Some(draw_pool),
+                    Some(compiled),
+                ) = (
+                    &self.scene_world,
+                    &self.camera_state,
+                    &self.draw_pool,
+                    &self.compiled_pipeline,
+                ) {
+                    let sw = scene_world.borrow();
+                    let cs = camera_state.borrow();
+                    let encoder = crate::pipeline::execute_pipeline_to_view(
+                        gpu,
+                        compiled,
+                        &*sw,
+                        &*cs,
+                        draw_pool,
+                        &self.mesh_cache,
+                        &self.material_cache,
+                        &self.splat_cache,
+                        &swapchain_view,
+                        &self.render_debug,
+                        self.texture_resources.as_ref(),
+                        &self.bone_palettes,
+                        Some(&self.texture_cache),
+                    );
+                    gpu.queue.submit(std::iter::once(encoder.finish()));
+                }
+            } else if let (
+                Some(scene_world),
+                Some(camera_state),
+                Some(draw_pool),
+                Some(forward_pipeline),
+            ) = (
+                &self.scene_world,
+                &self.camera_state,
+                &self.draw_pool,
+                &self.forward_pipeline,
+            ) {
+                let mut encoder = gpu.device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor {
+                        label: Some("Forward Render Encoder"),
+                    },
+                );
+                let sw = scene_world.borrow();
+                let cs = camera_state.borrow();
+                crate::renderer::render_scene_to_view(
+                    gpu,
+                    &*sw,
+                    &*cs,
+                    draw_pool,
+                    &self.mesh_cache,
+                    &self.material_cache,
+                    forward_pipeline,
+                    &swapchain_view,
+                    &mut encoder,
+                    self.texture_resources.as_ref(),
+                );
+                gpu.queue.submit(std::iter::once(encoder.finish()));
+            }
+
+            // Debug wireframe pass: draw collider shapes over 3D scene
+            if self.render_debug.show_colliders {
+                if let (Some(debug_draw), Some(physics_world), Some(camera_state)) = (
+                    &self.debug_draw,
+                    &self.physics_world,
+                    &self.camera_state,
+                ) {
+                    let pw = physics_world.borrow();
+                    let cs = camera_state.borrow();
+                    let mut encoder = gpu.device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor { label: Some("Debug Wireframe Encoder") },
+                    );
+                    debug_draw.render(
+                        &gpu.device,
+                        &mut encoder,
+                        &swapchain_view,
+                        &gpu.depth_view,
+                        &*cs,
+                        &*pw,
+                    );
+                    gpu.queue.submit(std::iter::once(encoder.finish()));
+                }
+            }
+
+            // UI overlay pass (drawn on top of 3D scene)
+            if let (Some(ui_rc), Some(font_rc)) = (
+                &self.ui_renderer,
+                &self.bitmap_font,
+            ) {
+                let mut ui = ui_rc.borrow_mut();
+                let font_guard = font_rc.borrow();
+                let font: &BitmapFont = &*font_guard;
+                // Queue render debug HUD if enabled
+                if self.render_debug.show_hud {
+                    let on = [0.3, 1.0, 0.3, 1.0];
+                    let off = [1.0, 0.3, 0.3, 1.0];
+                    let val = [1.0, 0.9, 0.3, 1.0];
+                    let hdr = [0.7, 0.7, 0.7, 1.0];
+                    let sz = 16.0;
+                    let x = 10.0;
+                    let mut y = 10.0;
+
+                    ui.draw_text(x, y, "RENDER DEBUG", sz, hdr, font); y += sz + 4.0;
+                    let c = if self.render_debug.bloom_enabled { on } else { off };
+                    ui.draw_text(x, y, &format!("[1] Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
+                    ui.draw_text(x, y, &format!("[2] Light Boost: {}x", self.render_debug.light_intensity_mult), sz, val, font); y += sz + 2.0;
+                    let c = if self.render_debug.point_lights_enabled { on } else { off };
+                    ui.draw_text(x, y, &format!("[3] Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
+                    let c = if self.render_debug.emission_enabled { on } else { off };
+                    ui.draw_text(x, y, &format!("[4] Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
+                    let c = if self.render_debug.torch_flicker_enabled { on } else { off };
+                    ui.draw_text(x, y, &format!("[5] Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
+                    ui.draw_text(x, y, &format!("[6] Ambient: {}", if self.render_debug.ambient_override < 0.1 { "scene".to_string() } else { format!("{:.1}", self.render_debug.ambient_override) }), sz, val, font); y += sz + 2.0;
+                    ui.draw_text(x, y, "[0] Toggle this HUD", sz, hdr, font); y += sz + 2.0;
+                    let c = if self.render_debug.show_colliders { on } else { off };
+                    ui.draw_text(x, y, &format!("[H] Colliders: {}", if self.render_debug.show_colliders { "ON" } else { "OFF" }), sz, c, font);
+                }
+
+                // Always show collider indicator when active
+                if self.render_debug.show_colliders {
+                    ui.draw_text(10.0, (gpu.config.height as f32) - 30.0, "[H] Collider wireframes ON", 14.0, [0.0, 1.0, 1.0, 1.0], font);
+                }
+
+                // Reload notifications (always visible, auto-fade)
+                self.reload_notifications.retain(|(_, t, _)| t.elapsed().as_secs_f32() < 4.0);
+                let screen_w = gpu.config.width as f32;
+                let screen_h = gpu.config.height as f32;
+                for (i, (msg, t, color)) in self.reload_notifications.iter().rev().enumerate() {
+                    let age = t.elapsed().as_secs_f32();
+                    let alpha = if age > 3.0 { 1.0 - (age - 3.0) } else { 1.0 };
+                    let c = [color[0], color[1], color[2], color[3] * alpha];
+                    let text_w = msg.len() as f32 * 8.0; // approximate monospace width
+                    let x = screen_w - text_w - 20.0;
+                    let y = screen_h - 50.0 - (i as f32 * 20.0);
+                    ui.draw_text(x.max(10.0), y, msg, 14.0, c, font);
+                }
+
+                let mut ui_encoder = gpu.device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor {
+                        label: Some("UI Encoder"),
+                    },
+                );
+                ui.render(
+                    &gpu.device,
+                    &gpu.queue,
+                    &mut ui_encoder,
+                    &swapchain_view,
+                    font,
+                    gpu.config.width,
+                    gpu.config.height,
+                    self.delta_time,
+                );
+                gpu.queue.submit(std::iter::once(ui_encoder.finish()));
+            }
+
+            output.present();
+        }
+    }
 }
 
 impl ApplicationHandler for Engine {
@@ -3096,513 +3482,7 @@ impl ApplicationHandler for Engine {
                     }
                 }
             }
-            WindowEvent::RedrawRequested => {
-                // Calculate delta time
-                let now = instant::Instant::now();
-                if let Some(last) = self.last_frame_time {
-                    self.delta_time = now.duration_since(last).as_secs_f32().min(0.1);
-                }
-                self.last_frame_time = Some(now);
-
-                // Phase 8: Process command socket before input
-                self.process_commands();
-
-                // ── Editor mode: update free camera (runs full loop below) ─
-                if self.args.editor_mode {
-                    self.update_editor_camera();
-                }
-
-                // Handle Escape to toggle cursor capture (skip in editor mode)
-                if !self.args.editor_mode {
-                    if let Some(input_rc) = &self.input_state {
-                        let mut input = input_rc.borrow_mut();
-                        if input.key_held(KeyCode::Escape) {
-                            if let Some(gpu) = &self.gpu {
-                                let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::None);
-                                gpu.window.set_cursor_visible(true);
-                            }
-                            input.cursor_captured = false;
-                        }
-
-                        // Handle mouse click or any movement key to capture cursor
-                        if !input.cursor_captured {
-                            let should_capture = input.just_pressed("attack")
-                                || input.just_pressed("move_forward")
-                                || input.just_pressed("move_backward")
-                                || input.just_pressed("move_left")
-                                || input.just_pressed("move_right")
-                                || input.just_pressed("jump")
-                                || input.just_pressed("interact");
-                            if should_capture {
-                                tracing::info!("Capturing cursor for FPS mode");
-                                if let Some(gpu) = &self.gpu {
-                                    let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                                        .or_else(|_| gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Confined));
-                                    gpu.window.set_cursor_visible(false);
-                                }
-                                input.cursor_captured = true;
-                            }
-                        }
-                    }
-                }
-
-                // Render debug toggles: 0 always toggles HUD, 1-6 only when HUD is visible
-                if let Some(input) = &self.input_state {
-                    let input = input.borrow_mut();
-                    if input.just_pressed_key(KeyCode::Digit0) {
-                        self.render_debug.show_hud = !self.render_debug.show_hud;
-                    }
-                    if input.just_pressed_key(KeyCode::KeyH) {
-                        self.render_debug.show_colliders = !self.render_debug.show_colliders;
-                        tracing::info!("Collider wireframes: {}", if self.render_debug.show_colliders { "ON" } else { "OFF" });
-                    }
-                    if self.render_debug.show_hud {
-                        if input.just_pressed_key(KeyCode::Digit1) {
-                            self.render_debug.bloom_enabled = !self.render_debug.bloom_enabled;
-                            tracing::info!("Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" });
-                        }
-                        if input.just_pressed_key(KeyCode::Digit2) {
-                            // Cycle light intensity: 1x → 5x → 10x → 20x → 1x
-                            self.render_debug.light_intensity_mult = match self.render_debug.light_intensity_mult as u32 {
-                                0..=1 => 5.0,
-                                2..=5 => 10.0,
-                                6..=10 => 20.0,
-                                _ => 1.0,
-                            };
-                            tracing::info!("Light intensity: {}x", self.render_debug.light_intensity_mult);
-                        }
-                        if input.just_pressed_key(KeyCode::Digit3) {
-                            self.render_debug.point_lights_enabled = !self.render_debug.point_lights_enabled;
-                            tracing::info!("Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" });
-                        }
-                        if input.just_pressed_key(KeyCode::Digit4) {
-                            self.render_debug.emission_enabled = !self.render_debug.emission_enabled;
-                            tracing::info!("Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" });
-                        }
-                        if input.just_pressed_key(KeyCode::Digit5) {
-                            self.render_debug.torch_flicker_enabled = !self.render_debug.torch_flicker_enabled;
-                            tracing::info!("Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" });
-                        }
-                        if input.just_pressed_key(KeyCode::Digit6) {
-                            // Cycle ambient override: 0 → 0.3 → 1.0 → 3.0 → 0
-                            self.render_debug.ambient_override = match self.render_debug.ambient_override {
-                                x if x < 0.1 => 0.3,
-                                x if x < 0.5 => 1.0,
-                                x if x < 2.0 => 3.0,
-                                _ => 0.0,
-                            };
-                            tracing::info!("Ambient override: {}", self.render_debug.ambient_override);
-                        }
-                    }
-                }
-
-                // Poll for file changes (shader + scene + pipeline)
-                self.poll_changes();
-
-                if self.scene_world.is_some() {
-                    if !self.paused {
-                        // Phase 5: FPS controller update (skip in editor mode — uses free camera)
-                        if !self.args.editor_mode {
-                            if self.input_state.as_ref().map(|i| i.borrow().cursor_captured).unwrap_or(false) {
-                                self.update_fps_controller();
-                            }
-                        }
-
-                        // Always advance physics (gravity, collisions, etc.), in
-                        // fixed steps so the simulation does not depend on the
-                        // frame rate. Scripts get `fixed_update` before each step.
-                        if let (Some(scene_world), Some(physics_world)) =
-                            (&self.scene_world, &self.physics_world)
-                        {
-                            crate::scripting::run_fixed_steps(
-                                physics_world,
-                                scene_world,
-                                self.script_runtime.as_ref(),
-                                self.delta_time,
-                            );
-                        }
-
-                        // Dispatch collision events to scripts
-                        if let (Some(scene_world), Some(physics_world), Some(script_runtime)) =
-                            (&self.scene_world, &self.physics_world, &self.script_runtime)
-                        {
-                            let sw = scene_world.borrow();
-                            let pw = physics_world.borrow();
-                            // Build reverse lookup: entity -> string id
-                            let entity_to_id: HashMap<hecs::Entity, &str> = sw
-                                .entity_registry
-                                .iter()
-                                .map(|(id, &e)| (e, id.as_str()))
-                                .collect();
-
-                            for event in &pw.collision_events {
-                                let id_a = entity_to_id.get(&event.entity_a).copied().unwrap_or("unknown");
-                                let id_b = entity_to_id.get(&event.entity_b).copied().unwrap_or("unknown");
-                                // Dispatch both directions
-                                script_runtime.call_on_collision(event.entity_a, id_b);
-                                script_runtime.call_on_collision(event.entity_b, id_a);
-                            }
-                        }
-
-                        // Tier 1: Process collision damage (auto-damage + projectile hits)
-                        self.process_collision_damage();
-
-                        // Tier 1: Update projectiles (age tracking, lifetime expiry)
-                        self.update_projectiles();
-
-                        // Tier 1: Process health system (on_death callbacks)
-                        self.process_health_system();
-
-                        // Phase 6: Update scripts
-                        let dt = self.delta_time;
-                        if let (Some(scene_world), Some(script_runtime)) =
-                            (&self.scene_world, &self.script_runtime)
-                        {
-                            let scripted: Vec<hecs::Entity> = {
-                                let sw = scene_world.borrow();
-                                let mut query = sw.world.query::<&Script>();
-                                query.iter().map(|(e, _)| e).collect()
-                            };
-                            for entity in scripted {
-                                script_runtime.call_update(entity, dt);
-                            }
-                        }
-
-                        // Tick skeletal animations
-                        self.tick_animations();
-
-                        // Process deferred entity commands from Lua
-                        self.process_entity_commands();
-
-                        // Process deferred scene load (must be after entity commands)
-                        self.process_pending_scene_load();
-
-                        // Tier 2: Dispatch Lua event listeners
-                        self.event_bus.borrow_mut().tick(dt as f64);
-                        let flushed_events = self.event_bus.borrow_mut().flush();
-                        if let Some(script_runtime) = &self.script_runtime {
-                            for event in &flushed_events {
-                                let listener_keys: Vec<_> = self.lua_event_listeners.borrow()
-                                    .get(&event.event_type)
-                                    .map(|keys| keys.iter().map(|k| script_runtime.lua.registry_value::<mlua::Function>(k)).collect())
-                                    .unwrap_or_default();
-                                for func_result in listener_keys {
-                                    if let Ok(func) = func_result {
-                                        let lua = &script_runtime.lua;
-                                        if let Ok(tbl) = lua.create_table() {
-                                            let _ = tbl.set("type", event.event_type.clone());
-                                            if let Ok(data_tbl) = lua.create_table() {
-                                                for (k, v) in &event.data {
-                                                    match v {
-                                                        serde_json::Value::Number(n) => {
-                                                            if let Some(f) = n.as_f64() {
-                                                                let _ = data_tbl.set(k.as_str(), f);
-                                                            }
-                                                        }
-                                                        serde_json::Value::String(s) => {
-                                                            let _ = data_tbl.set(k.as_str(), s.as_str());
-                                                        }
-                                                        serde_json::Value::Bool(b) => {
-                                                            let _ = data_tbl.set(k.as_str(), *b);
-                                                        }
-                                                        _ => {}
-                                                    }
-                                                }
-                                                let _ = tbl.set("data", data_tbl);
-                                            }
-                                            if let Err(e) = func.call::<()>(tbl) {
-                                                tracing::error!("Lua event listener error: {}", e);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        let _tween_results = self.tween_system.update(dt);
-                        self.audio_system.borrow_mut().cleanup();
-
-                        // Tier 2: Update particle system
-                        if let Some(scene_world) = &self.scene_world {
-                            let scene_world = scene_world.borrow();
-                            self.particle_system.borrow_mut().update(dt, &*scene_world);
-                        }
-
-                        // Update listener position for spatial audio
-                        if let Some(scene_world) = &self.scene_world {
-                            let scene_world = scene_world.borrow();
-                            // Only the first player entity drives the listener.
-                            let listener_pos = scene_world
-                                .world
-                                .query::<(&Transform, &Player)>()
-                                .iter()
-                                .next()
-                                .map(|(_entity, (transform, _player))| transform.position);
-                            if let Some(pos) = listener_pos {
-                                self.audio_system.borrow_mut().set_listener_position(pos);
-                            }
-                        }
-                    }
-
-                    // Update transforms and camera
-                    {
-                        let mut sw = self.scene_world.as_ref().unwrap().borrow_mut();
-                        crate::transform::update_transforms(&mut sw.world);
-                    }
-                    // Editor mode: camera already updated above via update_editor_camera()
-                    if !self.args.editor_mode {
-                        self.update_camera();
-                    }
-
-                    // Tier 2: Grow GPU draw buffer if needed
-                    if let (Some(gpu), Some(scene_world), Some(draw_pool)) =
-                        (&self.gpu, &self.scene_world, &mut self.draw_pool)
-                    {
-                        let sw = scene_world.borrow();
-                        let mut visible_count = 0u32;
-                        for (entity, _) in sw.world.query::<&crate::components::MeshRenderer>().iter() {
-                            if sw.world.get::<&crate::components::Hidden>(entity).is_ok() {
-                                continue;
-                            }
-                            visible_count += 1;
-                        }
-                        draw_pool.ensure_capacity(&gpu.device, visible_count);
-                    }
-
-                    // Sort splats for correct alpha blending (CPU back-to-front)
-                    if let (Some(gpu), Some(scene_world), Some(camera_state)) =
-                        (&self.gpu, &self.scene_world, &self.camera_state)
-                    {
-                        let cs = camera_state.borrow();
-                        let view_matrix = cs.view_matrix();
-                        let sw = scene_world.borrow();
-                        for (_entity, splat) in
-                            sw.world.query::<&GaussianSplat>().iter()
-                        {
-                            self.splat_cache.sort_splats(
-                                splat.splat_handle,
-                                &view_matrix,
-                                &gpu.queue,
-                            );
-                        }
-                    }
-
-                    // Queue editor overlay draw commands (before gpu borrow)
-                    if self.args.editor_mode {
-                        self.draw_editor_overlay();
-                    }
-
-                    // Acquire swapchain and render 3D scene + UI overlay
-                    if let Some(gpu) = &self.gpu {
-                        let output = match gpu.surface.get_current_texture() {
-                            Ok(t) => t,
-                            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                                gpu.surface.configure(&gpu.device, &gpu.config);
-                                if let Some(gpu) = &self.gpu {
-                                    gpu.window.request_redraw();
-                                }
-                                if let Some(input) = &self.input_state {
-                                    let mut input = input.borrow_mut();
-                                    input.begin_frame();
-                                }
-                                return;
-                            }
-                            Err(e) => {
-                                tracing::error!("Surface error: {:?}", e);
-                                if let Some(gpu) = &self.gpu {
-                                    gpu.window.request_redraw();
-                                }
-                                if let Some(input) = &self.input_state {
-                                    let mut input = input.borrow_mut();
-                                    input.begin_frame();
-                                }
-                                return;
-                            }
-                        };
-
-                        let swapchain_view = output
-                            .texture
-                            .create_view(&wgpu::TextureViewDescriptor::default());
-
-                        // Render 3D scene
-                        if self.compiled_pipeline.is_some() {
-                            if let (
-                                Some(scene_world),
-                                Some(camera_state),
-                                Some(draw_pool),
-                                Some(compiled),
-                            ) = (
-                                &self.scene_world,
-                                &self.camera_state,
-                                &self.draw_pool,
-                                &self.compiled_pipeline,
-                            ) {
-                                let sw = scene_world.borrow();
-                                let cs = camera_state.borrow();
-                                let encoder = crate::pipeline::execute_pipeline_to_view(
-                                    gpu,
-                                    compiled,
-                                    &*sw,
-                                    &*cs,
-                                    draw_pool,
-                                    &self.mesh_cache,
-                                    &self.material_cache,
-                                    &self.splat_cache,
-                                    &swapchain_view,
-                                    &self.render_debug,
-                                    self.texture_resources.as_ref(),
-                                    &self.bone_palettes,
-                                    Some(&self.texture_cache),
-                                );
-                                gpu.queue.submit(std::iter::once(encoder.finish()));
-                            }
-                        } else if let (
-                            Some(scene_world),
-                            Some(camera_state),
-                            Some(draw_pool),
-                            Some(forward_pipeline),
-                        ) = (
-                            &self.scene_world,
-                            &self.camera_state,
-                            &self.draw_pool,
-                            &self.forward_pipeline,
-                        ) {
-                            let mut encoder = gpu.device.create_command_encoder(
-                                &wgpu::CommandEncoderDescriptor {
-                                    label: Some("Forward Render Encoder"),
-                                },
-                            );
-                            let sw = scene_world.borrow();
-                            let cs = camera_state.borrow();
-                            crate::renderer::render_scene_to_view(
-                                gpu,
-                                &*sw,
-                                &*cs,
-                                draw_pool,
-                                &self.mesh_cache,
-                                &self.material_cache,
-                                forward_pipeline,
-                                &swapchain_view,
-                                &mut encoder,
-                                self.texture_resources.as_ref(),
-                            );
-                            gpu.queue.submit(std::iter::once(encoder.finish()));
-                        }
-
-                        // Debug wireframe pass: draw collider shapes over 3D scene
-                        if self.render_debug.show_colliders {
-                            if let (Some(debug_draw), Some(physics_world), Some(camera_state)) = (
-                                &self.debug_draw,
-                                &self.physics_world,
-                                &self.camera_state,
-                            ) {
-                                let pw = physics_world.borrow();
-                                let cs = camera_state.borrow();
-                                let mut encoder = gpu.device.create_command_encoder(
-                                    &wgpu::CommandEncoderDescriptor { label: Some("Debug Wireframe Encoder") },
-                                );
-                                debug_draw.render(
-                                    &gpu.device,
-                                    &mut encoder,
-                                    &swapchain_view,
-                                    &gpu.depth_view,
-                                    &*cs,
-                                    &*pw,
-                                );
-                                gpu.queue.submit(std::iter::once(encoder.finish()));
-                            }
-                        }
-
-                        // UI overlay pass (drawn on top of 3D scene)
-                        if let (Some(ui_rc), Some(font_rc)) = (
-                            &self.ui_renderer,
-                            &self.bitmap_font,
-                        ) {
-                            let mut ui = ui_rc.borrow_mut();
-                            let font_guard = font_rc.borrow();
-                            let font: &BitmapFont = &*font_guard;
-                            // Queue render debug HUD if enabled
-                            if self.render_debug.show_hud {
-                                let on = [0.3, 1.0, 0.3, 1.0];
-                                let off = [1.0, 0.3, 0.3, 1.0];
-                                let val = [1.0, 0.9, 0.3, 1.0];
-                                let hdr = [0.7, 0.7, 0.7, 1.0];
-                                let sz = 16.0;
-                                let x = 10.0;
-                                let mut y = 10.0;
-
-                                ui.draw_text(x, y, "RENDER DEBUG", sz, hdr, font); y += sz + 4.0;
-                                let c = if self.render_debug.bloom_enabled { on } else { off };
-                                ui.draw_text(x, y, &format!("[1] Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
-                                ui.draw_text(x, y, &format!("[2] Light Boost: {}x", self.render_debug.light_intensity_mult), sz, val, font); y += sz + 2.0;
-                                let c = if self.render_debug.point_lights_enabled { on } else { off };
-                                ui.draw_text(x, y, &format!("[3] Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
-                                let c = if self.render_debug.emission_enabled { on } else { off };
-                                ui.draw_text(x, y, &format!("[4] Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
-                                let c = if self.render_debug.torch_flicker_enabled { on } else { off };
-                                ui.draw_text(x, y, &format!("[5] Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
-                                ui.draw_text(x, y, &format!("[6] Ambient: {}", if self.render_debug.ambient_override < 0.1 { "scene".to_string() } else { format!("{:.1}", self.render_debug.ambient_override) }), sz, val, font); y += sz + 2.0;
-                                ui.draw_text(x, y, "[0] Toggle this HUD", sz, hdr, font); y += sz + 2.0;
-                                let c = if self.render_debug.show_colliders { on } else { off };
-                                ui.draw_text(x, y, &format!("[H] Colliders: {}", if self.render_debug.show_colliders { "ON" } else { "OFF" }), sz, c, font);
-                            }
-
-                            // Always show collider indicator when active
-                            if self.render_debug.show_colliders {
-                                ui.draw_text(10.0, (gpu.config.height as f32) - 30.0, "[H] Collider wireframes ON", 14.0, [0.0, 1.0, 1.0, 1.0], font);
-                            }
-
-                            // Reload notifications (always visible, auto-fade)
-                            self.reload_notifications.retain(|(_, t, _)| t.elapsed().as_secs_f32() < 4.0);
-                            let screen_w = gpu.config.width as f32;
-                            let screen_h = gpu.config.height as f32;
-                            for (i, (msg, t, color)) in self.reload_notifications.iter().rev().enumerate() {
-                                let age = t.elapsed().as_secs_f32();
-                                let alpha = if age > 3.0 { 1.0 - (age - 3.0) } else { 1.0 };
-                                let c = [color[0], color[1], color[2], color[3] * alpha];
-                                let text_w = msg.len() as f32 * 8.0; // approximate monospace width
-                                let x = screen_w - text_w - 20.0;
-                                let y = screen_h - 50.0 - (i as f32 * 20.0);
-                                ui.draw_text(x.max(10.0), y, msg, 14.0, c, font);
-                            }
-
-                            let mut ui_encoder = gpu.device.create_command_encoder(
-                                &wgpu::CommandEncoderDescriptor {
-                                    label: Some("UI Encoder"),
-                                },
-                            );
-                            ui.render(
-                                &gpu.device,
-                                &gpu.queue,
-                                &mut ui_encoder,
-                                &swapchain_view,
-                                font,
-                                gpu.config.width,
-                                gpu.config.height,
-                                self.delta_time,
-                            );
-                            gpu.queue.submit(std::iter::once(ui_encoder.finish()));
-                        }
-
-                        output.present();
-                    }
-
-                    if let Some(gpu) = &self.gpu {
-                        gpu.window.request_redraw();
-                    }
-                } else {
-                    // Phase 1: triangle fallback
-                    if let Some(gpu) = &self.gpu {
-                        crate::renderer::render(gpu);
-                        gpu.window.request_redraw();
-                    }
-                }
-
-                // End of frame: clear transient input state for next frame
-                if let Some(input) = &self.input_state {
-                    let mut input = input.borrow_mut();
-                    input.begin_frame();
-                }
-            }
+            WindowEvent::RedrawRequested => self.run_frame(),
             _ => {}
         }
     }
