@@ -11,6 +11,8 @@ members = [
 [workspace.package]
 version = "0.1.19"
 edition = "2021"
+# Lowest Rust the dependencies accept (image 0.25 needs 1.85).
+rust-version = "1.85"
 
 [workspace.dependencies]
 # Math

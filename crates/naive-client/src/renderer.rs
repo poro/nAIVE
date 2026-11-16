@@ -472,6 +472,7 @@ pub fn render(gpu: &GpuState) {
 
 /// Render one frame with 3D scene content.
 /// Render the 3D scene to the provided view and encoder (does not acquire/present swapchain).
+#[allow(clippy::too_many_arguments)]
 pub fn render_scene_to_view(
     gpu: &GpuState,
     scene_world: &SceneWorld,

@@ -58,6 +58,7 @@ pub fn execute_pipeline(
 }
 
 /// Execute the compiled multi-pass pipeline, returning the encoder for further passes.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_pipeline_to_view(
     gpu: &GpuState,
     compiled: &CompiledPipeline,
@@ -267,7 +268,7 @@ pub fn execute_pipeline_to_view(
                     pass,
                     compiled,
                     camera_state,
-                    &swapchain_view,
+                    swapchain_view,
                 );
             }
             PassType::Splat => {
@@ -303,6 +304,7 @@ pub fn execute_pipeline_to_view(
 }
 
 /// Execute a shadow depth pass (renders all geometry from light's perspective).
+#[allow(clippy::too_many_arguments)]
 fn execute_shadow_pass(
     encoder: &mut wgpu::CommandEncoder,
     gpu: &GpuState,
@@ -379,6 +381,7 @@ fn execute_shadow_pass(
 }
 
 /// Execute a rasterize pass (G-buffer geometry pass).
+#[allow(clippy::too_many_arguments)]
 fn execute_rasterize_pass(
     encoder: &mut wgpu::CommandEncoder,
     gpu: &GpuState,

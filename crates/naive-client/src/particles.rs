@@ -178,6 +178,12 @@ impl ParticleSystem {
     }
 }
 
+impl Default for ParticleSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Vertex data for a particle billboard quad.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

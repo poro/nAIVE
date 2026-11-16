@@ -308,11 +308,11 @@ passes:
 
     #[test]
     fn test_pass_type_from_str() {
-        assert_eq!(PassType::from_str("rasterize"), Some(PassType::Rasterize));
-        assert_eq!(PassType::from_str("fullscreen"), Some(PassType::Fullscreen));
-        assert_eq!(PassType::from_str("compute"), Some(PassType::Compute));
-        assert_eq!(PassType::from_str("splat"), Some(PassType::Splat));
-        assert_eq!(PassType::from_str("shadow"), Some(PassType::Shadow));
-        assert_eq!(PassType::from_str("invalid"), None);
+        assert_eq!(PassType::from_name("rasterize"), Some(PassType::Rasterize));
+        assert_eq!(PassType::from_name("fullscreen"), Some(PassType::Fullscreen));
+        assert_eq!(PassType::from_name("compute"), Some(PassType::Compute));
+        assert_eq!(PassType::from_name("splat"), Some(PassType::Splat));
+        assert_eq!(PassType::from_name("shadow"), Some(PassType::Shadow));
+        assert_eq!(PassType::from_name("invalid"), None);
     }
 }

@@ -231,6 +231,9 @@ pub struct MeshCache {
     path_to_handle: HashMap<PathBuf, MeshHandle>,
 }
 
+/// Vertices and triangle indices of a mesh, as the physics engine takes them.
+pub type PhysicsTrimesh = (Vec<rapier3d::na::Point3<f32>>, Vec<[u32; 3]>);
+
 impl MeshCache {
     pub fn new() -> Self {
         Self {
@@ -355,7 +358,7 @@ impl MeshCache {
     }
 
     /// Get physics trimesh data for a mesh handle (vertices scaled by transform scale).
-    pub fn get_physics_trimesh(&self, handle: MeshHandle, scale: glam::Vec3) -> Option<(Vec<rapier3d::na::Point3<f32>>, Vec<[u32; 3]>)> {
+    pub fn get_physics_trimesh(&self, handle: MeshHandle, scale: glam::Vec3) -> Option<PhysicsTrimesh> {
         let mesh = self.meshes.get(handle.0)?;
         let verts = mesh.physics_vertices.as_ref()?;
         let idxs = mesh.physics_indices.as_ref()?;
@@ -373,6 +376,12 @@ impl MeshCache {
             }
         }
         None
+    }
+}
+
+impl Default for MeshCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -413,7 +422,7 @@ fn load_stl(
     for face in &stl.faces {
         let n = [face.normal[0], face.normal[1], face.normal[2]];
         for &vi in &face.vertices {
-            let idx = vi as usize;
+            let idx = vi;
             vertex_normals[idx][0] += n[0];
             vertex_normals[idx][1] += n[1];
             vertex_normals[idx][2] += n[2];
@@ -685,12 +694,12 @@ fn extract_skin_data(
                             match outputs {
                                 gltf::animation::util::ReadOutputs::Translations(iter) => {
                                     naive_core::animation::ChannelValues::Vec3(
-                                        iter.map(|v| glam::Vec3::from(v)).collect(),
+                                        iter.map(glam::Vec3::from).collect(),
                                     )
                                 }
                                 gltf::animation::util::ReadOutputs::Scales(iter) => {
                                     naive_core::animation::ChannelValues::Vec3(
-                                        iter.map(|v| glam::Vec3::from(v)).collect(),
+                                        iter.map(glam::Vec3::from).collect(),
                                     )
                                 }
                                 _ => return None,

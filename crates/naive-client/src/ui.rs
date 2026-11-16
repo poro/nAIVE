@@ -1,5 +1,5 @@
-/// Immediate-mode 2D overlay renderer for text, rectangles, and screen effects.
-/// Draws on top of the 3D scene using LoadOp::Load to preserve the existing framebuffer.
+//! Immediate-mode 2D overlay renderer for text, rectangles, and screen effects.
+//! Draws on top of the 3D scene using LoadOp::Load to preserve the existing framebuffer.
 
 use crate::font::{self, BitmapFont};
 
@@ -341,6 +341,7 @@ impl UiRenderer {
 
     /// Render all queued UI on top of the existing framebuffer.
     /// Call once per frame after 3D rendering. Clears draw commands after rendering.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         _device: &wgpu::Device,
@@ -456,6 +457,7 @@ impl UiRenderer {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn push_quad(
     verts: &mut Vec<Vertex2D>,
     idx: &mut Vec<u16>,

@@ -226,7 +226,7 @@ pub enum AnimState {
 }
 
 impl AnimState {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_name(s: &str) -> Self {
         match s {
             "idle" => Self::Idle,
             "walk" => Self::Walk,

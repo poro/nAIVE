@@ -16,6 +16,17 @@ use crate::scripting::{
     SharedSceneWorld,
 };
 
+/// What `update_fps_controller` works out for one player before moving it.
+struct PlayerMove {
+    entity: hecs::Entity,
+    desired: glam::Vec3,
+    yaw: f32,
+    pitch: f32,
+    body: rapier3d::prelude::RigidBodyHandle,
+    collider: rapier3d::prelude::ColliderHandle,
+    vel_y: f32,
+}
+
 /// Move every player-controlled character for a frame that lasted `dt`
 /// seconds: mouse look, WASD movement, jumping and gravity, resolved against
 /// the world by the character controller.
@@ -30,7 +41,7 @@ pub fn update_fps_controller(
     let mut physics_world = physics_world.borrow_mut();
 
     // Collect player entity data
-    let mut player_updates: Vec<(hecs::Entity, glam::Vec3, f32, f32, rapier3d::prelude::RigidBodyHandle, rapier3d::prelude::ColliderHandle, f32, f32, f32, bool, glam::Vec3)> = Vec::new();
+    let mut player_updates: Vec<PlayerMove> = Vec::new();
 
     for (entity, (player, cc, rb, col)) in scene_world
         .world
@@ -78,23 +89,19 @@ pub fn update_fps_controller(
         vel_y += physics_world.gravity.y * dt;
         desired.y = vel_y * dt;
 
-        player_updates.push((
+        player_updates.push(PlayerMove {
             entity,
             desired,
-            new_yaw,
-            new_pitch,
-            rb.handle,
-            col.handle,
+            yaw: new_yaw,
+            pitch: new_pitch,
+            body: rb.handle,
+            collider: col.handle,
             vel_y,
-            player.height,
-            player.radius,
-            cc.grounded,
-            cc.velocity,
-        ));
+        });
     }
 
     // Apply updates
-    for (entity, desired, new_yaw, new_pitch, rb_handle, col_handle, vel_y, _height, _radius, _was_grounded, _old_vel) in player_updates {
+    for PlayerMove { entity, desired, yaw: new_yaw, pitch: new_pitch, body: rb_handle, collider: col_handle, vel_y } in player_updates {
         let (_effective, grounded) = physics_world.move_character(rb_handle, col_handle, desired, dt);
 
         // Update ECS components

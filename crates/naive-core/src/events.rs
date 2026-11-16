@@ -26,10 +26,13 @@ pub struct EventFieldSchema {
     pub description: String,
 }
 
+/// A callback registered for one event type.
+type Listener = Box<dyn Fn(&GameEvent) + Send + Sync>;
+
 /// Central event bus with ring buffer logging.
 pub struct EventBus {
     /// Listeners keyed by event type. Each listener gets an ID.
-    listeners: HashMap<String, Vec<(u64, Box<dyn Fn(&GameEvent) + Send + Sync>)>>,
+    listeners: HashMap<String, Vec<(u64, Listener)>>,
     next_listener_id: u64,
     /// Ring buffer log of recent events.
     log: VecDeque<GameEvent>,
@@ -138,7 +141,7 @@ impl EventBus {
     /// Flush pending events: notify Rust listeners, log to ring buffer and file.
     /// Returns the flushed events for Lua listener dispatch.
     pub fn flush(&mut self) -> Vec<GameEvent> {
-        let events: Vec<GameEvent> = self.pending.drain(..).collect();
+        let events: Vec<GameEvent> = std::mem::take(&mut self.pending);
 
         for event in &events {
             // Notify Rust listeners

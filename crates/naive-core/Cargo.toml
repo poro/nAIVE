@@ -2,6 +2,7 @@
 name = "naive-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license = "MIT"
 description = "nAIVE engine core types — components, scenes, transforms, tweens, events"
 

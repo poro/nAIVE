@@ -54,7 +54,7 @@ The build produces three binaries in `target/release/`:
 
 ### Requirements
 
-- Rust 1.75+ (for building from source)
+- Rust 1.85+ (for building from source)
 - macOS 12+ (Metal), Windows 10+ (Vulkan/DX12), or Linux (Vulkan)
 - GPU with WebGPU support
 

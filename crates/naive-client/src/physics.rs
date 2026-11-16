@@ -128,15 +128,17 @@ pub struct PhysicsWorld {
 
 impl PhysicsWorld {
     pub fn new(gravity: Vec3) -> Self {
-        let mut character_controller = KinematicCharacterController::default();
-        character_controller.max_slope_climb_angle = 45.0_f32.to_radians();
-        character_controller.min_slope_slide_angle = 30.0_f32.to_radians();
-        character_controller.autostep = Some(CharacterAutostep {
-            max_height: CharacterLength::Absolute(0.3),
-            min_width: CharacterLength::Absolute(0.2),
-            include_dynamic_bodies: false,
-        });
-        character_controller.snap_to_ground = Some(CharacterLength::Absolute(0.1));
+        let character_controller = KinematicCharacterController {
+            max_slope_climb_angle: 45.0_f32.to_radians(),
+            min_slope_slide_angle: 30.0_f32.to_radians(),
+            autostep: Some(CharacterAutostep {
+                max_height: CharacterLength::Absolute(0.3),
+                min_width: CharacterLength::Absolute(0.2),
+                include_dynamic_bodies: false,
+            }),
+            snap_to_ground: Some(CharacterLength::Absolute(0.1)),
+            ..Default::default()
+        };
 
         Self {
             gravity,
@@ -165,6 +167,7 @@ impl PhysicsWorld {
     }
 
     /// Add a static rigid body + collider (e.g., a wall or floor).
+    #[allow(clippy::too_many_arguments)]
     pub fn add_static_body(
         &mut self,
         entity: hecs::Entity,
@@ -200,6 +203,7 @@ impl PhysicsWorld {
     }
 
     /// Add a kinematic rigid body + collider (moved by game code, not physics).
+    #[allow(clippy::too_many_arguments)]
     pub fn add_kinematic_body(
         &mut self,
         entity: hecs::Entity,
@@ -235,6 +239,7 @@ impl PhysicsWorld {
     }
 
     /// Add a dynamic rigid body + collider.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_dynamic_body(
         &mut self,
         entity: hecs::Entity,
