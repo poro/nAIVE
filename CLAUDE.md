@@ -10,7 +10,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 - **Scripting:** Lua 5.4 (mlua)
 - **ECS:** hecs
 - **Audio:** kira
-- **Current version:** 0.1.21
+- **Current version:** 0.1.22
 
 ## Workspace Crates
 
@@ -242,11 +242,14 @@ the pull request.
 ## Releases
 
 1. `scripts/bump-version.sh X.Y.Z`, then a pull request with the result.
-2. After it merges, tag the merge commit on master: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. `.github/workflows/release.yml` builds `naive` and `naive-player`, bundles the
+2. When it merges, `.github/workflows/release.yml` sees the new version on master,
+   tags the merge commit `vX.Y.Z` and releases it (pushing such a tag by hand
+   releases too). It builds `naive` and `naive-player`, bundles the
    demo project as an app (notarized when the Developer ID secrets are set),
-   checks that GitHub's source archive includes the LFS meshes, publishes the
-   release and prints the Homebrew `url` and `sha256`.
-4. Update `../homebrew-tap/Formula/naive.rb` with them. The formula must also
+   attaches `nAIVE-X.Y.Z-source.tar.gz` (the source with the Git LFS files, which
+   GitHub's own archives may lack), publishes the release and prints that
+   tarball's `url` and `sha256` for Homebrew.
+4. Update `../homebrew-tap/Formula/naive.rb` with them; the formula builds from
+   that release asset, not from GitHub's archive. The formula must also
    build `crates/naive-player` (`cargo install` it alongside
    `crates/naive-runtime`) so `naive build` can bundle it.

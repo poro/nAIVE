@@ -3,9 +3,8 @@
 #
 #   scripts/bump-version.sh 0.1.22
 #
-# Then open a pull request with the result. Once it is merged, tag the merge
-# commit on master (`git tag v0.1.22 && git push origin v0.1.22`); the release
-# workflow builds, signs and publishes from the tag.
+# Then open a pull request with the result. When it merges, the release
+# workflow tags the merge commit (v0.1.22) and builds, signs and publishes it.
 set -eu
 
 version="${1:?usage: scripts/bump-version.sh X.Y.Z}"
