@@ -15,10 +15,6 @@ pub struct CliArgs {
     #[arg(long)]
     pub pipeline: Option<String>,
 
-    /// Output mode: window or headless
-    #[arg(long, default_value = "window")]
-    pub output: OutputMode,
-
     /// Path to the game project root directory
     #[arg(long, default_value = "project")]
     pub project: String,
@@ -95,10 +91,4 @@ pub enum Command {
         #[arg(long)]
         mock: Option<String>,
     },
-}
-
-#[derive(clap::ValueEnum, Clone, Debug)]
-pub enum OutputMode {
-    Window,
-    Headless,
 }

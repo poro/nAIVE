@@ -7,7 +7,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::cli::{CliArgs, OutputMode};
+use crate::cli::CliArgs;
 
 // ---------------------------------------------------------------------------
 // Shared infrastructure (embedded)
@@ -442,7 +442,6 @@ pub fn run_demo(selector: Option<&str>) -> Option<CliArgs> {
         command: None,
         scene: Some(format!("scenes/{}", demo.scene_filename)),
         pipeline: Some("pipelines/render.yaml".to_string()),
-        output: OutputMode::Window,
         project: project_root.to_string_lossy().to_string(),
         socket: "/tmp/naive-runtime.sock".to_string(),
         hud: false,

@@ -60,7 +60,7 @@ pub struct Engine {
     // Phase 5: input + physics
     pub input_state: Option<Rc<RefCell<InputState>>>,
     pub physics_world: Option<Rc<RefCell<PhysicsWorld>>>,
-    last_frame_time: Option<instant::Instant>,
+    last_frame_time: Option<std::time::Instant>,
     delta_time: f32,
 
     // Phase 6: scripting
@@ -100,14 +100,14 @@ pub struct Engine {
     pub debug_draw: Option<crate::debug_draw::DebugDrawRenderer>,
 
     // Hot-reload notifications (message, timestamp, color)
-    pub reload_notifications: Vec<(String, instant::Instant, [f32; 4])>,
+    pub reload_notifications: Vec<(String, std::time::Instant, [f32; 4])>,
 
     // Camera shake state
     pub camera_shake: Rc<RefCell<CameraShakeState>>,
 
     // Editor mode
     pub editor_camera: Option<EditorCamera>,
-    pub editor_command_log: Vec<(String, instant::Instant)>,
+    pub editor_command_log: Vec<(String, std::time::Instant)>,
     pub editor_scene_path: Option<PathBuf>,
 
     // Surface config shared with scripting API
@@ -544,7 +544,7 @@ impl Engine {
             }
         }
         self.physics_world = Some(Rc::new(RefCell::new(physics_world)));
-        self.last_frame_time = Some(instant::Instant::now());
+        self.last_frame_time = Some(std::time::Instant::now());
         tracing::info!("Physics world initialized");
 
         // Phase 6: Initialize scripting runtime
@@ -809,7 +809,7 @@ impl Engine {
 
         self.script_runtime = Some(script_runtime);
 
-        self.last_frame_time = Some(instant::Instant::now());
+        self.last_frame_time = Some(std::time::Instant::now());
 
         // Initialize editor camera: try to extract position from scene's main camera
         let cam_pos = self.scene_world.as_ref().and_then(|sw| {
@@ -1166,7 +1166,7 @@ let mut scene_world = scene_world.borrow_mut();
             Ok(s) => s,
             Err(e) => {
                 let file_name = changed_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-                self.reload_notifications.push((format!("Scene failed: {} - {}", file_name, e), instant::Instant::now(), [1.0, 0.3, 0.3, 1.0]));
+                self.reload_notifications.push((format!("Scene failed: {} - {}", file_name, e), std::time::Instant::now(), [1.0, 0.3, 0.3, 1.0]));
                 tracing::error!("Scene reload failed: {}, keeping old scene", e);
                 return;
             }
@@ -1257,7 +1257,7 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         let file_name = changed_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-        self.reload_notifications.push((format!("Scene reloaded: {}", file_name), instant::Instant::now(), [0.3, 1.0, 0.3, 1.0]));
+        self.reload_notifications.push((format!("Scene reloaded: {}", file_name), std::time::Instant::now(), [0.3, 1.0, 0.3, 1.0]));
         tracing::info!("Scene hot-reload complete");
     }
 
@@ -2286,7 +2286,7 @@ let mut scene_world = scene_world.borrow_mut();
                     }
                     other => other.to_string(),
                 };
-                self.editor_command_log.push((detail, instant::Instant::now()));
+                self.editor_command_log.push((detail, std::time::Instant::now()));
                 // Keep only last 10
                 if self.editor_command_log.len() > 10 {
                     self.editor_command_log.remove(0);
@@ -2886,7 +2886,7 @@ let input = input.borrow();
         }
 
         // Recent commands (bottom-left, with background panel)
-        let now = instant::Instant::now();
+        let now = std::time::Instant::now();
         let h = gpu.config.height as f32;
         let visible_cmds: Vec<_> = self.editor_command_log.iter().rev()
             .filter(|(_, ts)| now.duration_since(*ts).as_secs_f32() < 10.0)
@@ -2957,7 +2957,7 @@ let input = input.borrow();
     /// Measure the time since the previous frame, capped at 0.1 s.
     fn update_frame_timing(&mut self) {
         // Calculate delta time
-        let now = instant::Instant::now();
+        let now = std::time::Instant::now();
         if let Some(last) = self.last_frame_time {
             self.delta_time = now.duration_since(last).as_secs_f32().min(0.1);
         }
@@ -3109,7 +3109,7 @@ let input = input.borrow();
         // Show any script or listener that was stopped for exceeding a limit
         if let Some(script_runtime) = &self.script_runtime {
             for message in script_runtime.take_limit_reports() {
-                self.reload_notifications.push((message, instant::Instant::now(), [1.0, 0.3, 0.3, 1.0]));
+                self.reload_notifications.push((message, std::time::Instant::now(), [1.0, 0.3, 0.3, 1.0]));
             }
         }
 

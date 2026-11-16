@@ -62,9 +62,6 @@ mlua = { workspace = true }
 # Audio
 kira = { workspace = true }
 
-# Time
-instant = { workspace = true }
-
 # Async / IPC
 tokio = { workspace = true }
 
