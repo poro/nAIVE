@@ -142,8 +142,9 @@ pub struct ScriptRuntime {
     pub lua: Lua,
     /// Per-entity script environments stored as Lua registry keys.
     pub entity_envs: HashMap<hecs::Entity, LuaRegistryKey>,
-    /// Cached script sources for hot-reload comparison.
-    pub script_sources: HashMap<PathBuf, String>,
+    /// The source each entity's script was loaded from, to detect a change
+    /// on hot reload. Kept per entity because several can share one file.
+    pub script_sources: HashMap<hecs::Entity, String>,
     limits: ScriptLimits,
     budget: Rc<CallBudget>,
     /// One line per script stopped for exceeding a limit, until the engine
@@ -271,7 +272,7 @@ impl ScriptRuntime {
         let code = std::fs::read_to_string(&full_path)
             .map_err(|e| format!("Failed to read script {:?}: {}", full_path, e))?;
 
-        self.script_sources.insert(source.to_path_buf(), code.clone());
+        self.script_sources.insert(entity, code.clone());
 
         // Create per-entity environment table
         let env = self.lua.create_table().map_err(|e| e.to_string())?;
@@ -1812,7 +1813,7 @@ impl ScriptRuntime {
             .map_err(|e| format!("Failed to read script {:?}: {}", full_path, e))?;
 
         // Check if source changed
-        if let Some(old_code) = self.script_sources.get(source) {
+        if let Some(old_code) = self.script_sources.get(&entity) {
             if *old_code == new_code {
                 return Ok(false); // No change
             }
@@ -1861,6 +1862,7 @@ impl ScriptRuntime {
     /// Remove a script environment for an entity.
     pub fn remove_entity(&mut self, entity: hecs::Entity) {
         self.call_on_destroy(entity);
+        self.script_sources.remove(&entity);
         if let Some(key) = self.entity_envs.remove(&entity) {
             let _ = self.lua.remove_registry_value(key);
         }
@@ -2245,6 +2247,34 @@ mod tests {
         assert!(runtime.take_limit_reports().is_empty());
         let count: i64 = env_of(&runtime, entity).raw_get("count").unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn hot_reload_reaches_every_entity_sharing_a_script() {
+        let mut runtime = ScriptRuntime::new();
+        let dir = script_dir("shared_script_reload");
+        let world = hecs::World::new();
+        let first = world.reserve_entity();
+        let second = world.reserve_entity();
+
+        std::fs::write(dir.join("shared.lua"), "version = 1").unwrap();
+        runtime.load_script(first, &dir, Path::new("shared.lua")).unwrap();
+        runtime.load_script(second, &dir, Path::new("shared.lua")).unwrap();
+
+        std::fs::write(dir.join("shared.lua"), "version = 2").unwrap();
+        for entity in [first, second] {
+            assert!(runtime
+                .hot_reload_script(entity, &dir, Path::new("shared.lua"))
+                .unwrap());
+            let version: i32 = env_of(&runtime, entity).raw_get("version").unwrap();
+            assert_eq!(version, 2);
+        }
+
+        // Nothing changed since, so a second pass reloads nothing.
+        assert!(!runtime
+            .hot_reload_script(first, &dir, Path::new("shared.lua"))
+            .unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
