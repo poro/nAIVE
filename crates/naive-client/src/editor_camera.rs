@@ -1,4 +1,4 @@
-use glam::{Mat4, Quat, Vec3};
+use glam::{Quat, Vec3};
 use winit::keyboard::KeyCode;
 
 use crate::camera::CameraState;
@@ -99,8 +99,8 @@ impl EditorCamera {
         width: u32,
         height: u32,
     ) {
-        let view = Mat4::look_to_rh(self.position, self.forward(), Vec3::Y);
-        let projection = Mat4::perspective_rh(
+        let view = glam::camera::rh::view::look_to_mat4(self.position, self.forward(), Vec3::Y);
+        let projection = glam::camera::rh::proj::directx::perspective(
             self.fov_degrees.to_radians(),
             width as f32 / height.max(1) as f32,
             self.near,

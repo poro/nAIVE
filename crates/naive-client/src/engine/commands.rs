@@ -428,7 +428,7 @@ impl Engine {
             let env = lua.create_table()?;
             let meta = lua.create_table()?;
             meta.set("__index", lua.globals())?;
-            env.set_metatable(Some(meta));
+            env.set_metatable(Some(meta))?;
 
             // Capture print output
             let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));

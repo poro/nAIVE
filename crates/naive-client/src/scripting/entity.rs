@@ -496,7 +496,11 @@ impl ScriptRuntime {
                 let sw = sw.borrow();
                 let result = lua.create_table()?;
                 let mut idx = 1;
-                for (_entity, (tags, entity_id)) in sw.world.query::<(&Tags, &EntityId)>().iter() {
+                for (_entity, (tags, entity_id)) in sw
+                    .world
+                    .query::<(hecs::Entity, (&Tags, &EntityId))>()
+                    .iter()
+                {
                     if tags.0.contains(&tag) {
                         result.set(idx, entity_id.0.clone())?;
                         idx += 1;
@@ -527,7 +531,11 @@ impl ScriptRuntime {
                     .collect();
                 let result = lua.create_table()?;
                 let mut idx = 1;
-                for (_entity, (tags, entity_id)) in sw.world.query::<(&Tags, &EntityId)>().iter() {
+                for (_entity, (tags, entity_id)) in sw
+                    .world
+                    .query::<(hecs::Entity, (&Tags, &EntityId))>()
+                    .iter()
+                {
                     if required_tags.iter().all(|rt| tags.0.contains(rt)) {
                         result.set(idx, entity_id.0.clone())?;
                         idx += 1;

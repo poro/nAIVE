@@ -387,7 +387,10 @@ impl CpuSwarms {
             .retain(|entity, _| world.get::<&GpuSwarm>(*entity).is_ok());
         let boxes = physics.map(static_boxes).unwrap_or_default();
 
-        for (entity, (swarm, transform)) in world.query::<(&GpuSwarm, &Transform)>().iter() {
+        for (entity, (swarm, transform)) in world
+            .query::<(hecs::Entity, (&GpuSwarm, &Transform))>()
+            .iter()
+        {
             if swarm.def.count == 0 {
                 self.swarms.remove(&entity);
                 continue;

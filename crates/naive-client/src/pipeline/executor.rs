@@ -112,7 +112,7 @@ pub fn execute_pipeline_to_view(
     if debug.point_lights_enabled {
         for (_entity, (transform, light)) in scene_world
             .world
-            .query::<(&Transform, &PointLight)>()
+            .query::<(hecs::Entity, (&Transform, &PointLight))>()
             .iter()
         {
             if (light_data.light_count as usize) < MAX_LIGHTS {
@@ -136,7 +136,11 @@ pub fn execute_pipeline_to_view(
     // Query directional light and compute shadow VP matrix
     let mut light_vp = glam::Mat4::IDENTITY;
     // Only one directional light is supported, so take the first.
-    if let Some((_entity, dir_light)) = scene_world.world.query::<&DirectionalLight>().iter().next()
+    if let Some((_entity, dir_light)) = scene_world
+        .world
+        .query::<(hecs::Entity, &DirectionalLight)>()
+        .iter()
+        .next()
     {
         light_data.has_directional = 1;
         light_data.dir_light_direction = dir_light.direction.to_array();
@@ -276,9 +280,15 @@ fn directional_shadow_view_projection(direction: glam::Vec3, extent: f32) -> gla
     } else {
         glam::Vec3::Y
     };
-    let light_view = glam::Mat4::look_at_rh(-dir * extent, glam::Vec3::ZERO, up);
-    let light_proj =
-        glam::Mat4::orthographic_rh(-extent, extent, -extent, extent, 0.0, 2.0 * extent);
+    let light_view = glam::camera::rh::view::look_at_mat4(-dir * extent, glam::Vec3::ZERO, up);
+    let light_proj = glam::camera::rh::proj::directx::orthographic(
+        -extent,
+        extent,
+        -extent,
+        extent,
+        0.0,
+        2.0 * extent,
+    );
     light_proj * light_view
 }
 
@@ -334,11 +344,14 @@ fn collect_draws<'a>(
     let mut skin_palette = None;
 
     let mut query = scene_world.world.query::<(
-        &Transform,
-        &MeshRenderer,
-        Option<&MaterialOverride>,
-        Option<&Animator>,
-        Option<&Hidden>,
+        hecs::Entity,
+        (
+            &Transform,
+            &MeshRenderer,
+            Option<&MaterialOverride>,
+            Option<&Animator>,
+            Option<&Hidden>,
+        ),
     )>();
     for (entity, (transform, mesh_renderer, mat_override, animator, hidden)) in query.iter() {
         if hidden.is_some() {
@@ -754,7 +767,11 @@ fn execute_splat_pass(
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
         // For each entity with a GaussianSplat component, create a bind group and draw
-        for (_entity, splat) in scene_world.world.query::<&GaussianSplat>().iter() {
+        for (_entity, splat) in scene_world
+            .world
+            .query::<(hecs::Entity, &GaussianSplat)>()
+            .iter()
+        {
             let gpu_splat = splat_cache.get(splat.splat_handle);
             if gpu_splat.splat_count == 0 {
                 continue;

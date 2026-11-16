@@ -8,7 +8,7 @@ pub fn update_transforms(world: &mut World) {
     // First pass: root entities (no parent)
     let mut updates: Vec<(hecs::Entity, Mat4)> = Vec::new();
 
-    for (entity, transform) in world.query_mut::<&Transform>() {
+    for (entity, transform) in world.query_mut::<(hecs::Entity, &Transform)>() {
         if transform.parent.is_none() {
             let local = Mat4::from_scale_rotation_translation(
                 transform.scale,
@@ -29,7 +29,7 @@ pub fn update_transforms(world: &mut World) {
     // Second pass: collect child info (entity, parent_entity, local_matrix)
     let mut children: Vec<(hecs::Entity, hecs::Entity, Mat4)> = Vec::new();
 
-    for (entity, transform) in world.query_mut::<&Transform>() {
+    for (entity, transform) in world.query_mut::<(hecs::Entity, &Transform)>() {
         if let Some(parent_entity) = transform.parent {
             let local = Mat4::from_scale_rotation_translation(
                 transform.scale,

@@ -340,10 +340,13 @@ impl SwarmSystem {
         let mut active: Vec<(hecs::Entity, Option<String>)> = Vec::new();
         for (entity, (swarm, transform, mat_override, hidden)) in world
             .query::<(
-                &GpuSwarm,
-                &Transform,
-                Option<&MaterialOverride>,
-                Option<&Hidden>,
+                hecs::Entity,
+                (
+                    &GpuSwarm,
+                    &Transform,
+                    Option<&MaterialOverride>,
+                    Option<&Hidden>,
+                ),
             )>()
             .iter()
         {

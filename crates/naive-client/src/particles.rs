@@ -39,7 +39,11 @@ impl ParticleSystem {
     pub fn sync_emitters(&mut self, scene_world: &SceneWorld) {
         // Collect entity IDs that currently have ParticleEmitter
         let mut active_entities: Vec<hecs::Entity> = Vec::new();
-        for (entity, emitter) in scene_world.world.query::<&ParticleEmitter>().iter() {
+        for (entity, emitter) in scene_world
+            .world
+            .query::<(hecs::Entity, &ParticleEmitter)>()
+            .iter()
+        {
             active_entities.push(entity);
             // Add new emitter if not already tracked
             if !self.emitters.iter().any(|e| e.owner_entity == entity) {

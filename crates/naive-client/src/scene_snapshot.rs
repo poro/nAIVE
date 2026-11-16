@@ -341,6 +341,7 @@ pub fn snapshot_scene(
         entities.push(definition);
     }
     Ok(SceneFile {
+        version: SCENE_FORMAT_VERSION,
         name: world
             .current_scene
             .as_ref()
