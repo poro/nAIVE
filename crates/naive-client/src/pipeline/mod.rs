@@ -166,7 +166,7 @@ passes:
       color: swapchain
 "#;
 
-        let pipeline: PipelineFile = serde_yaml::from_str(yaml).unwrap();
+        let pipeline: PipelineFile = serde_norway::from_str(yaml).unwrap();
         assert_eq!(pipeline.version, 1);
         assert!(pipeline.settings.hdr);
         assert!(pipeline.settings.vsync);
@@ -214,7 +214,7 @@ passes:
       color: swapchain
 "#;
 
-        let pipeline: PipelineFile = serde_yaml::from_str(yaml).unwrap();
+        let pipeline: PipelineFile = serde_norway::from_str(yaml).unwrap();
         let order = build_dag(&pipeline.passes).unwrap();
 
         // geometry_pass (0) must come before lighting_pass (1)

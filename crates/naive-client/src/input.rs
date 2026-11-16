@@ -89,7 +89,7 @@ pub fn load_bindings(project_root: &Path) -> InputBindings {
     let path = project_root.join("input/bindings.yaml");
     if path.exists() {
         match std::fs::read_to_string(&path) {
-            Ok(contents) => match serde_yaml::from_str(&contents) {
+            Ok(contents) => match serde_norway::from_str(&contents) {
                 Ok(bindings) => {
                     tracing::info!("Loaded input bindings from {:?}", path);
                     return bindings;
@@ -468,7 +468,8 @@ mod tests {
     fn mouse_buttons_in_bindings_yaml_are_mouse_buttons() {
         // A plain string in bindings.yaml always loads as a Key trigger.
         let bindings: InputBindings =
-            serde_yaml::from_str("actions:\n  attack:\n    - Left\n  aim:\n    - Right\n").unwrap();
+            serde_norway::from_str("actions:\n  attack:\n    - Left\n  aim:\n    - Right\n")
+                .unwrap();
         assert!(
             matches!(&bindings.actions["attack"][0], InputTrigger::Key(name) if name == "Left")
         );

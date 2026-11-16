@@ -5,7 +5,7 @@ use std::path::Path;
 #[derive(Debug)]
 pub enum SceneError {
     IoError(std::io::Error),
-    ParseError(serde_yaml::Error),
+    ParseError(serde_norway::Error),
     InheritanceCycle(String),
     MissingParent(String),
     UnsupportedVersion(u32),
@@ -134,7 +134,7 @@ pub struct ComponentMap {
     pub gpu_swarm: Option<GpuSwarmDef>,
     /// Absorbs unknown component types for forward compatibility.
     #[serde(flatten)]
-    pub extra: HashMap<String, serde_yaml::Value>,
+    pub extra: HashMap<String, serde_norway::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -536,7 +536,7 @@ fn default_range() -> f32 {
 /// Parse a scene from a YAML string.
 pub fn parse_scene(yaml: &str) -> Result<SceneFile, String> {
     let mut scene: SceneFile =
-        serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse error: {}", e))?;
+        serde_norway::from_str(yaml).map_err(|e| format!("YAML parse error: {}", e))?;
     check_version(&scene).map_err(|e| e.to_string())?;
     scene.entities = resolve_inheritance(&scene.entities).map_err(|e| format!("{}", e))?;
     Ok(scene)
@@ -544,7 +544,7 @@ pub fn parse_scene(yaml: &str) -> Result<SceneFile, String> {
 
 pub fn load_scene(path: &Path) -> Result<SceneFile, SceneError> {
     let contents = std::fs::read_to_string(path).map_err(SceneError::IoError)?;
-    let mut scene: SceneFile = serde_yaml::from_str(&contents).map_err(SceneError::ParseError)?;
+    let mut scene: SceneFile = serde_norway::from_str(&contents).map_err(SceneError::ParseError)?;
     check_version(&scene)?;
     scene.entities = resolve_inheritance(&scene.entities)?;
     Ok(scene)
@@ -653,7 +653,7 @@ mod tests {
     fn scene_files_carry_a_format_version() {
         let unversioned = parse_scene("name: old\n").unwrap();
         assert_eq!(unversioned.version, 1);
-        let saved = serde_yaml::to_string(&unversioned).unwrap();
+        let saved = serde_norway::to_string(&unversioned).unwrap();
         assert!(saved.starts_with("version: 1\n"), "{saved}");
         let newer = format!("version: {}\nname: future\n", SCENE_FORMAT_VERSION + 1);
         let error = parse_scene(&newer).unwrap_err();
@@ -691,7 +691,7 @@ entities:
         intensity: 10.0
         range: 50.0
 "#;
-        let scene: SceneFile = serde_yaml::from_str(yaml).unwrap();
+        let scene: SceneFile = serde_norway::from_str(yaml).unwrap();
         assert_eq!(scene.name, "Test Scene");
         assert_eq!(scene.entities.len(), 3);
         assert!(scene.entities[0].components.camera.is_some());
@@ -721,7 +721,7 @@ entities:
       transform:
         position: [3, 0, 0]
 "#;
-        let scene: SceneFile = serde_yaml::from_str(yaml).unwrap();
+        let scene: SceneFile = serde_norway::from_str(yaml).unwrap();
         let resolved = resolve_inheritance(&scene.entities).unwrap();
 
         assert_eq!(resolved.len(), 2);
@@ -751,7 +751,7 @@ entities:
       script:
         source: logic/player.lua
 "#;
-        let scene: SceneFile = serde_yaml::from_str(yaml).unwrap();
+        let scene: SceneFile = serde_norway::from_str(yaml).unwrap();
         assert_eq!(scene.entities.len(), 1);
         assert!(scene.entities[0].components.transform.is_some());
         // rigid_body and script are now recognized components

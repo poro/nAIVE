@@ -495,7 +495,7 @@ impl Engine {
             &self.material_cache,
             physics.as_deref(),
         )?;
-        serde_yaml::to_string(&scene).map_err(|error| error.to_string())
+        serde_norway::to_string(&scene).map_err(|error| error.to_string())
     }
 
     pub(super) fn gpu_timings_json(&self) -> serde_json::Value {

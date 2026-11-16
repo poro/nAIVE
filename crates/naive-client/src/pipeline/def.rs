@@ -93,7 +93,7 @@ pub struct PassDef {
 #[derive(Debug)]
 pub enum PipelineError {
     IoError(std::io::Error),
-    ParseError(serde_yaml::Error),
+    ParseError(serde_norway::Error),
     DagCycle(String),
     InvalidFormat(String),
     ShaderError(String),
@@ -118,7 +118,7 @@ impl std::fmt::Display for PipelineError {
 pub fn load_pipeline(path: &Path) -> Result<PipelineFile, PipelineError> {
     let contents = std::fs::read_to_string(path).map_err(PipelineError::IoError)?;
     let pipeline: PipelineFile =
-        serde_yaml::from_str(&contents).map_err(PipelineError::ParseError)?;
+        serde_norway::from_str(&contents).map_err(PipelineError::ParseError)?;
     tracing::info!(
         "Loaded pipeline v{} with {} passes and {} resources",
         pipeline.version,

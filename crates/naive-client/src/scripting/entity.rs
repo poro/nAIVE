@@ -112,18 +112,11 @@ impl ScriptRuntime {
                             drop(rb);
                             let mut pw = pw.borrow_mut();
                             if let Some(body) = pw.rigid_body_set.get_mut(rb_handle) {
-                                let cur_pos = body.position().translation;
-                                let iso = rapier3d::na::Isometry3::from_parts(
-                                    rapier3d::na::Translation3::new(
-                                        cur_pos.x, cur_pos.y, cur_pos.z,
-                                    ),
-                                    rapier3d::na::UnitQuaternion::new_normalize(
-                                        rapier3d::na::Quaternion::new(
-                                            new_rot.w, new_rot.x, new_rot.y, new_rot.z,
-                                        ),
-                                    ),
+                                let pose = rapier3d::math::Pose::from_parts(
+                                    body.position().translation,
+                                    crate::physics::to_rapier_rot(new_rot.normalize()),
                                 );
-                                body.set_next_kinematic_position(iso);
+                                body.set_next_kinematic_position(pose);
                             }
                         }
                     }

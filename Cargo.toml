@@ -33,7 +33,8 @@ hecs = "0.11"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
+# Maintained fork of the deprecated serde_yaml, same API and parser.
+serde_norway = "0.9"
 serde_json = "1"
 
 # Logging
@@ -67,7 +68,8 @@ stl_io = "0.7"
 linked-hash-map = "0.5.6"
 
 # Physics
-rapier3d = { version = "0.22", features = ["simd-stable"] }
+# SIMD is built in since 0.23 (the simd-stable feature is gone).
+rapier3d = "0.36"
 
 # Scripting
 mlua = { version = "0.12", features = ["lua54", "vendored", "serialize"] }
