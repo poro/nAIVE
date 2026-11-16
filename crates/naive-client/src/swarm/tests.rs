@@ -627,10 +627,10 @@ fn swarm_structs_match_the_shader_layout() {
 }
 
 fn gpu() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::default();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
         pollster::block_on(instance.request_adapter(&Default::default())).expect("no GPU adapter");
-    pollster::block_on(adapter.request_device(&Default::default(), None)).unwrap()
+    pollster::block_on(adapter.request_device(&Default::default())).unwrap()
 }
 
 fn read_back(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u8> {
@@ -646,8 +646,14 @@ fn read_back(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) 
     staging
         .slice(..)
         .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-    device.poll(wgpu::Maintain::Wait);
-    let bytes = staging.slice(..).get_mapped_range().to_vec();
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("GPU poll");
+    let bytes = staging
+        .slice(..)
+        .get_mapped_range()
+        .expect("mapped staging buffer")
+        .to_vec();
     bytes
 }
 

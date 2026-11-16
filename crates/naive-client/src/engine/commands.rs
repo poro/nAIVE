@@ -572,7 +572,7 @@ impl Engine {
             }
         }
         if let Some(gpu) = &self.gpu {
-            let _ = gpu.device.poll(wgpu::Maintain::Wait);
+            let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
             // Pick up the timestamps that have just come back.
             if let Some(timer) = self.gpu_timer.as_mut() {
                 timer.finish_frame(&gpu.device, &gpu.queue);

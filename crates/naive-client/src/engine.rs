@@ -1278,7 +1278,7 @@ impl Engine {
                 }
             };
 
-            gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let error_scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
 
             let camera_state = self.camera_state.as_ref().unwrap().borrow();
             let draw_pool = self.draw_pool.as_ref().unwrap();
@@ -1296,7 +1296,7 @@ impl Engine {
                 tex_layout,
             );
 
-            let error = pollster::block_on(gpu.device.pop_error_scope());
+            let error = pollster::block_on(error_scope.pop());
             if let Some(err) = error {
                 tracing::error!("Shader validation error: {:?}, keeping old pipeline", err);
                 return;
@@ -1313,12 +1313,12 @@ impl Engine {
                 }
             };
 
-            gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let error_scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
 
             let new_pipeline =
                 crate::renderer::create_render_pipeline(&gpu.device, &wgsl, gpu.config.format);
 
-            let error = pollster::block_on(gpu.device.pop_error_scope());
+            let error = pollster::block_on(error_scope.pop());
             if let Some(err) = error {
                 tracing::error!("Shader validation error: {:?}, keeping old pipeline", err);
                 return;
@@ -3084,13 +3084,18 @@ impl Engine {
         // Acquire swapchain and render 3D scene + UI overlay
         if let Some(gpu) = &self.gpu {
             let output = match gpu.surface.get_current_texture() {
-                Ok(t) => t,
-                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                wgpu::CurrentSurfaceTexture::Success(t)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+                wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                     gpu.surface.configure(&gpu.device, &gpu.config);
                     return;
                 }
-                Err(e) => {
-                    tracing::error!("Surface error: {:?}", e);
+                // Minimized, hidden or slow to present: skip this frame.
+                wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                    return
+                }
+                wgpu::CurrentSurfaceTexture::Validation => {
+                    tracing::error!("Surface validation error while acquiring a frame");
                     return;
                 }
             };
@@ -3342,7 +3347,7 @@ impl Engine {
             if let Some(timer) = self.gpu_timer.as_mut() {
                 timer.finish_frame(&gpu.device, &gpu.queue);
             }
-            output.present();
+            gpu.queue.present(output);
         }
     }
 }

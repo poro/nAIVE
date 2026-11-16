@@ -31,7 +31,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # GPU rendering
-wgpu = { version = "24", features = ["spirv"] }
+wgpu = { version = "30", features = ["spirv"] }
 winit = "0.30"
 
 # SLANG shader compilation

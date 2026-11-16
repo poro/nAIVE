@@ -39,9 +39,9 @@ pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
     let width = canvas.width().max(1);
     let height = canvas.height().max(1);
 
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::BROWSER_WEBGPU,
-        ..Default::default()
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
 
     let surface_target = wgpu::SurfaceTarget::Canvas(canvas);
@@ -54,21 +54,21 @@ pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         })
         .await
-        .ok_or_else(|| JsValue::from_str("request_adapter: no suitable WebGPU adapter"))?;
+        .map_err(|e| JsValue::from_str(&format!("request_adapter: {e}")))?;
 
     let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("naive-web device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
-                memory_hints: wgpu::MemoryHints::Performance,
-            },
-            None,
-        )
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("naive-web device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                .using_resolution(adapter.limits()),
+            memory_hints: wgpu::MemoryHints::Performance,
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            trace: wgpu::Trace::Off,
+        })
         .await
         .map_err(|e| JsValue::from_str(&format!("request_device: {e}")))?;
 
@@ -87,12 +87,15 @@ pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
         desired_maximum_frame_latency: 2,
         alpha_mode: caps.alpha_modes[0],
         view_formats: vec![],
+        color_space: wgpu::SurfaceColorSpace::Auto,
     };
     surface.configure(&device, &config);
 
-    let frame = surface
-        .get_current_texture()
-        .map_err(|e| JsValue::from_str(&format!("get_current_texture: {e}")))?;
+    let frame = match surface.get_current_texture() {
+        wgpu::CurrentSurfaceTexture::Success(frame)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+        _ => return Err(JsValue::from_str("get_current_texture: no frame available")),
+    };
     let view = frame
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -105,6 +108,7 @@ pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
             label: Some("clear"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -119,10 +123,11 @@ pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
     }
     queue.submit(std::iter::once(encoder.finish()));
-    frame.present();
+    queue.present(frame);
 
     log::info!("nAIVE web clear demo OK ({}x{})", width, height);
     Ok(())

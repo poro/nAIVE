@@ -58,8 +58,8 @@ impl SwarmPipelines {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Swarm step pipeline layout"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = |entry_point, label| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -274,7 +274,10 @@ impl SwarmGpu {
         for k in ready {
             let readback = &mut self.readbacks[k];
             let stats: [u32; 4] = {
-                let view = readback.buffer.slice(..).get_mapped_range();
+                let Ok(view) = readback.buffer.slice(..).get_mapped_range() else {
+                    tracing::error!("Swarm readback buffer was not mapped");
+                    continue;
+                };
                 let words: &[u32] = bytemuck::cast_slice(&view);
                 [words[0], words[1], words[2], words[3]]
             };
@@ -331,7 +334,7 @@ impl SwarmSystem {
         self.swarms
             .retain(|&entity, _| world.get::<&GpuSwarm>(entity).is_ok());
 
-        let _ = gpu.device.poll(wgpu::Maintain::Poll);
+        let _ = gpu.device.poll(wgpu::PollType::Poll);
         for state in self.swarms.values_mut() {
             state.collect_readbacks(bus);
         }
@@ -501,7 +504,7 @@ impl SwarmSystem {
 
         // Each member's draw data is one 256-byte entry of a single storage
         // binding, so the device's binding size limits the swarm.
-        let limit = u64::from(device.limits().max_storage_buffer_binding_size) / DRAW_UNIFORM_SIZE;
+        let limit = device.limits().max_storage_buffer_binding_size / DRAW_UNIFORM_SIZE;
         let limit = u32::try_from(limit).unwrap_or(u32::MAX);
         let mut def = swarm.def.clone();
         if def.count > limit {

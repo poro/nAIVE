@@ -39,13 +39,15 @@ pub fn execute_pipeline(
     swarms: &[SwarmDraw],
 ) {
     let output = match gpu.surface.get_current_texture() {
-        Ok(t) => t,
-        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+        wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+        wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
             gpu.surface.configure(&gpu.device, &gpu.config);
             return;
         }
-        Err(e) => {
-            tracing::error!("Surface error: {:?}", e);
+        // Minimized, hidden or slow to present: skip this frame.
+        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
+        wgpu::CurrentSurfaceTexture::Validation => {
+            tracing::error!("Surface validation error while acquiring a frame");
             return;
         }
     };
@@ -73,7 +75,7 @@ pub fn execute_pipeline(
     );
 
     gpu.queue.submit(std::iter::once(encoder.finish()));
-    output.present();
+    gpu.queue.present(output);
 }
 
 /// Execute the compiled multi-pass pipeline, returning the encoder for further passes.
@@ -193,6 +195,7 @@ pub fn execute_pipeline_to_view(
                     label: Some("bloom_clear"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &resource.view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -202,6 +205,7 @@ pub fn execute_pipeline_to_view(
                     depth_stencil_attachment: None,
                     timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 // Drop immediately ends the pass
             }
@@ -456,13 +460,11 @@ fn upload_draws(gpu: &GpuState, draw_pool: &DrawUniformPool, draws: &FrameDraws)
     let Some(mut staging) = gpu.queue.write_buffer_with(&draw_pool.buffer, 0, size) else {
         return;
     };
-    for (slot, &i) in staging
-        .as_chunks_mut::<{ DRAW_UNIFORM_SIZE as usize }>()
-        .0
-        .iter_mut()
-        .zip(&draws.order)
-    {
-        slot.copy_from_slice(bytemuck::bytes_of(&draws.uniforms[i as usize]));
+    let stride = DRAW_UNIFORM_SIZE as usize;
+    for (slot, &i) in draws.order.iter().enumerate() {
+        staging
+            .slice(slot * stride..(slot + 1) * stride)
+            .copy_from_slice(bytemuck::bytes_of(&draws.uniforms[i as usize]));
     }
 }
 
@@ -499,6 +501,7 @@ fn execute_shadow_pass(
             }),
             timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         render_pass.set_pipeline(&pass.pipeline);
@@ -603,6 +606,7 @@ fn execute_rasterize_pass(
         .iter()
         .map(|view| {
             Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -640,6 +644,7 @@ fn execute_rasterize_pass(
             depth_stencil_attachment: depth_attachment,
             timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         render_pass.set_pipeline(&pass.pipeline);
@@ -718,6 +723,7 @@ fn execute_splat_pass(
         .iter()
         .map(|view| {
             Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -761,6 +767,7 @@ fn execute_splat_pass(
             depth_stencil_attachment: depth_attachment,
             timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         render_pass.set_pipeline(&pass.pipeline);
@@ -830,6 +837,7 @@ fn execute_fullscreen_pass(
             label: Some(&pass.name),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: output_view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -844,6 +852,7 @@ fn execute_fullscreen_pass(
             depth_stencil_attachment: None,
             timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         render_pass.set_pipeline(&pass.pipeline);
