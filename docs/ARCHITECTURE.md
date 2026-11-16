@@ -31,15 +31,15 @@ The development roadmap is organized into tiers, each validated by HAVOC — a 3
 
 | Module | Lines | Responsibility |
 |--------|-------|---------------|
-| `engine.rs` | 3,507 | Main `Engine` struct, ApplicationHandler, game loop orchestration (`run_frame` → `tick_simulation`, `prepare_render`, `render_frame`) |
+| `engine.rs` | 3,388 | Main `Engine` struct, ApplicationHandler, game loop orchestration (`run_frame` → `tick_simulation`, `prepare_render`, `render_frame`) |
 | `pipeline/` (mod) | 3,106 | CompiledPipeline — YAML-defined render pass DAG; split into `def` (198), `resource` (249), `compiler` (1,443), `executor` (898), `mod` (318) |
 | `scripting.rs` | 1,794 | Lua API registration (40+ functions: physics, entity, camera, events, audio) |
 | `shader.rs` | 1,606 | SLANG→WGSL shader compilation, caching, hot-reload |
 | `mesh.rs` | 1,302 | MeshCache, GLB + STL loading, procedural meshes, vertex colors, skinned meshes |
 | `world.rs` | 1,248 | SceneWorld (ECS + registry), EntityCommandQueue, entity spawning, pooling |
 | `init.rs` | 1,160 | Engine initialization, GPU setup, resource loading |
-| `test_runner.rs` | 694 | Headless test runner for `naive test` CLI command |
-| `sim.rs` | 373 | GPU-free frame steps shared by the engine and the test runner: character controller, fixed physics steps, collision and event dispatch, script updates |
+| `test_runner.rs` | 782 | Headless test runner for `naive test` CLI command |
+| `sim.rs` | 638 | GPU-free frame steps shared by the engine and the test runner: character controller, fixed physics steps, collision and event dispatch, collision damage, projectiles, health, entity destruction, script updates |
 | `beautify.rs` | 672 | Scene beautification pipeline (simple mesh → Gaussian Splat conversion) |
 | `physics.rs` | 652 | PhysicsWorld — Rapier3D wrapper (dynamic, kinematic, static bodies, VHACD) |
 | `demos.rs` | 620 | 19 embedded demos with interactive CLI browser |

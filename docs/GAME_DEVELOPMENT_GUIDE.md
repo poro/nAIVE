@@ -521,6 +521,8 @@ end
 
 nAIVE includes a headless test runner that executes Lua test scripts without a GPU or window.
 
+The runner uses the same simulation code as the engine: the character controller, physics, scripts, events, collision damage, health and entity destruction all run. Commands that need the GPU do not: spawning entities and projectiles, pooling, scale and visibility changes, and texture or mesh changes are dropped.
+
 ### Running Tests
 
 ```bash
@@ -570,7 +572,7 @@ end
 | Function | Description |
 |----------|-------------|
 | `scene.load(path)` | Load a scene into the headless runner |
-| `scene.find(entity_id)` | Find an entity, returns table with `:get(component)` or nil |
+| `scene.find(entity_id)` | Find an entity, returns table with `:get(component)` or nil. `:get("transform")` gives `position`; `:get("health")` gives `current`, `max` and `dead` |
 | `wait_for_event(type, timeout)` | Advance simulation until event fires (default 10s timeout) |
 | `wait_seconds(n)` | Advance n seconds of game time at fixed timestep |
 | `wait_frames(n)` | Advance n simulation frames |

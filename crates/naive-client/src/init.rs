@@ -596,6 +596,8 @@ end
 ## Test API (for tests/ scripts)
 
 Tests run headless (no GPU). Each `test_*()` function gets a fresh runner.
+Physics, scripts, events, collision damage, health and entity destruction run;
+spawning entities or projectiles needs the full engine and is dropped.
 
 ```lua
 scene.load("scenes/main.yaml")                -- load a scene
