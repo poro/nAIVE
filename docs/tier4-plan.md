@@ -59,7 +59,7 @@ Choices, each made to keep the first version simple and inside WebGPU's default 
 
 - **Neighbour grid with fixed-size cells.** Each cell holds up to a fixed number of member indices, filled with an atomic counter; overflow is dropped. One pass, no prefix sum or sort. Crowding beyond the cell capacity loses some separation, which a horde hides.
 - **Flow field on the CPU.** A 128 by 128 grid solved from the target's position around static obstacles, uploaded as a texture when the target changes cell. It is 16,384 cells, which is cheap.
-- **No Rapier for members.** At about 0.6 microseconds per body per step, 50,000 bodies would cost 30 ms per step. Members collide with each other through the grid and with the world through the flow field's obstacles.
+- **No Rapier for members.** The measurements above work out to roughly 0.6 microseconds per body per physics step, so 50,000 bodies would cost about 30 ms per step. Members collide with each other through the grid and with the world through the flow field's obstacles.
 
 ### Talking to the rest of the game without stalling
 
