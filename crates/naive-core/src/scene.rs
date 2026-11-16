@@ -101,6 +101,8 @@ pub struct ComponentMap {
     pub particle_emitter: Option<ParticleEmitterDef>,
     #[serde(default)]
     pub animator: Option<AnimatorDef>,
+    #[serde(default)]
+    pub gpu_swarm: Option<GpuSwarmDef>,
     /// Absorbs unknown component types for forward compatibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
@@ -331,6 +333,53 @@ pub struct AnimatorDef {
     pub looping: bool,
 }
 
+/// A swarm: many members simulated and drawn on the GPU. The entity carrying
+/// it is the swarm; its members exist only in GPU buffers and are not
+/// addressable from scripts.
+///
+/// Members spawn in a disc of `spawn_radius` around the entity, then each
+/// steers to its own slot in a disc around the target, slots `spacing` apart.
+/// They move on the horizontal plane at the entity's height. The target is
+/// the entity named by `target_entity`, or the swarm entity itself.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct GpuSwarmDef {
+    pub count: u32,
+    #[serde(default = "default_swarm_mesh")]
+    pub mesh: String,
+    #[serde(default = "default_swarm_material")]
+    pub material: String,
+    /// Uniform scale of each member.
+    #[serde(default = "default_one")]
+    pub scale: f32,
+    /// Top speed in metres per second.
+    #[serde(default = "default_swarm_speed")]
+    pub speed: f32,
+    /// How quickly a member's velocity turns toward the one it wants, per second.
+    #[serde(default = "default_swarm_acceleration")]
+    pub acceleration: f32,
+    #[serde(default = "default_swarm_spawn_radius")]
+    pub spawn_radius: f32,
+    /// Distance between neighbouring slots around the target.
+    #[serde(default = "default_one")]
+    pub spacing: f32,
+    /// Members slow down inside this distance of their slot.
+    #[serde(default = "default_swarm_arrive_radius")]
+    pub arrive_radius: f32,
+    #[serde(default)]
+    pub target_entity: Option<String>,
+    /// Seed for spawn positions and per-member speed variation.
+    #[serde(default)]
+    pub seed: u32,
+}
+
+fn default_swarm_mesh() -> String { "procedural:cube".to_string() }
+fn default_swarm_material() -> String { "procedural:default".to_string() }
+fn default_one() -> f32 { 1.0 }
+fn default_swarm_speed() -> f32 { 4.0 }
+fn default_swarm_acceleration() -> f32 { 3.0 }
+fn default_swarm_spawn_radius() -> f32 { 20.0 }
+fn default_swarm_arrive_radius() -> f32 { 2.0 }
+
 fn default_anim_state() -> String { "idle".to_string() }
 fn default_anim_speed() -> f32 { 1.0 }
 
@@ -450,6 +499,9 @@ fn merge_entity(parent: &EntityDef, child: &EntityDef) -> EntityDef {
     }
     if merged.components.particle_emitter.is_none() {
         merged.components.particle_emitter = parent.components.particle_emitter.clone();
+    }
+    if merged.components.gpu_swarm.is_none() {
+        merged.components.gpu_swarm = parent.components.gpu_swarm.clone();
     }
 
     // Merge extra components from parent that child doesn't have

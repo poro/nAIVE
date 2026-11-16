@@ -9,6 +9,7 @@ use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
 use crate::renderer::{DrawUniformPool, DrawUniforms, GpuState, DRAW_UNIFORM_SIZE};
 use crate::splat::SplatCache;
+use crate::swarm::SwarmDraw;
 use crate::texture_cache::TextureHandle;
 use crate::world::SceneWorld;
 
@@ -34,6 +35,7 @@ pub fn execute_pipeline(
     texture_resources: Option<&crate::mesh::TextureResources>,
     bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
     texture_cache: Option<&crate::texture_cache::TextureCache>,
+    swarms: &[SwarmDraw],
 ) {
     let output = match gpu.surface.get_current_texture() {
         Ok(t) => t,
@@ -54,7 +56,7 @@ pub fn execute_pipeline(
     let encoder = execute_pipeline_to_view(
         gpu, compiled, scene_world, camera_state, draw_pool,
         mesh_cache, material_cache, splat_cache, &swapchain_view, debug,
-        texture_resources, bone_palettes, texture_cache,
+        texture_resources, bone_palettes, texture_cache, swarms,
     );
 
     gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -77,6 +79,7 @@ pub fn execute_pipeline_to_view(
     texture_resources: Option<&crate::mesh::TextureResources>,
     bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
     texture_cache: Option<&crate::texture_cache::TextureCache>,
+    swarms: &[SwarmDraw],
 ) -> wgpu::CommandEncoder {
 
     // Per-entity draw data for both mesh passes, uploaded once in batch order.
@@ -205,6 +208,7 @@ pub fn execute_pipeline_to_view(
                     camera_state,
                     draw_pool,
                     &draws,
+                    swarms,
                     mesh_cache,
                     texture_resources,
                     texture_cache,
@@ -237,6 +241,7 @@ pub fn execute_pipeline_to_view(
                     compiled,
                     draw_pool,
                     &draws,
+                    swarms,
                     mesh_cache,
                 );
             }
@@ -424,6 +429,7 @@ fn execute_shadow_pass(
     compiled: &CompiledPipeline,
     draw_pool: &DrawUniformPool,
     draws: &FrameDraws,
+    swarms: &[SwarmDraw],
     mesh_cache: &MeshCache,
 ) {
     let depth_view = pass
@@ -471,6 +477,35 @@ fn execute_shadow_pass(
             );
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.instances());
         }
+
+        // Swarms: the same shader, reading each swarm's own draw data.
+        for swarm in swarms {
+            let gpu_mesh = mesh_cache.get(swarm.mesh);
+            render_pass.set_bind_group(1, swarm.draws, &[]);
+            render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(
+                gpu_mesh.index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..swarm.count);
+        }
+    }
+}
+
+/// The albedo texture to bind for a draw: the material's texture, else the
+/// mesh's own, else plain white.
+fn albedo_bind_group<'a>(
+    texture_resources: &'a crate::mesh::TextureResources,
+    texture_cache: Option<&'a crate::texture_cache::TextureCache>,
+    albedo_texture: Option<TextureHandle>,
+    gpu_mesh: &'a crate::mesh::GpuMesh,
+) -> &'a wgpu::BindGroup {
+    if let (Some(albedo), Some(tc)) = (albedo_texture, texture_cache) {
+        tc.get(albedo)
+    } else if let Some(mesh_tex) = gpu_mesh.texture_bind_group.as_ref() {
+        mesh_tex
+    } else {
+        &texture_resources.default_bind_group
     }
 }
 
@@ -506,6 +541,7 @@ fn execute_rasterize_pass(
     camera_state: &CameraState,
     draw_pool: &DrawUniformPool,
     draws: &FrameDraws,
+    swarms: &[SwarmDraw],
     mesh_cache: &MeshCache,
     texture_resources: Option<&crate::mesh::TextureResources>,
     texture_cache: Option<&crate::texture_cache::TextureCache>,
@@ -573,13 +609,8 @@ fn execute_rasterize_pass(
 
             // Bind texture at group(2): material texture > mesh texture > white fallback
             if let Some(tex_res) = texture_resources {
-                let tex_bg = if let (Some(albedo), Some(tc)) = (batch.key.albedo_texture, texture_cache) {
-                    tc.get(TextureHandle(albedo))
-                } else if let Some(mesh_tex) = gpu_mesh.texture_bind_group.as_ref() {
-                    mesh_tex
-                } else {
-                    &tex_res.default_bind_group
-                };
+                let albedo = batch.key.albedo_texture.map(TextureHandle);
+                let tex_bg = albedo_bind_group(tex_res, texture_cache, albedo, gpu_mesh);
                 render_pass.set_bind_group(2, tex_bg, &[]);
             }
 
@@ -590,14 +621,32 @@ fn execute_rasterize_pass(
             );
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.instances());
         }
-        if draws.order.is_empty() {
+
+        // Swarms: the same shader, reading each swarm's own draw data.
+        for swarm in swarms {
+            let gpu_mesh = mesh_cache.get(swarm.mesh);
+            render_pass.set_bind_group(1, swarm.draws, &[]);
+            if let Some(tex_res) = texture_resources {
+                let tex_bg = albedo_bind_group(tex_res, texture_cache, swarm.albedo_texture, gpu_mesh);
+                render_pass.set_bind_group(2, tex_bg, &[]);
+            }
+            render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(
+                gpu_mesh.index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..swarm.count);
+        }
+
+        if draws.order.is_empty() && swarms.is_empty() {
             tracing::warn!("Rasterize pass '{}': ZERO entities drawn!", pass.name);
         } else {
             tracing::debug!(
-                "Rasterize pass '{}': {} entities in {} draws",
+                "Rasterize pass '{}': {} entities in {} draws, {} swarms",
                 pass.name,
                 draws.order.len(),
-                draws.batches.len()
+                draws.batches.len(),
+                swarms.len()
             );
         }
     }

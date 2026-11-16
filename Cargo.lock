@@ -2122,6 +2122,7 @@ dependencies = [
  "kira",
  "linked-hash-map",
  "mlua",
+ "naga",
  "naive-core",
  "notify",
  "ply-rs",

@@ -163,6 +163,16 @@ pub struct Animator {
     pub controller: crate::animation::AnimationController,
 }
 
+/// A swarm of members simulated and drawn on the GPU. The members live in
+/// buffers owned by the renderer's swarm system, keyed by this entity; the
+/// definition is kept so the swarm can be rebuilt and saved.
+#[derive(Debug, Clone)]
+pub struct GpuSwarm {
+    pub def: crate::scene::GpuSwarmDef,
+    pub mesh_handle: MeshHandle,
+    pub material_handle: MaterialHandle,
+}
+
 /// Health component for damageable entities.
 #[derive(Debug, Clone)]
 pub struct Health {

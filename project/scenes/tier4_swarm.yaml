@@ -1,0 +1,45 @@
+name: "Tier 4: GPU swarm"
+# 50,000 members simulated and drawn on the GPU, chasing a bait that runs a
+# figure-eight. Members do not avoid each other yet (Tier 4 milestone 3).
+settings:
+  ambient_light: [0.3, 0.3, 0.35]
+  gravity: [0, -9.81, 0]
+entities:
+  - id: camera
+    components:
+      transform: { position: [0, 95, 125], rotation: [-38, 0, 0] }
+      camera: { fov: 60, near: 0.5, far: 600, role: main }
+
+  - id: sun
+    components:
+      transform: { position: [0, 60, 0] }
+      directional_light: { direction: [0.35, -1.0, 0.25], color: [1.0, 0.95, 0.88], intensity: 3.0, shadow_extent: 140.0 }
+
+  - id: ground
+    components:
+      transform: { position: [0, -0.5, 0], scale: [400, 1, 400] }
+      mesh_renderer: { mesh: "procedural:cube", material: assets/materials/stone.yaml }
+
+  - id: bait
+    components:
+      transform: { position: [0, 1.5, 0], scale: [3, 3, 3] }
+      mesh_renderer: { mesh: "procedural:sphere", material: assets/materials/neon_cyan.yaml }
+      point_light: { color: [0.3, 0.9, 1.0], intensity: 40, range: 40 }
+      script: { source: logic/swarm_bait.lua }
+
+  - id: horde
+    components:
+      # Members move on the plane at this height.
+      transform: { position: [0, 0.25, 0] }
+      gpu_swarm:
+        count: 50000
+        mesh: procedural:cube
+        material: assets/materials/goblin.yaml
+        scale: 0.5
+        speed: 9.0
+        acceleration: 2.0
+        spawn_radius: 150
+        spacing: 0.7
+        arrive_radius: 5.0
+        target_entity: bait
+        seed: 1
