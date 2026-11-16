@@ -54,7 +54,7 @@ The development roadmap is organized into tiers, each validated by HAVOC — a 3
 | `command.rs` | Bounded, same-user Unix command socket transport; typed requests and MCP schemas live in `naive-core/src/command.rs` |
 | `project_path.rs` | Shared path validation for project reads and writes, including symlink and external glTF resource checks |
 | `renderer.rs` | GpuState, DrawUniformPool and instance buffer management |
-| `input.rs` | InputState — key/mouse capture, bindings and synthetic injection |
+| `input` | Re-exported from `naive-sim`: InputState, nAIVE's own `Key` and `MouseButton`, bindings and synthetic injection; `engine/winit_input.rs` maps winit events onto it |
 | `ui.rs` | UiRenderer — text overlay, HUD and flash effects |
 | `splat.rs` | Gaussian Splatting loader and renderer |
 | `debug_draw.rs` | Wireframe physics collider visualization (toggle: H key) |

@@ -2,11 +2,10 @@ use std::collections::HashMap;
 use std::sync::mpsc;
 
 use serde_json::{json, Value};
-use winit::event::MouseButton;
 
 use crate::components::*;
 use crate::events::EventBus;
-use crate::input::InputState;
+use crate::input::{InputState, MouseButton};
 use crate::world::SceneWorld;
 
 pub use naive_core::command::{CommandRequest, CommandResponse};
@@ -629,20 +628,16 @@ fn cmd_inject_input(req: &CommandRequest, input: &mut InputState) -> CommandResp
             input.inject_key_release(key);
         }
         "mouse_press" => {
-            let btn = match get_str_param(req, "button").unwrap_or("Left") {
-                "Left" => MouseButton::Left,
-                "Right" => MouseButton::Right,
-                "Middle" => MouseButton::Middle,
-                other => return CommandResponse::error(format!("Unknown button: {}", other)),
+            let name = get_str_param(req, "button").unwrap_or("Left");
+            let Some(btn) = MouseButton::from_name(name) else {
+                return CommandResponse::error(format!("Unknown button: {}", name));
             };
             input.inject_mouse_press(btn);
         }
         "mouse_release" => {
-            let btn = match get_str_param(req, "button").unwrap_or("Left") {
-                "Left" => MouseButton::Left,
-                "Right" => MouseButton::Right,
-                "Middle" => MouseButton::Middle,
-                other => return CommandResponse::error(format!("Unknown button: {}", other)),
+            let name = get_str_param(req, "button").unwrap_or("Left");
+            let Some(btn) = MouseButton::from_name(name) else {
+                return CommandResponse::error(format!("Unknown button: {}", name));
             };
             input.inject_mouse_release(btn);
         }

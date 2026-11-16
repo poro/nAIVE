@@ -1,8 +1,7 @@
 use glam::{Quat, Vec3};
-use winit::keyboard::KeyCode;
 
 use crate::camera::CameraState;
-use crate::input::InputState;
+use crate::input::{InputState, Key};
 
 /// Free fly camera for editor mode.
 /// WASD + always-on mouse look, scroll to adjust speed,
@@ -55,7 +54,7 @@ impl EditorCamera {
         }
 
         // Movement
-        let speed = if input.key_held(KeyCode::ShiftLeft) || input.key_held(KeyCode::ShiftRight) {
+        let speed = if input.key_held(Key::ShiftLeft) || input.key_held(Key::ShiftRight) {
             self.speed * 3.0
         } else {
             self.speed
@@ -67,22 +66,22 @@ impl EditorCamera {
 
         let mut movement = Vec3::ZERO;
 
-        if input.key_held(KeyCode::KeyW) {
+        if input.key_held(Key::W) {
             movement += forward;
         }
-        if input.key_held(KeyCode::KeyS) {
+        if input.key_held(Key::S) {
             movement -= forward;
         }
-        if input.key_held(KeyCode::KeyA) {
+        if input.key_held(Key::A) {
             movement -= right;
         }
-        if input.key_held(KeyCode::KeyD) {
+        if input.key_held(Key::D) {
             movement += right;
         }
-        if input.key_held(KeyCode::Space) {
+        if input.key_held(Key::Space) {
             movement += up;
         }
-        if input.key_held(KeyCode::KeyQ) {
+        if input.key_held(Key::Q) {
             movement -= up;
         }
 
