@@ -347,6 +347,7 @@ fn execute_shadow_pass(
 
         // Draw all mesh entities (skip hidden before incrementing draw_index)
         let mut draw_index = 0u32;
+        let mut last_palette = None;
         for (entity, (_, mesh_renderer)) in
             scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
         {
@@ -358,14 +359,9 @@ fn execute_shadow_pass(
 
             render_pass.set_bind_group(1, &draw_pool.bind_group, &[dynamic_offset]);
 
-            // Upload bone matrices for skinned entities (group 2 in shadow shader)
-            if let (Some(skin_buffer), Some(skin_bg)) = (&compiled.skin_buffer, &compiled.skin_bind_group) {
-                if let Some(palette) = bone_palettes.get(&entity) {
-                    gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[*palette]));
-                } else {
-                    let identity = crate::anim_system::BoneMatrixPalette::default();
-                    gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[identity]));
-                }
+            // Bone matrices (group 2 in shadow shader). See `upload_skin_palette`.
+            if let Some(skin_bg) = &compiled.skin_bind_group {
+                last_palette = Some(bone_palettes.get(&entity));
                 render_pass.set_bind_group(2, skin_bg, &[]);
             }
 
@@ -376,6 +372,31 @@ fn execute_shadow_pass(
             );
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
             draw_index += 1;
+        }
+        upload_skin_palette(gpu, compiled, last_palette);
+    }
+}
+
+/// Upload the bone matrices for a pass, once.
+///
+/// Every draw in a pass reads the same skin buffer, and buffer writes all land
+/// before the pass runs, so only the last write ever counted. Writing once per
+/// entity changed nothing on screen but allocated a staging buffer for each
+/// one, which dominated frame time with a few thousand entities. `last` is the
+/// palette of the last entity drawn: `Some(None)` means it was not skinned.
+fn upload_skin_palette(
+    gpu: &GpuState,
+    compiled: &CompiledPipeline,
+    last: Option<Option<&crate::anim_system::BoneMatrixPalette>>,
+) {
+    let (Some(skin_buffer), Some(last)) = (&compiled.skin_buffer, last) else {
+        return;
+    };
+    match last {
+        Some(palette) => gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[*palette])),
+        None => {
+            let identity = crate::anim_system::BoneMatrixPalette::default();
+            gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[identity]));
         }
     }
 }
@@ -450,6 +471,7 @@ fn execute_rasterize_pass(
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
         let mut draw_index = 0u32;
+        let mut last_palette = None;
         for (entity, (_, mesh_renderer)) in
             scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
         {
@@ -474,15 +496,9 @@ fn execute_rasterize_pass(
                 render_pass.set_bind_group(2, tex_bg, &[]);
             }
 
-            // Upload bone matrices for skinned entities (group 3)
-            if let (Some(skin_buffer), Some(skin_bg)) = (&compiled.skin_buffer, &compiled.skin_bind_group) {
-                if let Some(palette) = bone_palettes.get(&entity) {
-                    gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[*palette]));
-                } else {
-                    // Non-skinned: upload identity palette (has_skin=0)
-                    let identity = crate::anim_system::BoneMatrixPalette::default();
-                    gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[identity]));
-                }
+            // Bone matrices (group 3). See `upload_skin_palette`.
+            if let Some(skin_bg) = &compiled.skin_bind_group {
+                last_palette = Some(bone_palettes.get(&entity));
                 render_pass.set_bind_group(3, skin_bg, &[]);
             }
 
@@ -494,6 +510,7 @@ fn execute_rasterize_pass(
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
             draw_index += 1;
         }
+        upload_skin_palette(gpu, compiled, last_palette);
         let draw_count = draw_index;
         if draw_count == 0 {
             tracing::warn!("Rasterize pass '{}': ZERO entities drawn!", pass.name);
