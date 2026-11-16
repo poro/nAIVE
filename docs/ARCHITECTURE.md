@@ -1,6 +1,6 @@
 # nAIVE Engine — Architecture Reference
 
-**Version:** 0.1.20
+**Version:** 0.1.21
 **Date:** May 2026
 **Companion:** nAIVE Engine PRD v5.0
 **License:** MIT
@@ -15,7 +15,7 @@ nAIVE is a six-stage pipeline: natural language description becomes a rendered, 
 
 The engine is built in Rust (2021 edition) across five workspace crates, totaling ~25,000 lines of source across 40+ modules. The core technology stack pairs each domain with a best-in-class Rust library: wgpu for cross-platform GPU rendering, NVIDIA SLANG for shader authoring, Rapier3D for deterministic physics, hecs for lightweight ECS, mlua for Lua 5.4 scripting, and Kira for spatial audio.
 
-The development roadmap is organized into tiers, each validated by HAVOC — a 3D Vampire Survivors-style horde survival game designed to push every subsystem to its limit. Tiers 1 through 2.7 are complete as of v0.1.15, covering gameplay primitives, production foundations, physics APIs, editor mode, AI asset generation, pipeline modularization, and debug visualization. Tier 3 (Visual & Interaction — texture mapping, procedural meshes, mouse picking via `screen_to_ray`) is in progress as of v0.1.18. Tier 4 (GPU scale: swarms of 50K+ members simulated and drawn on the GPU, with pathing, combat and spawn waves) is done after v0.1.20; see `docs/tier4-plan.md`.
+The development roadmap is organized into tiers, each validated by HAVOC — a 3D Vampire Survivors-style horde survival game designed to push every subsystem to its limit. Tiers 1 through 2.7 are complete as of v0.1.15, covering gameplay primitives, production foundations, physics APIs, editor mode, AI asset generation, pipeline modularization, and debug visualization. Tier 3 (Visual & Interaction — texture mapping, procedural meshes, mouse picking via `screen_to_ray`) is in progress as of v0.1.18. Tier 4 (GPU scale: swarms of 50K+ members simulated and drawn on the GPU, with pathing, combat and spawn waves) is done as of v0.1.21; see `docs/tier4-plan.md`.
 
 ### Crate Map
 

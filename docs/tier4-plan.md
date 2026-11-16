@@ -1,6 +1,6 @@
 # Tier 4 plan: GPU-scale entities
 
-**Status:** done. Approved on 2026-11-16; milestones 0 to 5 are built (pull requests #11, #14, #15, #17, #18 and the milestone 5 one).
+**Status:** done. Approved on 2026-11-16; milestones 0 to 5 are built (pull requests #11, #14, #15, #17, #18 and #19) and released in v0.1.21.
 **Goal:** 50,000 horde entities on screen at 60 fps, as the roadmap and the HAVOC proof game call for.
 **Source spec:** section 8 of [the engine PRD](nAIVE_Engine_PRD_v5.0.md), which this plan narrows into steps.
 

@@ -10,7 +10,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 - **Scripting:** Lua 5.4 (mlua)
 - **ECS:** hecs
 - **Audio:** kira
-- **Current version:** 0.1.20
+- **Current version:** 0.1.21
 
 ## Workspace Crates
 
@@ -64,7 +64,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | Tier 2.5 | Physics & Scene API (impulse/force, velocity, CCD, collider materials, entity tags, camera shake, scene loading) | **DONE v0.1.7** |
 | Tier 2.7 | DX & Code Quality (physics hot-reload, component patch coverage, pipeline modularization, HUD reload notifications, debug wireframes, kinematic bodies, convex decomposition) | **DONE v0.1.15** |
 | Tier 3 | Visual & Interaction (texture mapping, procedural meshes, mouse picking, screen_to_ray) | **IN PROGRESS v0.1.18** |
-| Tier 4 | GPU Scale (50K+ GPU compute entities, neighbor-grid collisions, flow field) | **DONE** (after v0.1.20) — instanced drawing, `gpu_swarm` movement, separation, flow-field pathing, damage, death, spawn waves and the Lua swarm API; 50,000 goblins in a fight run at about 1,000 fps on an M4 Max (`docs/tier4-plan.md`; prototype `scenes/tier4_havoc.yaml`) |
+| Tier 4 | GPU Scale (50K+ GPU compute entities, neighbor-grid collisions, flow field) | **DONE** (v0.1.21) — instanced drawing, `gpu_swarm` movement, separation, flow-field pathing, damage, death, spawn waves and the Lua swarm API; 50,000 goblins in a fight run at about 1,000 fps on an M4 Max (`docs/tier4-plan.md`; prototype `scenes/tier4_havoc.yaml`) |
 | Tier 5 | Animation & Polish (skeletal animation, VAT, UI) | Planned |
 
 ## AI Asset Generation

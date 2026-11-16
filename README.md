@@ -403,7 +403,7 @@ Development follows a tiered system, each tier validated by proof-of-concept gam
 | **2.5** | Physics & Scene API — impulse/force, CCD, collider materials, scene loading, camera shake | **Done** (v0.1.7) |
 | **2.7** | DX & Code Quality — physics hot-reload, pipeline modularization, debug wireframes, kinematic bodies, convex decomposition | **Done** (v0.1.15) |
 | **3** | Visual & Interaction — texture mapping, procedural meshes, STL loading, `screen_to_ray` mouse picking | **In progress** (v0.1.18) |
-| **4** | GPU compute entity simulation (50,000+ entities at 60 FPS), neighbor-grid collisions, flow field, damage and spawn waves | **Done** (after v0.1.20; [plan and measurements](docs/tier4-plan.md)) |
+| **4** | GPU compute entity simulation (50,000+ entities at 60 FPS), neighbor-grid collisions, flow field, damage and spawn waves | **Done** (v0.1.21; [plan and measurements](docs/tier4-plan.md)) |
 | **5** | Vertex animation textures, skeletal animation, state machines, UI widgets | Planned |
 
 **Proof game: HAVOC** — A 3D Vampire Survivors-style horde survival game. If nAIVE can render 50,000 physics-driven goblins while you drive a truck through them, it can handle anything. Waves 1 to 3 are playable now: `naive run --scene scenes/tier4_havoc.yaml` in `project/`.
@@ -487,4 +487,4 @@ cargo check --workspace
 
 ---
 
-**Current version:** 0.1.20
+**Current version:** 0.1.21
