@@ -565,7 +565,7 @@ end
 | `wait_seconds(n)` | Advance n seconds of game time at fixed timestep |
 | `wait_frames(n)` | Advance n simulation frames |
 | `wait_until(fn, timeout)` | Advance until function returns true (errors on timeout) |
-| `get_position(entity_id)` | Get entity position as x, y, z |
+| `get_position(entity_id)` | Get entity position as x, y, z (errors if the entity does not exist) |
 | `get_game_value(key)` | Read a value from the game state table |
 | `event_occurred(type, filter)` | Check if an event was emitted (optional filter table) |
 | `input.inject(action, type, value)` | Simulate input: type is "press", "release", or "axis" |

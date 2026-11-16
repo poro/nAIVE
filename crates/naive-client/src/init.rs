@@ -600,7 +600,7 @@ wait_for_event("lifecycle.scene_loaded", 10)  -- wait with timeout
 wait_seconds(1.0)                             -- advance game time
 wait_frames(5)                                -- advance N frames
 wait_until(function() return cond end, 10)    -- wait for condition
-get_position("entity_id")                     -- returns x, y, z
+get_position("entity_id")                     -- returns x, y, z; errors if missing
 get_game_value("key")                         -- read game table
 event_occurred("event.type", {{key="val"}})    -- check event log
 input.inject("action", "press", nil)          -- simulate input

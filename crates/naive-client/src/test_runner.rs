@@ -622,13 +622,18 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
         .map_err(|e| e.to_string())?;
 
     // get_position(entity_id) -> x, y, z
+    // Raises an error for an unknown entity. Returning zeros instead would let
+    // a test that names a missing entity pass by accident.
     let r = runner.clone();
     let get_position = lua
         .create_function(move |_, id: String| {
             let runner = r.borrow();
             match runner.get_entity_position(&id) {
                 Some(pos) => Ok((pos.x, pos.y, pos.z)),
-                None => Ok((0.0f32, 0.0f32, 0.0f32)),
+                None => Err(LuaError::RuntimeError(format!(
+                    "get_position: no entity with id '{}' and a transform in the loaded scene",
+                    id
+                ))),
             }
         })
         .map_err(|e| e.to_string())?;
@@ -690,5 +695,21 @@ mod tests {
         assert_eq!(action_to_key("interact"), "E");
         assert_eq!(action_to_key("jump"), "Space");
         assert_eq!(action_to_key("move_forward"), "W");
+    }
+
+    #[test]
+    fn get_position_rejects_an_unknown_entity() {
+        let runner = Rc::new(RefCell::new(TestRunner::new(Path::new("."))));
+        let lua = Lua::new();
+        register_test_api(&lua, runner).unwrap();
+
+        let err = lua
+            .load(r#"return get_position("no_such_entity")"#)
+            .exec()
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("no_such_entity"),
+            "unexpected error: {err}"
+        );
     }
 }
