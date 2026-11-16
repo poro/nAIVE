@@ -194,6 +194,98 @@ impl Engine {
         }
     }
 
+    /// Register every Lua API table on `script_runtime`. `load_scene` and
+    /// `init_editor_mode` both call this, so game and editor scripts see the
+    /// same API.
+    fn register_script_apis(&mut self, script_runtime: &ScriptRuntime) {
+        if let Err(e) = script_runtime.register_api() {
+            tracing::error!("Failed to register script API: {}", e);
+        }
+
+        // Register input API
+        if let Some(input) = &self.input_state {
+            if let Err(e) = script_runtime.register_input_api(input.clone()) {
+                tracing::error!("Failed to register input API: {}", e);
+            }
+        }
+
+        // Register physics API
+        if let (Some(pw), Some(sw)) = (&self.physics_world, &self.scene_world) {
+            if let Err(e) = script_runtime.register_physics_api(pw.clone(), sw.clone()) {
+                tracing::error!("Failed to register physics API: {}", e);
+            }
+        }
+
+        // Register entity manipulation API
+        if let (Some(sw), Some(pw)) = (&self.scene_world, &self.physics_world) {
+            if let Err(e) = script_runtime.register_entity_api(sw.clone(), pw.clone()) {
+                tracing::error!("Failed to register entity API: {}", e);
+            }
+            // Entity command API (spawn, destroy, scale, visibility, pooling)
+            if let Err(e) = script_runtime.register_entity_command_api(sw.clone(), self.entity_commands.clone(), self.pool_manager.clone()) {
+                tracing::error!("Failed to register entity command API: {}", e);
+            }
+        }
+
+        // Register UI overlay API
+        if let (Some(ui), Some(font), Some(gpu)) = (
+            &self.ui_renderer,
+            &self.bitmap_font,
+            &self.gpu,
+        ) {
+            let surface_config = Rc::new(RefCell::new(gpu.config.clone()));
+            self.shared_surface_config = Some(surface_config.clone());
+            if let Err(e) = script_runtime.register_ui_api(ui.clone(), font.clone(), surface_config) {
+                tracing::error!("Failed to register UI API: {}", e);
+            }
+        }
+
+        // Register camera API (world_to_screen)
+        if let (Some(cs), Some(sc)) = (&self.camera_state, &self.shared_surface_config) {
+            if let Err(e) = script_runtime.register_camera_api(cs.clone(), sc.clone()) {
+                tracing::error!("Failed to register camera API: {}", e);
+            }
+        }
+
+        // Register camera shake API
+        {
+            if let Err(e) = script_runtime.register_camera_shake_api(self.camera_shake.clone()) {
+                tracing::error!("Failed to register camera shake API: {}", e);
+            }
+        }
+
+        // Register event bus API (with Lua listener support)
+        {
+            if let Err(e) = script_runtime.register_event_api(self.event_bus.clone(), self.lua_event_listeners.clone(), self.next_lua_listener_id.clone(), self.lua_listener_id_map.clone()) {
+                tracing::error!("Failed to register event API: {}", e);
+            }
+        }
+
+        // Register audio API
+        {
+            if let Err(e) = script_runtime.register_audio_api(self.audio_system.clone(), self.project_root.clone()) {
+                tracing::error!("Failed to register audio API: {}", e);
+            }
+        }
+
+        // Register particle API
+        if let Some(sw) = &self.scene_world {
+            if let Err(e) = script_runtime.register_particle_api(sw.clone(), self.particle_system.clone()) {
+                tracing::error!("Failed to register particle API: {}", e);
+            }
+        }
+
+        // Register animation API
+        if let Some(sw) = &self.scene_world {
+            if let Err(e) = script_runtime.register_animation_api(sw.clone()) {
+                tracing::error!("Failed to register animation API: {}", e);
+            }
+            if let Err(e) = script_runtime.register_mesh_api(self.entity_commands.clone()) {
+                tracing::error!("Failed to register mesh API: {}", e);
+            }
+        }
+    }
+
     /// Initialize the forward pipeline and load the scene.
     fn load_scene(&mut self) {
         let gpu = match &self.gpu {
@@ -457,92 +549,7 @@ impl Engine {
 
         // Phase 6: Initialize scripting runtime
         let mut script_runtime = ScriptRuntime::new();
-        if let Err(e) = script_runtime.register_api() {
-            tracing::error!("Failed to register script API: {}", e);
-        }
-
-        // Register input API
-        if let Some(input) = &self.input_state {
-            if let Err(e) = script_runtime.register_input_api(input.clone()) {
-                tracing::error!("Failed to register input API: {}", e);
-            }
-        }
-
-        // Register physics API
-        if let (Some(pw), Some(sw)) = (&self.physics_world, &self.scene_world) {
-            if let Err(e) = script_runtime.register_physics_api(pw.clone(), sw.clone()) {
-                tracing::error!("Failed to register physics API: {}", e);
-            }
-        }
-
-        // Register entity manipulation API
-        if let (Some(sw), Some(pw)) = (&self.scene_world, &self.physics_world) {
-            if let Err(e) = script_runtime.register_entity_api(sw.clone(), pw.clone()) {
-                tracing::error!("Failed to register entity API: {}", e);
-            }
-            // Entity command API (spawn, destroy, scale, visibility, pooling)
-            if let Err(e) = script_runtime.register_entity_command_api(sw.clone(), self.entity_commands.clone(), self.pool_manager.clone()) {
-                tracing::error!("Failed to register entity command API: {}", e);
-            }
-        }
-
-        // Register UI overlay API
-        if let (Some(ui), Some(font), Some(gpu)) = (
-            &self.ui_renderer,
-            &self.bitmap_font,
-            &self.gpu,
-        ) {
-            let surface_config = Rc::new(RefCell::new(gpu.config.clone()));
-            self.shared_surface_config = Some(surface_config.clone());
-            if let Err(e) = script_runtime.register_ui_api(ui.clone(), font.clone(), surface_config) {
-                tracing::error!("Failed to register UI API: {}", e);
-            }
-        }
-
-        // Register camera API (world_to_screen)
-        if let (Some(cs), Some(sc)) = (&self.camera_state, &self.shared_surface_config) {
-            if let Err(e) = script_runtime.register_camera_api(cs.clone(), sc.clone()) {
-                tracing::error!("Failed to register camera API: {}", e);
-            }
-        }
-
-        // Register camera shake API
-        {
-            if let Err(e) = script_runtime.register_camera_shake_api(self.camera_shake.clone()) {
-                tracing::error!("Failed to register camera shake API: {}", e);
-            }
-        }
-
-        // Register event bus API (with Lua listener support)
-        {
-            if let Err(e) = script_runtime.register_event_api(self.event_bus.clone(), self.lua_event_listeners.clone(), self.next_lua_listener_id.clone(), self.lua_listener_id_map.clone()) {
-                tracing::error!("Failed to register event API: {}", e);
-            }
-        }
-
-        // Register audio API
-        {
-            if let Err(e) = script_runtime.register_audio_api(self.audio_system.clone(), self.project_root.clone()) {
-                tracing::error!("Failed to register audio API: {}", e);
-            }
-        }
-
-        // Register particle API
-        if let Some(sw) = &self.scene_world {
-            if let Err(e) = script_runtime.register_particle_api(sw.clone(), self.particle_system.clone()) {
-                tracing::error!("Failed to register particle API: {}", e);
-            }
-        }
-
-        // Register animation API
-        if let Some(sw) = &self.scene_world {
-            if let Err(e) = script_runtime.register_animation_api(sw.clone()) {
-                tracing::error!("Failed to register animation API: {}", e);
-            }
-            if let Err(e) = script_runtime.register_mesh_api(self.entity_commands.clone()) {
-                tracing::error!("Failed to register mesh API: {}", e);
-            }
-        }
+        self.register_script_apis(&script_runtime);
 
         // Load scripts for entities that have them
         if let Some(sw) = &self.scene_world {
@@ -798,92 +805,7 @@ impl Engine {
 
         // Initialize scripting runtime with full API suite (same as load_scene)
         let script_runtime = ScriptRuntime::new();
-        if let Err(e) = script_runtime.register_api() {
-            tracing::error!("Failed to register script API: {}", e);
-        }
-
-        // Register input API
-        if let Some(input) = &self.input_state {
-            if let Err(e) = script_runtime.register_input_api(input.clone()) {
-                tracing::error!("Failed to register input API: {}", e);
-            }
-        }
-
-        // Register physics API
-        if let (Some(pw), Some(sw)) = (&self.physics_world, &self.scene_world) {
-            if let Err(e) = script_runtime.register_physics_api(pw.clone(), sw.clone()) {
-                tracing::error!("Failed to register physics API: {}", e);
-            }
-        }
-
-        // Register entity manipulation API
-        if let (Some(sw), Some(pw)) = (&self.scene_world, &self.physics_world) {
-            if let Err(e) = script_runtime.register_entity_api(sw.clone(), pw.clone()) {
-                tracing::error!("Failed to register entity API: {}", e);
-            }
-            // Entity command API (spawn, destroy, scale, visibility, pooling)
-            if let Err(e) = script_runtime.register_entity_command_api(sw.clone(), self.entity_commands.clone(), self.pool_manager.clone()) {
-                tracing::error!("Failed to register entity command API: {}", e);
-            }
-        }
-
-        // Register UI overlay API
-        if let (Some(ui), Some(font), Some(gpu)) = (
-            &self.ui_renderer,
-            &self.bitmap_font,
-            &self.gpu,
-        ) {
-            let surface_config = Rc::new(RefCell::new(gpu.config.clone()));
-            self.shared_surface_config = Some(surface_config.clone());
-            if let Err(e) = script_runtime.register_ui_api(ui.clone(), font.clone(), surface_config) {
-                tracing::error!("Failed to register UI API: {}", e);
-            }
-        }
-
-        // Register camera API
-        if let (Some(cs), Some(sc)) = (&self.camera_state, &self.shared_surface_config) {
-            if let Err(e) = script_runtime.register_camera_api(cs.clone(), sc.clone()) {
-                tracing::error!("Failed to register camera API: {}", e);
-            }
-        }
-
-        // Register camera shake API
-        {
-            if let Err(e) = script_runtime.register_camera_shake_api(self.camera_shake.clone()) {
-                tracing::error!("Failed to register camera shake API: {}", e);
-            }
-        }
-
-        // Register event bus API
-        {
-            if let Err(e) = script_runtime.register_event_api(self.event_bus.clone(), self.lua_event_listeners.clone(), self.next_lua_listener_id.clone(), self.lua_listener_id_map.clone()) {
-                tracing::error!("Failed to register event API: {}", e);
-            }
-        }
-
-        // Register audio API
-        {
-            if let Err(e) = script_runtime.register_audio_api(self.audio_system.clone(), self.project_root.clone()) {
-                tracing::error!("Failed to register audio API: {}", e);
-            }
-        }
-
-        // Register particle API
-        if let Some(sw) = &self.scene_world {
-            if let Err(e) = script_runtime.register_particle_api(sw.clone(), self.particle_system.clone()) {
-                tracing::error!("Failed to register particle API: {}", e);
-            }
-        }
-
-        // Register animation API
-        if let Some(sw) = &self.scene_world {
-            if let Err(e) = script_runtime.register_animation_api(sw.clone()) {
-                tracing::error!("Failed to register animation API: {}", e);
-            }
-            if let Err(e) = script_runtime.register_mesh_api(self.entity_commands.clone()) {
-                tracing::error!("Failed to register mesh API: {}", e);
-            }
-        }
+        self.register_script_apis(&script_runtime);
 
         self.script_runtime = Some(script_runtime);
 
@@ -3286,14 +3208,18 @@ impl ApplicationHandler for Engine {
                             }
                         }
 
-                        // Always step physics (gravity, collisions, etc.)
+                        // Always advance physics (gravity, collisions, etc.), in
+                        // fixed steps so the simulation does not depend on the
+                        // frame rate. Scripts get `fixed_update` before each step.
                         if let (Some(scene_world), Some(physics_world)) =
                             (&self.scene_world, &self.physics_world)
                         {
-                            let mut pw = physics_world.borrow_mut();
-                            pw.step(self.delta_time);
-                            let mut sw = scene_world.borrow_mut();
-                            pw.sync_to_ecs(&mut sw.world);
+                            crate::scripting::run_fixed_steps(
+                                physics_world,
+                                scene_world,
+                                self.script_runtime.as_ref(),
+                                self.delta_time,
+                            );
                         }
 
                         // Dispatch collision events to scripts

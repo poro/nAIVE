@@ -255,7 +255,8 @@ end
 function update(dt)
 end
 
--- Called at fixed physics timestep
+-- Called before every physics step; dt is always 1/120 s, whatever the frame rate.
+-- A frame can run zero, one, or several steps.
 function fixed_update(dt)
 end
 

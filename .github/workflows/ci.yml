@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# A newer push to the same branch or pull request replaces the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Naming bash turns on pipefail, so a failed download fails the step.
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep in step with the README and the Homebrew formula.
+  SLANG_VERSION: "2026.2.2"
+
+jobs:
+  test-macos:
+    name: Test and lint (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # .cargo/config.toml points SLANG_DIR and the runtime library path at vendor/.
+      - name: Install SLANG SDK
+        run: |
+          mkdir -p vendor
+          curl -fsSL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-macos-aarch64.tar.gz" \
+            | tar xz -C vendor
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Unit tests
+        run: cargo test --workspace --exclude naive-web --locked
+
+      # Fails on clippy errors only. The existing warnings are not denied yet.
+      - name: Clippy
+        run: cargo clippy --workspace --exclude naive-web --locked
+
+  check-linux:
+    name: Check (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libwayland-dev libxkbcommon-dev libclang-dev pkg-config
+
+      - name: Install SLANG SDK
+        run: |
+          mkdir -p vendor
+          curl -fsSL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.tar.gz" \
+            | tar xz -C vendor
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check
+        run: cargo check --workspace --exclude naive-web --locked
+
+  check-web:
+    name: Check (WebAssembly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Add the wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check naive-web
+        run: cargo check -p naive-web --target wasm32-unknown-unknown --locked
