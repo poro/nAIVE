@@ -164,3 +164,102 @@ mod tests {
         }
     }
 }
+
+/// How two captures differ.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrameDiff {
+    pub width: u32,
+    pub height: u32,
+    /// Pixels where some channel differs by more than the threshold.
+    pub changed_pixels: u64,
+    /// Largest difference in any channel, 0-255.
+    pub max_difference: u8,
+    /// Mean absolute difference over all channels, 0-255.
+    pub mean_difference: f64,
+}
+
+/// Compare two PNGs of the same size and write a diff image to `output`:
+/// the second image dimmed to a third, with changed pixels red, brighter the
+/// larger the change.
+pub fn diff_frames(a: &Path, b: &Path, output: &Path, threshold: u8) -> Result<FrameDiff, String> {
+    let open = |path: &Path| {
+        image::open(path)
+            .map(|image| image.to_rgb8())
+            .map_err(|e| format!("cannot read {}: {}", path.display(), e))
+    };
+    let (a, b) = (open(a)?, open(b)?);
+    if a.dimensions() != b.dimensions() {
+        return Err(format!(
+            "images differ in size: {:?} and {:?}",
+            a.dimensions(),
+            b.dimensions()
+        ));
+    }
+    let (width, height) = a.dimensions();
+    let mut diff = image::RgbImage::new(width, height);
+    let (mut changed, mut max, mut total) = (0u64, 0u8, 0u64);
+    for ((pa, pb), out) in a.pixels().zip(b.pixels()).zip(diff.pixels_mut()) {
+        let largest = (0..3).map(|c| pa[c].abs_diff(pb[c])).max().unwrap_or(0);
+        total += (0..3)
+            .map(|c| u64::from(pa[c].abs_diff(pb[c])))
+            .sum::<u64>();
+        max = max.max(largest);
+        *out = if largest > threshold {
+            changed += 1;
+            image::Rgb([128 + largest / 2, 0, 0])
+        } else {
+            image::Rgb([pb[0] / 3, pb[1] / 3, pb[2] / 3])
+        };
+    }
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    diff.save(output)
+        .map_err(|e| format!("cannot write {}: {}", output.display(), e))?;
+    Ok(FrameDiff {
+        width,
+        height,
+        changed_pixels: changed,
+        max_difference: max,
+        mean_difference: total as f64 / (u64::from(width) * u64::from(height) * 3).max(1) as f64,
+    })
+}
+
+#[cfg(test)]
+mod diff_tests {
+    use super::*;
+
+    #[test]
+    fn diff_counts_changed_pixels_and_writes_an_image() {
+        let dir = std::env::temp_dir().join(format!("naive-diff-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut a = image::RgbImage::from_pixel(4, 2, image::Rgb([100, 100, 100]));
+        a.save(dir.join("a.png")).unwrap();
+        a.put_pixel(1, 1, image::Rgb([100, 200, 100]));
+        a.put_pixel(2, 0, image::Rgb([104, 100, 100]));
+        a.save(dir.join("b.png")).unwrap();
+        let diff = diff_frames(
+            &dir.join("a.png"),
+            &dir.join("b.png"),
+            &dir.join("d.png"),
+            8,
+        )
+        .unwrap();
+        assert_eq!(diff.changed_pixels, 1);
+        assert_eq!(diff.max_difference, 100);
+        let written = image::open(dir.join("d.png")).unwrap().to_rgb8();
+        assert_eq!(written.get_pixel(1, 1)[0], 178);
+        assert_eq!(written.get_pixel(0, 0).0, [33, 33, 33]);
+        image::RgbImage::new(2, 2)
+            .save(dir.join("small.png"))
+            .unwrap();
+        assert!(diff_frames(
+            &dir.join("a.png"),
+            &dir.join("small.png"),
+            &dir.join("d.png"),
+            8
+        )
+        .is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
