@@ -512,4 +512,4 @@ cargo check --workspace
 
 ---
 
-**Current version:** 0.1.21
+**Current version:** 0.1.22
