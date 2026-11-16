@@ -80,7 +80,10 @@ float sampleShadowPCF(float3 worldPos) {
     float2 shadowUV = float2(lightNdc.x * 0.5 + 0.5, -lightNdc.y * 0.5 + 0.5);
     float shadowDepth = lightNdc.z;
 
-    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0)
+    // Nothing outside the shadow map, beside it or past its far plane, was
+    // drawn into it, so such points are lit.
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0
+        || shadowDepth > 1.0)
         return 1.0;
 
     uint w, h;
