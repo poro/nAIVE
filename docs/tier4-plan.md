@@ -34,6 +34,23 @@ Removing that upload is milestone 0 below. With it:
 
 After the fix the cost is linear, about 2.7 microseconds per entity per frame, which puts the CPU path's 60 fps ceiling near 6,000 entities. Getting to 50,000 needs the two things the roadmap names: instanced drawing and simulation on the GPU.
 
+Milestone 1 (instanced drawing) removed that per-entity cost: entities sharing a mesh and albedo texture are now one draw, and all draw data goes up in one upload per frame. Same scenes and machine:
+
+| Entities | Plain meshes | Physics bodies |
+|---|---|---|
+| 2,000 to 2,500 | 120 fps | 120 fps |
+| 4,000 to 5,000 | 120 fps | 120 fps |
+| 8,000 to 10,000 | 120 fps | 120 fps |
+| 20,000 | 120 fps | not measured |
+| 40,000 to 50,000 | 120 fps | not measured |
+| 80,000 | 77 fps | not measured |
+| 120,000 | 54 fps | not measured |
+| 160,000 | 39 fps | not measured |
+
+120 fps is the display's refresh rate, the cap. The plain-mesh ceiling for 60 fps is now about 100,000 static entities. What remains per entity is the CPU work of gathering each one's matrix and material every frame, which a GPU-side swarm does not need.
+
+The physics column needs a caution: the benchmark's balls settle and Rapier puts them to sleep, so it measures sleeping bodies. Its old numbers were limited by drawing, not physics.
+
 ## Design
 
 ### Two kinds of entity
@@ -59,7 +76,7 @@ Choices, each made to keep the first version simple and inside WebGPU's default 
 
 - **Neighbour grid with fixed-size cells.** Each cell holds up to a fixed number of member indices, filled with an atomic counter; overflow is dropped. One pass, no prefix sum or sort. Crowding beyond the cell capacity loses some separation, which a horde hides.
 - **Flow field on the CPU.** A 128 by 128 grid solved from the target's position around static obstacles, uploaded as a texture when the target changes cell. It is 16,384 cells, which is cheap.
-- **No Rapier for members.** The measurements above work out to roughly 0.6 microseconds per body per physics step, so 50,000 bodies would cost about 30 ms per step. Members collide with each other through the grid and with the world through the flow field's obstacles.
+- **No Rapier for members.** Members are always moving, so Rapier could never put them to sleep, and stepping 50,000 awake bodies on the CPU every fixed step is far beyond the frame budget. (An earlier draft put a number on this from the physics benchmark; that benchmark measures sleeping bodies, so the number did not hold.) Members collide with each other through the grid and with the world through the flow field's obstacles.
 
 ### Talking to the rest of the game without stalling
 
@@ -82,7 +99,7 @@ events.on("swarm.player_hit", function(e) ... end)
 
 - `PassType::Compute` in the pipeline. Today the compiler rejects it and the executor skips it.
 - Compute entry points in the shader path. Today only `vs_main` and `fs_main` are handled. Each compute shader also gets a hand-written WGSL fallback, as the other passes have, so it works without SLANG and on the web.
-- Instanced pipelines for the shadow and G-buffer passes.
+- Instanced pipelines for the shadow and G-buffer passes. Done in milestone 1: both passes read per-entity data from a storage buffer indexed by instance. Swarm members will need their own buffer, since theirs is written by the compute pass.
 
 ### Testing
 
@@ -95,13 +112,13 @@ Each one ends with a number or a scene to look at.
 | | Milestone | Done when | Size |
 |---|---|---|---|
 | 0 | Stop the per-entity bone upload | Measured above. Pull request #11 | Done |
-| 1 | Instanced drawing for ECS entities that share a mesh and material | Benchmark table re-run; three demos look unchanged | Medium |
+| 1 | Instanced drawing for ECS entities that share a mesh and material | Measured above; regression captures pixel-identical | Done |
 | 2 | Compute pass plumbing and the `gpu_swarm` component: members move toward a target, drawn instanced | 50,000 moving cubes at 60 fps in a new `tier4_swarm` scene | Large |
 | 3 | Neighbour grid and flow field | Members spread out instead of stacking and path around obstacles | Large |
 | 4 | Damage volumes, contact damage, death, spawn waves, the Lua API and events | A HAVOC wave 1 to 3 prototype: 1,000 to 5,000 members you can fight | Large |
 | 5 | Scale-up and tidy | 50,000 members at 60 fps on this MacBook; README's Tier 4 row marked done | Medium |
 
-Milestone 1 comes before any compute work because swarms need instancing anyway, and it lifts the ceiling for ordinary entities on the way. How far it lifts it is not known until measured.
+Milestone 1 came before any compute work because swarms need instancing anyway, and it lifted the ceiling for ordinary entities on the way: from about 6,000 to about 100,000 static entities at 60 fps.
 
 ## Not in Tier 4
 

@@ -65,15 +65,26 @@ pub struct DrawUniforms {
 }
 
 pub const DRAW_UNIFORM_SIZE: u64 = 256;
+// The shaders index an array of these with a 256-byte stride.
+const _: () = assert!(std::mem::size_of::<DrawUniforms>() == DRAW_UNIFORM_SIZE as usize);
 const INITIAL_CAPACITY: u32 = 256;
 const GROWTH_FACTOR: u32 = 2;
 
-/// Manages per-entity draw uniforms with dynamic offsets.
-/// Buffer grows dynamically when more entities are needed.
+/// Per-entity draw data for every visible mesh, one 256-byte `DrawUniforms`
+/// per entity. The buffer grows when more entities are needed.
+///
+/// The same buffer is bound two ways:
+/// - `bind_group` is a uniform binding of one entry, selected with a dynamic
+///   offset per draw. The forward renderer uses it.
+/// - `storage_bind_group` is a read-only storage binding of the whole buffer.
+///   The deferred pipeline draws entities that share a mesh and texture in one
+///   instanced draw, and its shaders index this array with the instance index.
 pub struct DrawUniformPool {
     pub buffer: wgpu::Buffer,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
+    pub storage_bind_group_layout: wgpu::BindGroupLayout,
+    pub storage_bind_group: wgpu::BindGroup,
     pub capacity: u32,
 }
 
@@ -94,33 +105,78 @@ impl DrawUniformPool {
                 }],
             });
 
-        let capacity = INITIAL_CAPACITY;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Draw Uniform Buffer"),
-            size: DRAW_UNIFORM_SIZE * capacity as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let storage_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Draw Storage Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(DRAW_UNIFORM_SIZE),
+                    },
+                    count: None,
+                }],
+            });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Draw Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(DRAW_UNIFORM_SIZE),
-                }),
-            }],
-        });
+        let capacity = INITIAL_CAPACITY;
+        let buffer = Self::create_buffer(device, capacity);
+        let (bind_group, storage_bind_group) = Self::create_bind_groups(
+            device,
+            &buffer,
+            &bind_group_layout,
+            &storage_bind_group_layout,
+        );
 
         DrawUniformPool {
             buffer,
             bind_group_layout,
             bind_group,
+            storage_bind_group_layout,
+            storage_bind_group,
             capacity,
         }
+    }
+
+    fn create_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Draw Uniform Buffer"),
+            size: DRAW_UNIFORM_SIZE * capacity as u64,
+            usage: wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    fn create_bind_groups(
+        device: &wgpu::Device,
+        buffer: &wgpu::Buffer,
+        uniform_layout: &wgpu::BindGroupLayout,
+        storage_layout: &wgpu::BindGroupLayout,
+    ) -> (wgpu::BindGroup, wgpu::BindGroup) {
+        let uniform = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Draw Bind Group"),
+            layout: uniform_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(DRAW_UNIFORM_SIZE),
+                }),
+            }],
+        });
+        let storage = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Draw Storage Bind Group"),
+            layout: storage_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+        (uniform, storage)
     }
 
     /// Ensure the buffer can hold at least `needed` entities.
@@ -141,25 +197,13 @@ impl DrawUniformPool {
             new_capacity
         );
 
-        self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Draw Uniform Buffer"),
-            size: DRAW_UNIFORM_SIZE * new_capacity as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Draw Bind Group"),
-            layout: &self.bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &self.buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(DRAW_UNIFORM_SIZE),
-                }),
-            }],
-        });
+        self.buffer = Self::create_buffer(device, new_capacity);
+        (self.bind_group, self.storage_bind_group) = Self::create_bind_groups(
+            device,
+            &self.buffer,
+            &self.bind_group_layout,
+            &self.storage_bind_group_layout,
+        );
 
         self.capacity = new_capacity;
         true
