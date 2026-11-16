@@ -88,8 +88,10 @@ pub struct Engine {
     // Tier 2: Particle system
     pub particle_system: Rc<RefCell<crate::particles::ParticleSystem>>,
 
-    // Tier 4: GPU swarms (members simulated and drawn on the GPU)
+    // Tier 4: GPU swarms (members simulated and drawn on the GPU), and the
+    // requests and reports passing between them and scripts
     pub swarm_system: crate::swarm::SwarmSystem,
+    pub swarm_bus: crate::swarm_api::SharedSwarmBus,
 
     // Tier 2: Lua event listeners
     pub lua_event_listeners: Rc<RefCell<HashMap<String, Vec<mlua::RegistryKey>>>>,
@@ -165,6 +167,7 @@ impl Engine {
             pool_manager: Rc::new(RefCell::new(crate::world::EntityPoolManager::new())),
             particle_system: Rc::new(RefCell::new(crate::particles::ParticleSystem::new())),
             swarm_system: crate::swarm::SwarmSystem::new(),
+            swarm_bus: Rc::new(RefCell::new(crate::swarm_api::SwarmBus::new())),
             lua_event_listeners: Rc::new(RefCell::new(HashMap::new())),
             next_lua_listener_id: Rc::new(RefCell::new(0)),
             lua_listener_id_map: Rc::new(RefCell::new(HashMap::new())),
@@ -286,6 +289,16 @@ impl Engine {
             }
             if let Err(e) = script_runtime.register_mesh_api(self.entity_commands.clone()) {
                 tracing::error!("Failed to register mesh API: {}", e);
+            }
+        }
+
+        // Register swarm API. A new script runtime means a new scene, so
+        // swarms start over.
+        *self.swarm_bus.borrow_mut() = crate::swarm_api::SwarmBus::new();
+        self.swarm_system.clear();
+        if let Some(sw) = &self.scene_world {
+            if let Err(e) = crate::swarm_api::register_swarm_api(&script_runtime.lua, self.swarm_bus.clone(), sw.clone()) {
+                tracing::error!("Failed to register swarm API: {}", e);
             }
         }
     }
@@ -1808,6 +1821,8 @@ let mut scene_world = scene_world.borrow_mut();
         *self.next_lua_listener_id.borrow_mut() = 0;
         self.lua_listener_id_map.borrow_mut().clear();
         *self.camera_shake.borrow_mut() = CameraShakeState::new();
+        *self.swarm_bus.borrow_mut() = crate::swarm_api::SwarmBus::new();
+        self.swarm_system.clear();
 
         let gpu = match &self.gpu {
             Some(gpu) => gpu,
@@ -2973,6 +2988,11 @@ let input = input.borrow();
         // Tier 1: Update projectiles (age tracking, lifetime expiry)
         self.update_projectiles();
 
+        // Tier 4: swarm attacks hurt their targets; kill and hit events
+        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime) {
+            crate::sim::process_swarm_reports(&self.swarm_bus, scene_world, script_runtime, &self.event_bus);
+        }
+
         // Tier 1: Process health system (on_death callbacks)
         self.process_health_system();
 
@@ -3093,6 +3113,7 @@ let input = input.borrow();
                 &self.mesh_cache,
                 &self.material_cache,
                 draw_pool,
+                &mut self.swarm_bus.borrow_mut(),
                 dt,
             );
         }

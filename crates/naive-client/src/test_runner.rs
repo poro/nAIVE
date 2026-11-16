@@ -15,6 +15,8 @@ use crate::events::EventBus;
 use crate::input::InputState;
 use crate::physics::PhysicsWorld;
 use crate::scripting::{Script, ScriptRuntime};
+use crate::swarm::CpuSwarms;
+use crate::swarm_api::{register_swarm_api, SharedSwarmBus, SwarmBus};
 use crate::tween::TweenSystem;
 use crate::world::{EntityCommandQueue, EntityPoolManager, SceneWorld};
 
@@ -45,6 +47,9 @@ pub struct TestRunner {
     lua_listener_id_map: Rc<RefCell<HashMap<u64, (String, usize)>>>,
     entity_commands: Rc<RefCell<EntityCommandQueue>>,
     pool_manager: Rc<RefCell<EntityPoolManager>>,
+    /// Swarms run on the CPU here, with the same maths as the GPU shaders.
+    pub swarm_bus: SharedSwarmBus,
+    pub cpu_swarms: CpuSwarms,
     /// Whether the note about commands that need a GPU has been logged.
     warned_about_dropped_commands: bool,
 }
@@ -68,6 +73,8 @@ impl TestRunner {
             lua_listener_id_map: Rc::new(RefCell::new(HashMap::new())),
             entity_commands: Rc::new(RefCell::new(EntityCommandQueue::new())),
             pool_manager: Rc::new(RefCell::new(EntityPoolManager::new())),
+            swarm_bus: Rc::new(RefCell::new(SwarmBus::new())),
+            cpu_swarms: CpuSwarms::new(),
             warned_about_dropped_commands: false,
         }
     }
@@ -122,6 +129,10 @@ impl TestRunner {
                 self.lua_listener_id_map.clone(),
             )
             .map_err(|e| format!("Event API: {}", e))?;
+        *self.swarm_bus.borrow_mut() = SwarmBus::new();
+        self.cpu_swarms.clear();
+        register_swarm_api(&self.script_runtime.lua, self.swarm_bus.clone(), self.scene_world.clone())
+            .map_err(|e| format!("Swarm API: {}", e))?;
 
         // Load event schema
         self.event_bus.borrow_mut().load_schema(&self.project_root);
@@ -211,6 +222,7 @@ impl TestRunner {
             &self.entity_commands,
         );
         crate::sim::update_projectiles(&self.scene_world, &self.entity_commands, dt);
+        crate::sim::process_swarm_reports(&self.swarm_bus, &self.scene_world, &self.script_runtime, &self.event_bus);
         crate::sim::process_health(&self.scene_world, &self.script_runtime);
         crate::sim::update_scripts(&self.scene_world, &self.script_runtime, dt);
         self.process_entity_commands();
@@ -222,6 +234,14 @@ impl TestRunner {
             let mut sw = self.scene_world.borrow_mut();
             crate::transform::update_transforms(&mut sw.world);
         }
+
+        // Swarms step after the transforms, where the engine steps them on the GPU.
+        self.cpu_swarms.update(
+            &self.scene_world.borrow(),
+            Some(&self.physics_world.borrow()),
+            &mut self.swarm_bus.borrow_mut(),
+            dt,
+        );
 
         self.total_time += dt;
         self.frame_count += 1;
@@ -453,6 +473,13 @@ fn run_single_test(project_root: &Path, test_source: &str, test_name: &str) -> T
 fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), String> {
     let globals = lua.globals();
 
+    // The same `swarm` table scene scripts get, so tests can fire at swarms
+    // and read their counts.
+    {
+        let r = runner.borrow();
+        register_swarm_api(lua, r.swarm_bus.clone(), r.scene_world.clone())?;
+    }
+
     // log.info(msg) — test logging
     let log_table = lua.create_table().map_err(|e| e.to_string())?;
     let log_info = lua
@@ -556,11 +583,17 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
             match kind.as_str() {
                 "press" => {
                     let key = action_to_key(&action);
-                    input.inject_key_press(&key);
+                    match crate::input::mouse_button_named(&key) {
+                        Some(button) => input.inject_mouse_press(button),
+                        None => input.inject_key_press(&key),
+                    }
                 }
                 "release" => {
                     let key = action_to_key(&action);
-                    input.inject_key_release(&key);
+                    match crate::input::mouse_button_named(&key) {
+                        Some(button) => input.inject_mouse_release(button),
+                        None => input.inject_key_release(&key),
+                    }
                 }
                 "axis" => {
                     if let LuaValue::Table(tbl) = value {

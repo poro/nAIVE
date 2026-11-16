@@ -378,6 +378,31 @@ pub struct GpuSwarmDef {
     /// Seed for spawn positions and per-member speed variation.
     #[serde(default)]
     pub seed: u32,
+    /// Members alive when the scene starts; the rest of `count` waits for
+    /// `swarm.spawn`. Default: all of them.
+    #[serde(default)]
+    pub initial: Option<u32>,
+    /// Health each member spawns with.
+    #[serde(default = "default_swarm_health")]
+    pub health: f32,
+    /// Damage one member's attack deals to the target entity. Zero (the
+    /// default) means members never attack.
+    #[serde(default)]
+    pub attack_damage: f32,
+    /// Attacking members hit the target within this horizontal distance,
+    /// and stop just short of it instead of walking into it.
+    #[serde(default = "default_swarm_attack_range")]
+    pub attack_range: f32,
+    /// Seconds between one member's attacks.
+    #[serde(default = "default_one")]
+    pub attack_interval: f32,
+}
+
+impl GpuSwarmDef {
+    /// Members alive at the start, at most `count`.
+    pub fn initial_count(&self) -> u32 {
+        self.initial.unwrap_or(self.count).min(self.count)
+    }
 }
 
 fn default_swarm_mesh() -> String { "procedural:cube".to_string() }
@@ -389,6 +414,8 @@ fn default_swarm_spawn_radius() -> f32 { 20.0 }
 fn default_swarm_arrive_radius() -> f32 { 2.0 }
 fn default_swarm_separation() -> f32 { 3.0 }
 fn default_swarm_field_size() -> f32 { 256.0 }
+fn default_swarm_health() -> f32 { 10.0 }
+fn default_swarm_attack_range() -> f32 { 1.5 }
 
 fn default_anim_state() -> String { "idle".to_string() }
 fn default_anim_speed() -> f32 { 1.0 }

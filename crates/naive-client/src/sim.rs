@@ -325,6 +325,58 @@ pub fn update_projectiles(
     }
 }
 
+/// Turn what swarms reported into gameplay: members' attacks damage the
+/// entity they target (its `on_damage` runs, with the swarm's id as the
+/// source), and `swarm.kills`, `swarm.hit` and `swarm.cleared` events go out.
+pub fn process_swarm_reports(
+    swarm_bus: &crate::swarm_api::SharedSwarmBus,
+    scene_world: &SharedSceneWorld,
+    script_runtime: &ScriptRuntime,
+    event_bus: &SharedEventBus,
+) {
+    use serde_json::Value;
+    let reports = swarm_bus.borrow_mut().take_reports();
+    for report in reports {
+        let swarm = Value::String(report.swarm.clone());
+        if report.kills > 0 {
+            let data = HashMap::from([
+                ("swarm".to_string(), swarm.clone()),
+                ("count".to_string(), Value::from(report.kills)),
+                ("alive".to_string(), Value::from(report.alive)),
+            ]);
+            event_bus.borrow_mut().emit("swarm.kills", data);
+        }
+        if report.hits > 0 {
+            let target = report.target.as_ref().and_then(|id| {
+                let sw = scene_world.borrow();
+                let entity = *sw.entity_registry.get(id)?;
+                let mut health = sw.world.get::<&mut Health>(entity).ok()?;
+                if health.dead {
+                    return None;
+                }
+                health.current = (health.current - report.damage).max(0.0);
+                Some(entity)
+            });
+            // Nothing is borrowed while `on_damage` runs.
+            if let Some(entity) = target {
+                script_runtime.call_on_damage(entity, report.damage, report.swarm.clone());
+            }
+            let data = HashMap::from([
+                ("swarm".to_string(), swarm.clone()),
+                ("target".to_string(), report.target.clone().map(Value::String).unwrap_or(Value::Null)),
+                ("hits".to_string(), Value::from(report.hits)),
+                ("damage".to_string(), Value::from(f64::from(report.damage))),
+            ]);
+            event_bus.borrow_mut().emit("swarm.hit", data);
+        }
+        if report.cleared {
+            event_bus
+                .borrow_mut()
+                .emit("swarm.cleared", HashMap::from([("swarm".to_string(), swarm)]));
+        }
+    }
+}
+
 /// Mark entities whose health reached zero as dead and call `on_death` on each, once.
 pub fn process_health(scene_world: &SharedSceneWorld, script_runtime: &ScriptRuntime) {
     // Collect first: `on_death` may call back into the entity API.

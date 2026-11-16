@@ -93,15 +93,25 @@ Reading member data back every frame would stall the GPU, so nothing does.
 - **Game to swarm:** damage volumes (spheres, capsules, rays) are passed in a small uniform array each frame. Weapons, explosions and vehicles all become volumes.
 - **Swarm to game:** the shader accumulates counters (kills, hits on the player) in a small buffer that is read back asynchronously, one or two frames late, and turned into events.
 
-Lua surface, all at swarm level:
+Lua surface, all at swarm level (as built in milestone 4; `docs/GAME_DEVELOPMENT_GUIDE.md` has the reference):
 
 ```lua
 swarm.spawn("goblins", 500, x, y, z, radius)
-swarm.set_target("goblins", x, y, z)
+swarm.set_target("goblins", x, y, z)       -- or swarm.follow("goblins", "player")
 swarm.damage_sphere("goblins", x, y, z, radius, damage)
-events.on("swarm.kills", function(e) ... end)
-events.on("swarm.player_hit", function(e) ... end)
+swarm.damage_line("goblins", x1, y1, z1, x2, y2, z2, radius, damage)
+swarm.alive("goblins"); swarm.capacity("goblins"); swarm.kills("goblins")
+events.on("swarm.kills", function(e) ... end)    -- e.data.swarm, count, alive
+events.on("swarm.hit", function(e) ... end)      -- e.data.swarm, target, hits, damage
+events.on("swarm.cleared", function(e) ... end)  -- e.data.swarm
 ```
+
+As built in milestone 4 (`swarm.rs`, `swarm_api.rs`, `sim::process_swarm_reports`):
+
+- **`count` is a pool.** Each member has health; one at zero or below is dead: it is not binned, pushes nobody and is drawn at zero size. `initial` says how many start alive. `swarm.spawn` brings dead slots back: dead members claim spawn slots with an atomic counter, and spawn number n of the swarm decides where its member lands in the disc, so each wave lands somewhere new.
+- **Damage volumes** are segments with a radius (a sphere is a segment whose ends meet), up to 64 per swarm per frame in its uniform buffer; more wait for the next frame. A line hurts every member along it, like a piercing shot; a first-hit ray is not built. Hurt members glow for 0.12 s.
+- **Contact damage.** With `attack_damage` above zero, members attack the target entity from within `attack_range`, every `attack_interval`. They stop at 0.8 of the range, and the target's space pushes members out three times as hard as a neighbour does, so the crowd behind cannot squeeze the front rank onto the player.
+- **Counters, read back without waiting.** Each swarm's step leaves four counters in a 16-byte buffer: kill and attack totals, and this step's living members and spawn claims. The buffer is copied to one of three mappable buffers and read when the GPU is done, a frame or two later; a frame with no free buffer skips its copy and the running totals catch up. Reports become damage on the target (with `on_damage`, the swarm's id as the source) and `swarm.kills`, `swarm.hit` and `swarm.cleared` events. `swarm.alive` adds spawns requested since the last report, so a wave counts as soon as it is asked for.
 
 ### What has to be built in the engine
 
@@ -117,7 +127,9 @@ As built:
 
 - `swarm::step_swarm` is the CPU reference of both passes, with unit tests: members spread out instead of stacking (nearest neighbours above 0.4 of the spacing, median above 0.6), path around a wall to the target without ever entering it, never exceed top speed, stay on their plane, face the way they move; the flow field points at the target in the open, routes round a wall's end, marks walled-in cells unreachable; only boxes crossing the plane are obstacles; spawning is deterministic.
 - A test parses and validates every built-in WGSL shader with naga, the compiler wgpu uses, and checks each shader's copy of `DrawUniforms` is 256 bytes. It runs in CI without a GPU, and caught a reserved word in the first swarm shader.
-- `gpu_step_matches_the_cpu_reference` runs the real compute shaders and compares 300 members over 20 steps, with a wall in the way, with the CPU reference (positions, velocities and draw matrices within 1e-3). It needs a GPU, so it is `#[ignore]`d in CI: `cargo test -p naive-client --lib -- --ignored gpu_step`.
+- `gpu_step_matches_the_cpu_reference` runs the real compute shaders and compares 300 members over 20 steps, with a wall in the way, damage spheres and lines, and members attacking the target, with the CPU reference (positions, velocities, health and draw matrices within 1e-3; kill, attack and living counts exactly). `gpu_spawn_matches_the_cpu_reference` compares a spawn of two waves as sets of positions, since which dead slot takes which spawn varies on the GPU. Both need a GPU, so they are `#[ignore]`d in CI: `cargo test -p naive-client --lib -- --ignored gpu_`.
+- Milestone 4's CPU tests: a sphere kills what it covers and nothing else, damage below a member's health wounds it, a line hurts only along its length, spawning fills dead slots inside the disc (and never more than the pool), dead members neither push nor move, attackers stop short of the target and hit on their interval; and the `SwarmBus` counts in-flight spawns and only reports "cleared" when nothing is on the way.
+- **The headless runner now runs swarms.** `CpuSwarms` steps them with `step_swarm` and reports on the same frame, so `naive test` covers the Lua API, events and contact damage in CI: `tests/test_swarm.lua` (spawning, wounding then killing, lines, attacks that kill a dummy, retargeting, errors for unknown ids) and `tests/test_havoc.lua` (waves start on time, clearing one starts the next, a held rifle and the slam kill goblins through the real player script, the horde hurts a player who stands still).
 - Claude can look at the result with `capture_frame`.
 
 ## Milestones
@@ -130,7 +142,7 @@ Each one ends with a number or a scene to look at.
 | 1 | Instanced drawing for ECS entities that share a mesh and material | Measured above; regression captures pixel-identical | Done |
 | 2 | Compute pass plumbing and the `gpu_swarm` component: members move toward a target, drawn instanced | `scenes/tier4_swarm.yaml`: 50,000 to 400,000 members at 120 fps (the display cap) | Done |
 | 3 | Neighbour grid and flow field | Members spread out instead of stacking and path around obstacles: tests above, and the four walls in `tier4_swarm`; still 400,000 members at 120 fps | Done |
-| 4 | Damage volumes, contact damage, death, spawn waves, the Lua API and events | A HAVOC wave 1 to 3 prototype: 1,000 to 5,000 members you can fight | Large |
+| 4 | Damage volumes, contact damage, death, spawn waves, the Lua API and events | A HAVOC wave 1 to 3 prototype: 1,000 to 5,000 members you can fight: `scenes/tier4_havoc.yaml`; still 400,000 members at 120 fps | Done |
 | 5 | Scale-up and tidy | 50,000 members at 60 fps on this MacBook; README's Tier 4 row marked done | Medium |
 
 Milestone 1 came before any compute work because swarms need instancing anyway, and it lifted the ceiling for ordinary entities on the way: from about 6,000 to about 100,000 static entities at 60 fps.
@@ -146,6 +158,10 @@ Milestone 2 measured, release build, same MacBook, `tier4_swarm` scene with its 
 
 All at the display's 120 Hz cap, so the real ceiling is higher; the 524,288-member limit per swarm comes first. In milestone 2 members only steered toward slots around the target.
 
+Milestone 4 added health, damage volumes, attacks, spawning and the counters, and measured back to back with the previous `master` build: 50,000 members at 120.0 fps (`master` 120.1) and 400,000 at 119.6 (`master` 118.8). With a script firing the full 64 damage spheres every frame, 400,000 members still ran at 120 fps.
+
+`scenes/tier4_havoc.yaml` is the milestone's prototype: three waves (1,000, 2,500, then 5,000 goblins with 30 health) spawn around the arena's edge, path around ruins and close on the player, who has a piercing rifle (hold the left mouse button) and a ground slam (E). Captures of it show the four spawn groups, the horde routing round the ruins' ends and packing around the player, a clean 7 m hole after a slam, and wounded goblins glowing.
+
 Milestone 3 added the neighbour grid, separation and the flow field, and the same measurement did not move: 50,000, 100,000, 200,000 and 400,000 members all ran at 118 to 120 fps, still the display cap, now with four walls to path around. The GPU step for 400,000 members fits in a frame with room to spare; how much room is not measured (it would need GPU timestamp queries).
 
 ## Not in Tier 4
@@ -160,7 +176,8 @@ Milestone 3 added the neighbour grid, separation and the flow field, and the sam
 - **Looking at the screen.** Since `capture_frame` (pull request #13) Claude can look at renders itself, but a capture is one still frame; motion and feel still want you to run a scene.
 - **The GPU path is outside CI.** CI validates the shaders and the CPU reference covers the maths; the GPU-versus-CPU test only runs by hand.
 - **Projectiles no longer "hit" horde members physically.** They become rays or small damage volumes. Anything that relied on a Rapier contact with a goblin has to be expressed that way.
-- **The 50,000 figure is met for movement, separation and pathing.** Damage, death and spawn waves (milestone 4) remain.
+- **The 50,000 figure is met, combat included**, at the display cap; milestone 5's job is to show it at 60 fps with headroom measured (GPU timestamp queries) and tidy up.
+- **Kill positions stay on the GPU.** Scripts learn how many died, not where, so effects at a death (gore, drops) can only go where the script aimed the damage.
 
 ## Decisions
 

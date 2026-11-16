@@ -918,6 +918,16 @@ fn spawn_entity_headless(
         let _ = scene_world.world.insert_one(entity, collision_damage);
     }
 
+    // Swarms run on the CPU headlessly; nothing draws them, so no mesh or material.
+    if let Some(swarm_def) = &entity_def.components.gpu_swarm {
+        let swarm = crate::components::GpuSwarm {
+            def: swarm_def.clone(),
+            mesh_handle: crate::components::MeshHandle(0),
+            material_handle: crate::components::MaterialHandle(0),
+        };
+        let _ = scene_world.world.insert_one(entity, swarm);
+    }
+
     // Spawn physics components
     let pos = if let Some(t) = &entity_def.components.transform {
         glam::Vec3::from(t.position)
