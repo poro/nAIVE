@@ -1,6 +1,6 @@
 # nAIVE Engine — Architecture Reference
 
-**Version:** 0.1.19
+**Version:** 0.1.20
 **Date:** May 2026
 **Companion:** nAIVE Engine PRD v5.0
 **License:** MIT
