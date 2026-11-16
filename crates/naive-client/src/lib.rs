@@ -40,6 +40,7 @@ pub mod scripting;
 pub mod shader;
 pub mod shadows;
 pub mod sim;
+pub mod sky;
 pub mod splat;
 pub mod swarm;
 pub mod swarm_api;

@@ -232,7 +232,12 @@ pub struct LightingUniforms {
     pub cascade_vp: [[[f32; 4]; 4]; crate::shadows::CASCADES],
     pub cascade_splits: [f32; crate::shadows::CASCADES],
     pub cascade_bias: [f32; crate::shadows::CASCADES],
-    // Point lights (offset 352)
+    // Sky (offset 352): enabled (0 or 1), intensity, highest mip level and
+    // unused; then its diffuse light as harmonics coefficients (offset 368).
+    // See `crate::sky`.
+    pub sky: [f32; 4],
+    pub sky_irradiance: [[f32; 4]; 9],
+    // Point lights (offset 512)
     pub lights: [PointLightUniform; MAX_LIGHTS],
 }
 
@@ -249,6 +254,8 @@ impl Default for LightingUniforms {
             cascade_vp: [[[0.0; 4]; 4]; crate::shadows::CASCADES],
             cascade_splits: [0.0; crate::shadows::CASCADES],
             cascade_bias: [0.0; crate::shadows::CASCADES],
+            sky: [0.0; 4],
+            sky_irradiance: [[0.0; 4]; 9],
             lights: [PointLightUniform {
                 position: [0.0; 3],
                 range: 0.0,

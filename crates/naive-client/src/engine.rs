@@ -997,6 +997,7 @@ impl Engine {
                 ambient_light: [0.15, 0.15, 0.2],
                 fog: None,
                 gravity: [0.0, -9.81, 0.0],
+                sky: None,
             },
             entities: vec![
                 // Ground plane (with static collider so things bounce off it)
@@ -2947,6 +2948,24 @@ impl Engine {
         // Editor mode: camera already updated above via update_editor_camera()
         if !self.args.editor_mode {
             self.update_camera();
+        }
+
+        // Build the sky when the scene's changes (including scene loads).
+        if let (Some(gpu), Some(scene_world), Some(compiled)) =
+            (&self.gpu, &self.scene_world, &mut self.compiled_pipeline)
+        {
+            let sky = scene_world
+                .borrow()
+                .current_scene
+                .as_ref()
+                .and_then(|scene| scene.settings.sky.clone());
+            crate::pipeline::sync_environment(
+                &gpu.device,
+                &gpu.queue,
+                compiled,
+                sky.as_ref(),
+                &self.project_root,
+            );
         }
 
         // Tier 2: Grow GPU draw buffer if needed

@@ -702,6 +702,10 @@ struct LightingUniforms {
     cascade_vp: array<mat4x4<f32>, 4>,
     cascade_splits: vec4<f32>,
     cascade_bias: vec4<f32>,
+    // Sky: enabled (0 or 1), intensity, highest mip level, unused; then its
+    // diffuse light as nine harmonics coefficients. See sky.rs.
+    sky: vec4<f32>,
+    sky_irradiance: array<vec4<f32>, 9>,
     lights: array<PointLight, 32>,
 };
 
@@ -716,6 +720,8 @@ struct LightingUniforms {
 @group(2) @binding(0) var<uniform> lighting: LightingUniforms;
 @group(2) @binding(1) var shadow_map: texture_depth_2d;
 @group(2) @binding(2) var shadow_sampler: sampler_comparison;
+@group(2) @binding(3) var sky_map: texture_2d<f32>;
+@group(2) @binding(4) var sky_sampler: sampler;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -801,6 +807,60 @@ fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+// Diffuse light from the sky for a surface facing `n`, divided by pi.
+fn sky_diffuse(n: vec3<f32>) -> vec3<f32> {
+    let s = lighting.sky_irradiance;
+    let e = s[0].rgb * 0.282095
+        + s[1].rgb * (0.488603 * n.y) + s[2].rgb * (0.488603 * n.z) + s[3].rgb * (0.488603 * n.x)
+        + s[4].rgb * (1.092548 * n.x * n.y) + s[5].rgb * (1.092548 * n.y * n.z)
+        + s[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0))
+        + s[7].rgb * (1.092548 * n.x * n.z) + s[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(e, vec3<f32>(0.0));
+}
+
+// The sky seen in direction `d`, blurred to mip level `lod`.
+fn sample_sky(d: vec3<f32>, lod: f32) -> vec3<f32> {
+    let uv = vec2<f32>(atan2(d.z, d.x) * 0.15915494 + 0.5, acos(clamp(d.y, -1.0, 1.0)) * 0.31830988);
+    return textureSampleLevel(sky_map, sky_sampler, uv, lod).rgb;
+}
+
+// Share of reflected sky light for a reflectance, roughness and viewing angle
+// (Karis' analytic fit of the split-sum lookup table).
+fn env_brdf(F0: vec3<f32>, roughness: f32, NdotV: f32) -> vec3<f32> {
+    let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+    let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let r = roughness * c0 + c1;
+    let a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+    let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+    return F0 * ab.x + ab.y;
+}
+
+// Light that does not come from the scene's lights: the sky's, when there
+// is one, else a faint constant.
+fn ambient_light(diffuse_color: vec3<f32>, F0: vec3<f32>, roughness: f32,
+                 normal: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
+    if lighting.sky.x < 0.5 {
+        return diffuse_color * vec3<f32>(0.02, 0.02, 0.025);
+    }
+    let NdotV = max(dot(normal, view_dir), 0.001);
+    let diffuse = diffuse_color * sky_diffuse(normal);
+    let reflected = reflect(-view_dir, normal);
+    let specular = sample_sky(reflected, roughness * lighting.sky.z) * env_brdf(F0, roughness, NdotV);
+    return (diffuse + specular) * lighting.sky.y;
+}
+
+// What the camera sees where there is no geometry: the sky and the sun.
+fn sky_background(dir: vec3<f32>) -> vec3<f32> {
+    var color = sample_sky(dir, 0.0) * lighting.sky.y;
+    if lighting.has_directional != 0u {
+        let sun = normalize(-lighting.dir_light_direction);
+        let c = max(dot(dir, sun), 0.0);
+        let disc = smoothstep(0.9995, 0.9998, c) * 8.0 + pow(c, 256.0) * 0.5;
+        color = color + lighting.dir_light_color * lighting.dir_light_intensity * disc;
+    }
+    return color;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_coords = vec2<i32>(in.position.xy);
@@ -811,7 +871,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let depth = textureLoad(gbuffer_depth, tex_coords, 0);
 
     if depth >= 1.0 {
-        discard;
+        if lighting.sky.x < 0.5 {
+            discard;
+        }
+        let far_point = reconstruct_world_pos(in.uv, 1.0);
+        return vec4<f32>(sky_background(normalize(far_point - camera.position)), 1.0);
     }
 
     let albedo    = albedo_rough.rgb;
@@ -828,8 +892,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let F0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
     let diffuse_color = albedo * (1.0 - metallic);
 
-    // Ambient
-    var color = diffuse_color * vec3<f32>(0.02, 0.02, 0.025);
+    // Ambient: the sky's light, or a faint constant without a sky.
+    var color = ambient_light(diffuse_color, F0, roughness, normal, view_dir);
 
     let NdotV = max(dot(normal, view_dir), 0.001);
 
@@ -1064,6 +1128,10 @@ struct LightingUniforms {
     cascade_vp: array<mat4x4<f32>, 4>,
     cascade_splits: vec4<f32>,
     cascade_bias: vec4<f32>,
+    // Sky: enabled (0 or 1), intensity, highest mip level, unused; then its
+    // diffuse light as nine harmonics coefficients. See sky.rs.
+    sky: vec4<f32>,
+    sky_irradiance: array<vec4<f32>, 9>,
     lights: array<PointLight, 32>,
 };
 
@@ -1078,6 +1146,8 @@ struct LightingUniforms {
 @group(2) @binding(0) var<uniform> lighting: LightingUniforms;
 @group(2) @binding(1) var shadow_map: texture_depth_2d;
 @group(2) @binding(2) var shadow_sampler: sampler_comparison;
+@group(2) @binding(3) var sky_map: texture_2d<f32>;
+@group(2) @binding(4) var sky_sampler: sampler;
 
 @group(3) @binding(0) var splat_color_tex: texture_2d<f32>;
 @group(3) @binding(1) var splat_depth_tex: texture_depth_2d;
@@ -1166,6 +1236,60 @@ fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+// Diffuse light from the sky for a surface facing `n`, divided by pi.
+fn sky_diffuse(n: vec3<f32>) -> vec3<f32> {
+    let s = lighting.sky_irradiance;
+    let e = s[0].rgb * 0.282095
+        + s[1].rgb * (0.488603 * n.y) + s[2].rgb * (0.488603 * n.z) + s[3].rgb * (0.488603 * n.x)
+        + s[4].rgb * (1.092548 * n.x * n.y) + s[5].rgb * (1.092548 * n.y * n.z)
+        + s[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0))
+        + s[7].rgb * (1.092548 * n.x * n.z) + s[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(e, vec3<f32>(0.0));
+}
+
+// The sky seen in direction `d`, blurred to mip level `lod`.
+fn sample_sky(d: vec3<f32>, lod: f32) -> vec3<f32> {
+    let uv = vec2<f32>(atan2(d.z, d.x) * 0.15915494 + 0.5, acos(clamp(d.y, -1.0, 1.0)) * 0.31830988);
+    return textureSampleLevel(sky_map, sky_sampler, uv, lod).rgb;
+}
+
+// Share of reflected sky light for a reflectance, roughness and viewing angle
+// (Karis' analytic fit of the split-sum lookup table).
+fn env_brdf(F0: vec3<f32>, roughness: f32, NdotV: f32) -> vec3<f32> {
+    let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+    let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let r = roughness * c0 + c1;
+    let a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+    let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+    return F0 * ab.x + ab.y;
+}
+
+// Light that does not come from the scene's lights: the sky's, when there
+// is one, else a faint constant.
+fn ambient_light(diffuse_color: vec3<f32>, F0: vec3<f32>, roughness: f32,
+                 normal: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
+    if lighting.sky.x < 0.5 {
+        return diffuse_color * vec3<f32>(0.02, 0.02, 0.025);
+    }
+    let NdotV = max(dot(normal, view_dir), 0.001);
+    let diffuse = diffuse_color * sky_diffuse(normal);
+    let reflected = reflect(-view_dir, normal);
+    let specular = sample_sky(reflected, roughness * lighting.sky.z) * env_brdf(F0, roughness, NdotV);
+    return (diffuse + specular) * lighting.sky.y;
+}
+
+// What the camera sees where there is no geometry: the sky and the sun.
+fn sky_background(dir: vec3<f32>) -> vec3<f32> {
+    var color = sample_sky(dir, 0.0) * lighting.sky.y;
+    if lighting.has_directional != 0u {
+        let sun = normalize(-lighting.dir_light_direction);
+        let c = max(dot(dir, sun), 0.0);
+        let disc = smoothstep(0.9995, 0.9998, c) * 8.0 + pow(c, 256.0) * 0.5;
+        color = color + lighting.dir_light_color * lighting.dir_light_intensity * disc;
+    }
+    return color;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_coords = vec2<i32>(in.position.xy);
@@ -1196,7 +1320,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let NdotV = max(dot(normal, view_dir), 0.001);
 
     // Compute mesh lighting with Cook-Torrance BRDF
-    var mesh_color = diffuse_color * vec3<f32>(0.02, 0.02, 0.025);
+    var mesh_color = ambient_light(diffuse_color, F0, roughness, normal, view_dir);
 
     for (var i = 0u; i < lighting.light_count; i = i + 1u) {
         let light = lighting.lights[i];
@@ -1268,14 +1392,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let mesh_valid = mesh_depth < 1.0;
     let splat_valid = splat_color.a > 0.004;
+    let has_sky = lighting.sky.x >= 0.5;
+
+    // Behind everything: the sky, if the scene has one.
+    var background = vec3<f32>(0.0);
+    if has_sky && !mesh_valid {
+        let far_point = reconstruct_world_pos(in.uv, 1.0);
+        background = sky_background(normalize(far_point - camera.position));
+    }
 
     // Composite: prefer closer of mesh vs splat, blend if overlapping
     if splat_valid && (!mesh_valid || splat_depth < mesh_depth) {
-        let bg = select(vec3<f32>(0.0), mesh_color, mesh_valid);
+        let bg = select(background, mesh_color, mesh_valid);
         let blended = splat_color.rgb + bg * (1.0 - splat_color.a);
         return vec4<f32>(blended, 1.0);
     } else if mesh_valid {
         return vec4<f32>(mesh_color, 1.0);
+    } else if has_sky {
+        return vec4<f32>(background, 1.0);
     }
 
     discard;

@@ -187,6 +187,15 @@ pub fn execute_pipeline_to_view(
         light_data.dir_light_color = [1.0, 1.0, 1.0];
     }
 
+    let environment = &compiled.environment;
+    light_data.sky = [
+        if environment.enabled() { 1.0 } else { 0.0 },
+        environment.intensity,
+        environment.max_lod,
+        0.0,
+    ];
+    light_data.sky_irradiance = environment.irradiance;
+
     gpu.queue.write_buffer(
         &compiled.light_buffer,
         0,
@@ -954,6 +963,26 @@ fn execute_fullscreen_pass(
 
 /// Rebuild bind groups after resources are resized.
 /// Call this after `resize_resources()` to update texture view references.
+/// Build the sky for `sky` if it differs from the one the pipeline has, and
+/// point the lighting pass at it. Cheap when nothing changed, so it runs every
+/// frame.
+pub fn sync_environment(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    compiled: &mut CompiledPipeline,
+    sky: Option<&crate::scene::SkyDef>,
+    project_root: &std::path::Path,
+) {
+    if compiled.environment.source.as_ref() == sky {
+        return;
+    }
+    compiled.environment = match sky {
+        Some(sky) => crate::sky::build(device, queue, sky, project_root),
+        None => crate::sky::Environment::none(device),
+    };
+    rebuild_bind_groups(device, compiled);
+}
+
 pub fn rebuild_bind_groups(device: &wgpu::Device, compiled: &mut CompiledPipeline) {
     // Rebuild G-buffer bind group
     if let Some(layout) = &compiled.gbuffer_bind_group_layout {
@@ -1133,23 +1162,13 @@ pub fn rebuild_bind_groups(device: &wgpu::Device, compiled: &mut CompiledPipelin
             .map(|r| &r.view)
             .unwrap_or(&shadow_dummy_view);
 
-        compiled.light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Lighting Bind Group (resized)"),
-            layout: &compiled.light_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: compiled.light_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(shadow_map_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        });
+        compiled.light_bind_group = super::compiler::lighting_bind_group(
+            device,
+            &compiled.light_bind_group_layout,
+            &compiled.light_buffer,
+            shadow_map_view,
+            sampler,
+            &compiled.environment,
+        );
     }
 }

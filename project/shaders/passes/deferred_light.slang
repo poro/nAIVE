@@ -22,6 +22,10 @@ struct LightingUniforms {
     float4x4 cascade_vp[4];
     float4 cascade_splits;
     float4 cascade_bias;
+    // Sky: enabled (0 or 1), intensity, highest mip level, unused; then its
+    // diffuse light as nine harmonics coefficients.
+    float4 sky;
+    float4 sky_irradiance[9];
     PointLight lights[32];
 };
 
@@ -36,6 +40,8 @@ struct LightingUniforms {
 [[vk::binding(0, 2)]] ConstantBuffer<LightingUniforms> lighting;
 [[vk::binding(1, 2)]] Texture2D<float> shadow_map;
 [[vk::binding(2, 2)]] SamplerComparisonState shadow_sampler;
+[[vk::binding(3, 2)]] Texture2D<float4> sky_map;
+[[vk::binding(4, 2)]] SamplerState sky_sampler;
 
 struct VertexOutput {
     float4 position : SV_Position;
@@ -76,6 +82,60 @@ float geometrySmith(float NdotV, float NdotL, float roughness) {
 
 float3 fresnelSchlick(float cosTheta, float3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// Diffuse light from the sky for a surface facing n, divided by pi.
+float3 skyDiffuse(float3 n) {
+    float3 e = lighting.sky_irradiance[0].rgb * 0.282095
+        + lighting.sky_irradiance[1].rgb * (0.488603 * n.y)
+        + lighting.sky_irradiance[2].rgb * (0.488603 * n.z)
+        + lighting.sky_irradiance[3].rgb * (0.488603 * n.x)
+        + lighting.sky_irradiance[4].rgb * (1.092548 * n.x * n.y)
+        + lighting.sky_irradiance[5].rgb * (1.092548 * n.y * n.z)
+        + lighting.sky_irradiance[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0))
+        + lighting.sky_irradiance[7].rgb * (1.092548 * n.x * n.z)
+        + lighting.sky_irradiance[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(e, float3(0.0, 0.0, 0.0));
+}
+
+// The sky seen in direction d, blurred to mip level lod.
+float3 sampleSky(float3 d, float lod) {
+    float2 uv = float2(atan2(d.z, d.x) * 0.15915494 + 0.5, acos(clamp(d.y, -1.0, 1.0)) * 0.31830988);
+    return sky_map.SampleLevel(sky_sampler, uv, lod).rgb;
+}
+
+// Share of reflected sky light (Karis' analytic split-sum fit).
+float3 envBRDF(float3 F0, float roughness, float NdotV) {
+    float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+    float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+    float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
+    return F0 * ab.x + ab.y;
+}
+
+// Light that does not come from the scene's lights: the sky's, when there
+// is one, else a faint constant.
+float3 ambientLight(float3 diffuseColor, float3 F0, float roughness, float3 normal, float3 viewDir) {
+    if (lighting.sky.x < 0.5)
+        return diffuseColor * float3(0.02, 0.02, 0.025);
+    float NdotV = max(dot(normal, viewDir), 0.001);
+    float3 diffuse = diffuseColor * skyDiffuse(normal);
+    float3 reflected = reflect(-viewDir, normal);
+    float3 specular = sampleSky(reflected, roughness * lighting.sky.z) * envBRDF(F0, roughness, NdotV);
+    return (diffuse + specular) * lighting.sky.y;
+}
+
+// What the camera sees where there is no geometry: the sky and the sun.
+float3 skyBackground(float3 dir) {
+    float3 color = sampleSky(dir, 0.0) * lighting.sky.y;
+    if (lighting.has_directional != 0) {
+        float3 sun = normalize(-lighting.dir_light_direction);
+        float c = max(dot(dir, sun), 0.0);
+        float disc = smoothstep(0.9995, 0.9998, c) * 8.0 + pow(c, 256.0) * 0.5;
+        color += lighting.dir_light_color * lighting.dir_light_intensity * disc;
+    }
+    return color;
 }
 
 float sampleShadowPCF(float3 worldPos) {
@@ -130,8 +190,12 @@ float4 fs_main(VertexOutput input) : SV_Target0 {
     float4 emissionVal = gbuffer_emission.Load(int3(texCoords, 0));
     float depth = gbuffer_depth.Load(int3(texCoords, 0)).r;
 
-    // Skip empty pixels
-    if (depth >= 1.0) discard;
+    // Where there is no geometry: the sky, or nothing.
+    if (depth >= 1.0) {
+        if (lighting.sky.x < 0.5) discard;
+        float3 farPoint = reconstructWorldPos(input.uv, 1.0);
+        return float4(skyBackground(normalize(farPoint - camera.position)), 1.0);
+    }
 
     float3 albedo    = albedoRough.rgb;
     float  roughness = max(albedoRough.a, 0.04);
@@ -147,8 +211,8 @@ float4 fs_main(VertexOutput input) : SV_Target0 {
     float3 F0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
     float3 diffuseColor = albedo * (1.0 - metallic);
 
-    // Ambient
-    float3 color = diffuseColor * float3(0.02, 0.02, 0.025);
+    // Ambient: the sky's light, or a faint constant without a sky.
+    float3 color = ambientLight(diffuseColor, F0, roughness, normal, viewDir);
 
     float NdotV = max(dot(normal, viewDir), 0.001);
 

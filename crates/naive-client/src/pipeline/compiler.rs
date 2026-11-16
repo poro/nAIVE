@@ -110,27 +110,35 @@ pub fn compile_pipeline(
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                // The sky: an equirectangular image with mips, and its sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 
-    let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Lighting Bind Group"),
-        layout: &light_bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: light_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(shadow_map_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Sampler(&shadow_cmp_sampler),
-            },
-        ],
-    });
+    let environment = crate::sky::Environment::none(device);
+    let light_bind_group = lighting_bind_group(
+        device,
+        &light_bind_group_layout,
+        &light_buffer,
+        shadow_map_view,
+        &shadow_cmp_sampler,
+        &environment,
+    );
 
     // 4. Create shared sampler for G-buffer reads
     let gbuffer_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -436,6 +444,7 @@ pub fn compile_pipeline(
         shadow_bind_group_layout,
         shadow_bind_group,
         shadow_sampler,
+        environment,
         skin_buffer: Some(skin_buffer),
         skin_bind_group_layout: Some(skin_bind_group_layout),
         skin_bind_group: Some(skin_bind_group),
@@ -1483,5 +1492,43 @@ fn create_shadow_pipeline(
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
+    })
+}
+
+/// The lighting pass's group 2: light uniforms, the shadow map and its
+/// comparison sampler, and the sky with its sampler.
+pub(super) fn lighting_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    light_buffer: &wgpu::Buffer,
+    shadow_map_view: &wgpu::TextureView,
+    shadow_sampler: &wgpu::Sampler,
+    environment: &crate::sky::Environment,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Lighting Bind Group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(shadow_map_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(shadow_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&environment.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(&environment.sampler),
+            },
+        ],
     })
 }

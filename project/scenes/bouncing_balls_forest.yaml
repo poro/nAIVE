@@ -9,6 +9,12 @@ settings:
   - 0.0
   - -9.81
   - 0.0
+  sky:
+    zenith: [0.18, 0.36, 0.7]
+    horizon: [0.75, 0.8, 0.88]
+    ground: [0.3, 0.28, 0.26]
+    # The sun is strong here (3.0) and the floor white; keep the sky soft.
+    intensity: 0.45
 entities:
 - id: ball_13
   tags:

@@ -124,6 +124,7 @@ my-game/
 - Deferred PBR pipeline (shadow, G-buffer, lighting, bloom, tonemap, FXAA)
 - Native Gaussian splatting with depth compositing
 - Cascaded shadow maps (four cascades fitted to the camera) with PCF filtering
+- Sky backgrounds with image-based lighting (gradient or equirectangular image)
 - Frustum culling of the camera passes
 - HDR + bloom + ACES tonemapping
 - SLANG shaders that cross-compile to WGSL for all GPU backends

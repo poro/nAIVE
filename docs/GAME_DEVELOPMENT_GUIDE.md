@@ -170,9 +170,16 @@ Scenes are YAML files that define entities, their components, and world settings
 
 ```yaml
 name: "My Scene"
+version: 1                           # Scene format version (written by saves)
 settings:
   ambient_light: [0.3, 0.3, 0.35]   # RGB ambient light color
   gravity: [0, -9.81, 0]             # Physics gravity vector
+  sky:                               # Optional: sky background and the light it casts
+    zenith: [0.16, 0.32, 0.62]       # Gradient sky colours (defaults shown)
+    horizon: [0.72, 0.78, 0.86]
+    ground: [0.24, 0.22, 0.2]
+    intensity: 1.0                   # Brightness of the sky and its light
+    # texture: assets/sky/meadow.jpg # Or an equirectangular (2:1) image
 
 entities:
   - id: main_camera                  # Unique entity identifier
@@ -769,3 +776,13 @@ naive-runtime --project project --scene scenes/genesis.yaml
 ```
 
 To use a demo as a starting point for your game, copy the relevant scene and script files into your project directory.
+
+### Sky and image-based lighting
+
+Without `settings.sky` the background is black and surfaces get only a faint
+constant ambient light, which suits dark interiors. With a sky, the deferred
+pipeline draws it behind the scene (with the directional light's sun disc),
+lights every surface with the sky's diffuse light, and reflects it, blurrier
+on rougher surfaces. A `texture` replaces the gradient with a panorama from the
+project; large images are scaled to 1024 pixels wide. The forward fallback
+renderer (no pipeline) does not draw skies.

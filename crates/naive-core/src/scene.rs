@@ -53,6 +53,46 @@ pub struct SceneSettings {
     pub fog: Option<FogSettings>,
     #[serde(default = "default_gravity")]
     pub gravity: [f32; 3],
+    /// Sky behind the scene and the light it casts (image-based lighting).
+    /// Without one the background is black and ambient light is minimal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sky: Option<SkyDef>,
+}
+
+/// A sky: a gradient, or an equirectangular image from the project. It is
+/// drawn behind the scene and lights it: diffuse light from the whole sky and
+/// reflections blurred by each surface's roughness.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct SkyDef {
+    /// Colour straight up (gradient sky).
+    #[serde(default = "default_sky_zenith")]
+    pub zenith: [f32; 3],
+    /// Colour at the horizon (gradient sky).
+    #[serde(default = "default_sky_horizon")]
+    pub horizon: [f32; 3],
+    /// Colour below the horizon (gradient sky).
+    #[serde(default = "default_sky_ground")]
+    pub ground: [f32; 3],
+    /// Brightness of the sky and of the light it casts.
+    #[serde(default = "default_sky_intensity")]
+    pub intensity: f32,
+    /// An equirectangular (2:1) PNG or JPEG in the project to use instead of
+    /// the gradient, e.g. `assets/sky/meadow.jpg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<String>,
+}
+
+fn default_sky_zenith() -> [f32; 3] {
+    [0.16, 0.32, 0.62]
+}
+fn default_sky_horizon() -> [f32; 3] {
+    [0.72, 0.78, 0.86]
+}
+fn default_sky_ground() -> [f32; 3] {
+    [0.24, 0.22, 0.2]
+}
+fn default_sky_intensity() -> f32 {
+    1.0
 }
 
 /// The scene format this engine reads and writes. Bump it, and teach the
