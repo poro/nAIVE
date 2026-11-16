@@ -19,3 +19,6 @@ assets/audio/
 
 # Output of `naive build`
 /project/dist/
+
+# Output of the capture_frame command
+/project/captures/

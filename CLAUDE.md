@@ -137,6 +137,7 @@ When the editor is running, Claude Code can use these MCP tools via `naive_mcp`:
 | `naive_get_scene_yaml` | Get current scene as YAML string (for understanding context) |
 | `naive_set_camera` | Move/orient the editor camera (position, yaw, pitch, look_at) |
 | `naive_editor_status` | Get editor mode info, entity count, camera position |
+| `naive_capture_frame` | Render the current frame to a PNG inside the project (default `captures/frame.png`) so the agent can look at the scene. No UI overlay. |
 
 ### Procedural Meshes
 
