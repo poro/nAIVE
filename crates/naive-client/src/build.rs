@@ -21,7 +21,17 @@ pub fn bundle_project(
     project_root: &Path,
     target: Option<&str>,
 ) -> Result<(), String> {
-    let target_name = target.unwrap_or(current_platform());
+    // The bundle contains the engine binary this command is running as, so it
+    // can only be for the platform it is running on.
+    let host = current_platform();
+    let target_name = target.unwrap_or(host);
+    if target_name != host {
+        return Err(format!(
+            "Cannot build for '{}' on {}: `naive build` bundles the engine binary it is \
+             running as and cannot cross-compile. Run it on the platform you want to ship.",
+            target_name, host
+        ));
+    }
     let dist_name = format!("{}-{}", config.name, target_name);
     let dist_dir = project_root.join("dist").join(&dist_name);
 
@@ -38,12 +48,7 @@ pub fn bundle_project(
     // Copy the running binary
     let exe_path = std::env::current_exe()
         .map_err(|e| format!("Failed to find runtime binary: {}", e))?;
-    let runtime_name = if target_name == "windows" {
-        "naive-runtime.exe"
-    } else {
-        "naive-runtime"
-    };
-    let dest_binary = dist_dir.join(runtime_name);
+    let dest_binary = dist_dir.join("naive-runtime");
     fs::copy(&exe_path, &dest_binary)
         .map_err(|e| format!("Failed to copy runtime binary: {}", e))?;
 
@@ -77,31 +82,22 @@ pub fn bundle_project(
         .as_deref()
         .unwrap_or("scenes/main.yaml");
 
-    if target_name == "windows" {
-        let launcher = format!(
-            "@echo off\r\n.\\naive-runtime.exe --project . --scene {}\r\n",
-            scene_arg
-        );
-        fs::write(dist_dir.join("launch.bat"), launcher)
-            .map_err(|e| format!("Failed to write launcher: {}", e))?;
-    } else {
-        let launcher = format!(
-            "#!/bin/sh\ncd \"$(dirname \"$0\")\"\n./naive-runtime --project . --scene {}\n",
-            scene_arg
-        );
-        let launcher_path = dist_dir.join("launch.sh");
-        fs::write(&launcher_path, launcher)
-            .map_err(|e| format!("Failed to write launcher: {}", e))?;
+    let launcher = format!(
+        "#!/bin/sh\ncd \"$(dirname \"$0\")\"\n./naive-runtime --project . --scene {}\n",
+        scene_arg
+    );
+    let launcher_path = dist_dir.join("launch.sh");
+    fs::write(&launcher_path, launcher)
+        .map_err(|e| format!("Failed to write launcher: {}", e))?;
 
-        // Make executable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&launcher_path, fs::Permissions::from_mode(0o755))
-                .map_err(|e| format!("Failed to set launcher permissions: {}", e))?;
-            fs::set_permissions(&dest_binary, fs::Permissions::from_mode(0o755))
-                .map_err(|e| format!("Failed to set binary permissions: {}", e))?;
-        }
+    // Make executable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&launcher_path, fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("Failed to set launcher permissions: {}", e))?;
+        fs::set_permissions(&dest_binary, fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("Failed to set binary permissions: {}", e))?;
     }
 
     println!();
@@ -114,11 +110,10 @@ pub fn bundle_project(
     Ok(())
 }
 
+/// The platform this binary was built for. Windows is not supported yet.
 fn current_platform() -> &'static str {
     if cfg!(target_os = "macos") {
         "macos"
-    } else if cfg!(target_os = "windows") {
-        "windows"
     } else {
         "linux"
     }
@@ -161,4 +156,26 @@ fn count_files(dir: &Path) -> usize {
             }
         })
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn building_for_another_platform_is_refused() {
+        let config: NaiveConfig = serde_yaml::from_str("name: demo\nversion: \"0.1.0\"\n").unwrap();
+        let project = std::env::temp_dir().join("naive_test_build_other_platform");
+        let _ = fs::remove_dir_all(&project);
+        fs::create_dir_all(&project).unwrap();
+
+        for target in ["windows", "some-other-os"] {
+            let err = bundle_project(&config, &project, Some(target)).unwrap_err();
+            assert!(err.contains("cannot cross-compile"), "{err}");
+        }
+
+        // A refused build writes nothing.
+        assert!(!project.join("dist").exists());
+        let _ = fs::remove_dir_all(&project);
+    }
 }

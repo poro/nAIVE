@@ -42,7 +42,6 @@ naive run
 naive test              # Run all tests
 naive test tests/t.lua  # Run a specific test file
 naive build             # Bundle for distribution
-naive build --target windows
 naive publish           # Publish to world server (coming soon)
 ```
 
@@ -125,7 +124,6 @@ test:
 build:
   targets:                           # Platforms to build for
     - "macos"
-    - "windows"
     - "linux"
 ```
 
@@ -613,12 +611,10 @@ test:
 Bundle your game into a standalone distributable:
 
 ```bash
-# Build for current platform
 naive build
-
-# Build for a specific target
-naive build --target windows
 ```
+
+The bundle contains the engine binary you are running, so `naive build` builds for the platform you run it on and cannot cross-compile. To ship for another platform, run it there. macOS is the supported platform; Linux compiles but is untested, and Windows is not supported yet.
 
 This creates a `dist/` directory with:
 
@@ -626,7 +622,7 @@ This creates a `dist/` directory with:
 dist/my-game-macos/
 ├── naive-runtime          # Engine binary
 ├── naive.yaml             # Project config
-├── launch.sh              # Launcher script (or .bat on Windows)
+├── launch.sh              # Launcher script
 ├── scenes/                # All game content
 ├── logic/
 ├── assets/
@@ -636,7 +632,7 @@ dist/my-game-macos/
 └── events/
 ```
 
-Players run the game with `./launch.sh` (or `launch.bat` on Windows).
+Players run the game with `./launch.sh`.
 
 ## 10. Publishing
 
