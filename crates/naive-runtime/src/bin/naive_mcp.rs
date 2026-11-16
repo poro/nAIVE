@@ -149,6 +149,12 @@ fn handle_tools_call(id: Option<Value>, request: &Value, socket_path: &str) -> V
             copy_field(args, &mut c, "path");
             c
         }
+        "naive_benchmark" => {
+            let mut c = json!({"cmd": "benchmark"});
+            copy_field(args, &mut c, "frames");
+            c
+        }
+        "naive_gpu_timings" => json!({"cmd": "gpu_timings"}),
         "naive_run_lua" => {
             let mut c = json!({"cmd": "run_lua"});
             copy_field(args, &mut c, "code");
@@ -497,6 +503,22 @@ fn tool_definitions() -> Vec<Value> {
                 },
                 "required": []
             }
+        }),
+        json!({
+            "name": "naive_benchmark",
+            "description": "Measure what the engine sustains: run whole frames back to back (simulation at a fixed 1/60 s step, swarms, every render pass) into an offscreen target without presenting, then report frames per second, milliseconds per frame and GPU time per pass. Free of vsync and of the window being in front, which both cap or throttle the on-screen frame rate. The simulation really advances.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "frames": {"type": "integer", "description": "Frames to run. Default: 240"}
+                },
+                "required": []
+            }
+        }),
+        json!({
+            "name": "naive_gpu_timings",
+            "description": "GPU milliseconds per frame over the last 60 frames, for the whole frame and per render pass (the swarm step is \"swarms\"), from timestamp queries. On screen with vsync the GPU slows down to just fit the display's refresh, so use naive_benchmark to measure headroom.",
+            "inputSchema": {"type": "object", "properties": {}, "required": []}
         }),
         json!({
             "name": "naive_run_lua",

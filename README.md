@@ -15,7 +15,7 @@ Built from the ground up in Rust. Worlds are created by AI, rendering happens on
 | Shaders are HLSL/GLSL, platform-locked | SLANG shaders cross-compile to any GPU backend |
 | 3D assets from art pipelines only | Gaussian splats from text prompts |
 | Render pipeline hardcoded in C++ | YAML-defined render pipeline DAG |
-| Entity counts limited by CPU | GPU compute simulation for 50,000+ entities (planned, Tier 4) |
+| Entity counts limited by CPU | GPU compute swarms: 50,000 goblins in a fight at over 1,000 fps on an M4 Max |
 
 **Sub-second hot-reload.** Shaders in <200ms. Scenes in <100ms. Scripts in <50ms. 100x faster than Unity or Unreal.
 
@@ -403,10 +403,10 @@ Development follows a tiered system, each tier validated by proof-of-concept gam
 | **2.5** | Physics & Scene API — impulse/force, CCD, collider materials, scene loading, camera shake | **Done** (v0.1.7) |
 | **2.7** | DX & Code Quality — physics hot-reload, pipeline modularization, debug wireframes, kinematic bodies, convex decomposition | **Done** (v0.1.15) |
 | **3** | Visual & Interaction — texture mapping, procedural meshes, STL loading, `screen_to_ray` mouse picking | **In progress** (v0.1.18) |
-| **4** | GPU compute entity simulation (50,000+ entities at 60 FPS), neighbor-grid collisions, flow field | Planned |
+| **4** | GPU compute entity simulation (50,000+ entities at 60 FPS), neighbor-grid collisions, flow field, damage and spawn waves | **Done** (after v0.1.20; [plan and measurements](docs/tier4-plan.md)) |
 | **5** | Vertex animation textures, skeletal animation, state machines, UI widgets | Planned |
 
-**Proof game: HAVOC** — A 3D Vampire Survivors-style horde survival game. If nAIVE can render 50,000 physics-driven goblins while you drive a truck through them, it can handle anything.
+**Proof game: HAVOC** — A 3D Vampire Survivors-style horde survival game. If nAIVE can render 50,000 physics-driven goblins while you drive a truck through them, it can handle anything. Waves 1 to 3 are playable now: `naive run --scene scenes/tier4_havoc.yaml` in `project/`.
 
 See the full roadmap in [docs/nAIVE_Engine_PRD_v5.0.md](docs/nAIVE_Engine_PRD_v5.0.md).
 

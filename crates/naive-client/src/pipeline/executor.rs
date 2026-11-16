@@ -5,6 +5,7 @@ use crate::components::{
     Animator, DirectionalLight, GaussianSplat, Hidden, MaterialOverride, MeshHandle, MeshRenderer,
     PointLight, Transform,
 };
+use crate::gpu_timer::GpuTimer;
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
 use crate::renderer::{DrawUniformPool, DrawUniforms, GpuState, DRAW_UNIFORM_SIZE};
@@ -56,7 +57,7 @@ pub fn execute_pipeline(
     let encoder = execute_pipeline_to_view(
         gpu, compiled, scene_world, camera_state, draw_pool,
         mesh_cache, material_cache, splat_cache, &swapchain_view, debug,
-        texture_resources, bone_palettes, texture_cache, swarms,
+        texture_resources, bone_palettes, texture_cache, swarms, None,
     );
 
     gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -80,6 +81,7 @@ pub fn execute_pipeline_to_view(
     bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
     texture_cache: Option<&crate::texture_cache::TextureCache>,
     swarms: &[SwarmDraw],
+    timer: Option<&GpuTimer>,
 ) -> wgpu::CommandEncoder {
 
     // Per-entity draw data for both mesh passes, uploaded once in batch order.
@@ -185,7 +187,7 @@ pub fn execute_pipeline_to_view(
                         },
                     })],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
                     occlusion_query_set: None,
                 });
                 // Drop immediately ends the pass
@@ -205,6 +207,7 @@ pub fn execute_pipeline_to_view(
                     mesh_cache,
                     texture_resources,
                     texture_cache,
+                    timer,
                 );
             }
             PassType::Fullscreen => {
@@ -214,6 +217,7 @@ pub fn execute_pipeline_to_view(
                     compiled,
                     camera_state,
                     swapchain_view,
+                    timer,
                 );
             }
             PassType::Splat => {
@@ -225,6 +229,7 @@ pub fn execute_pipeline_to_view(
                     scene_world,
                     camera_state,
                     splat_cache,
+                    timer,
                 );
             }
             PassType::Shadow => {
@@ -236,6 +241,7 @@ pub fn execute_pipeline_to_view(
                     &draws,
                     swarms,
                     mesh_cache,
+                    timer,
                 );
             }
             PassType::Compute => {
@@ -432,6 +438,7 @@ fn upload_draws(gpu: &GpuState, draw_pool: &DrawUniformPool, draws: &FrameDraws)
 }
 
 /// Execute a shadow depth pass (renders all geometry from light's perspective).
+#[allow(clippy::too_many_arguments)]
 fn execute_shadow_pass(
     encoder: &mut wgpu::CommandEncoder,
     pass: &CompiledPass,
@@ -440,6 +447,7 @@ fn execute_shadow_pass(
     draws: &FrameDraws,
     swarms: &[SwarmDraw],
     mesh_cache: &MeshCache,
+    timer: Option<&GpuTimer>,
 ) {
     let depth_view = pass
         .depth_target
@@ -460,7 +468,7 @@ fn execute_shadow_pass(
                 }),
                 stencil_ops: None,
             }),
-            timestamp_writes: None,
+            timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
             occlusion_query_set: None,
         });
 
@@ -554,6 +562,7 @@ fn execute_rasterize_pass(
     mesh_cache: &MeshCache,
     texture_resources: Option<&crate::mesh::TextureResources>,
     texture_cache: Option<&crate::texture_cache::TextureCache>,
+    timer: Option<&GpuTimer>,
 ) {
     // Build color attachments from pass targets
     let color_views: Vec<&wgpu::TextureView> = pass
@@ -601,7 +610,7 @@ fn execute_rasterize_pass(
             label: Some(&pass.name),
             color_attachments: &color_attachments,
             depth_stencil_attachment: depth_attachment,
-            timestamp_writes: None,
+            timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
             occlusion_query_set: None,
         });
 
@@ -662,6 +671,7 @@ fn execute_rasterize_pass(
 }
 
 /// Execute a Gaussian splat rendering pass.
+#[allow(clippy::too_many_arguments)]
 fn execute_splat_pass(
     encoder: &mut wgpu::CommandEncoder,
     pass: &CompiledPass,
@@ -670,6 +680,7 @@ fn execute_splat_pass(
     scene_world: &SceneWorld,
     camera_state: &CameraState,
     splat_cache: &SplatCache,
+    timer: Option<&GpuTimer>,
 ) {
     // Build color attachments
     let color_views: Vec<&wgpu::TextureView> = pass
@@ -723,7 +734,7 @@ fn execute_splat_pass(
             label: Some(&pass.name),
             color_attachments: &color_attachments,
             depth_stencil_attachment: depth_attachment,
-            timestamp_writes: None,
+            timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
             occlusion_query_set: None,
         });
 
@@ -767,6 +778,7 @@ fn execute_fullscreen_pass(
     compiled: &CompiledPipeline,
     camera_state: &CameraState,
     swapchain_view: &wgpu::TextureView,
+    timer: Option<&GpuTimer>,
 ) {
     let is_tonemap = pass.name.contains("tonemap");
     let is_bloom = pass.name.contains("bloom");
@@ -804,7 +816,7 @@ fn execute_fullscreen_pass(
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: timer.and_then(|t| t.render_pass(&pass.name)),
             occlusion_query_set: None,
         });
 

@@ -93,6 +93,9 @@ pub struct Engine {
     pub swarm_system: crate::swarm::SwarmSystem,
     pub swarm_bus: crate::swarm_api::SharedSwarmBus,
 
+    // GPU time per part of the frame, where the device has timestamp queries
+    pub gpu_timer: Option<crate::gpu_timer::GpuTimer>,
+
     // Tier 2: Lua event listeners
     pub lua_event_listeners: Rc<RefCell<HashMap<String, Vec<mlua::RegistryKey>>>>,
     pub next_lua_listener_id: Rc<RefCell<u64>>,
@@ -168,6 +171,7 @@ impl Engine {
             particle_system: Rc::new(RefCell::new(crate::particles::ParticleSystem::new())),
             swarm_system: crate::swarm::SwarmSystem::new(),
             swarm_bus: Rc::new(RefCell::new(crate::swarm_api::SwarmBus::new())),
+            gpu_timer: None,
             lua_event_listeners: Rc::new(RefCell::new(HashMap::new())),
             next_lua_listener_id: Rc::new(RefCell::new(0)),
             lua_listener_id_map: Rc::new(RefCell::new(HashMap::new())),
@@ -1039,8 +1043,10 @@ impl Engine {
             return;
         }
 
+        let mut vsync = None;
         match crate::pipeline::load_pipeline(&pipeline_path) {
             Ok(pipeline_file) => {
+                vsync = Some(pipeline_file.settings.vsync);
                 let tex_layout = self.texture_resources.as_ref().map(|tr| &tr.bind_group_layout);
                 match crate::pipeline::compile_pipeline(
                     &gpu.device,
@@ -1066,6 +1072,28 @@ impl Engine {
             Err(e) => {
                 tracing::error!("Failed to load pipeline: {}", e);
             }
+        }
+        drop(camera_state);
+        if let Some(vsync) = vsync {
+            self.set_vsync(vsync);
+        }
+    }
+
+    /// Wait for the display's refresh (`vsync: true` in the pipeline's
+    /// settings, the default) or present as fast as frames are ready.
+    fn set_vsync(&mut self, vsync: bool) {
+        let Some(gpu) = self.gpu.as_mut() else {
+            return;
+        };
+        let mode = if vsync {
+            wgpu::PresentMode::Fifo
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        if gpu.config.present_mode != mode {
+            gpu.config.present_mode = mode;
+            gpu.surface.configure(&gpu.device, &gpu.config);
+            tracing::info!("Present mode: {:?}", mode);
         }
     }
 
@@ -2216,6 +2244,8 @@ let mut scene_world = scene_world.borrow_mut();
                 "editor_status" => self.handle_editor_status(),
                 "run_lua" => self.handle_run_lua(&pending.request),
                 "capture_frame" => self.handle_capture_frame(&pending.request),
+                "gpu_timings" => self.handle_gpu_timings(),
+                "benchmark" => self.handle_benchmark(&pending.request),
                 _ => {
                         let mut sw_opt = self.scene_world.as_ref().map(|rc| rc.borrow_mut());
                         let mut eb = self.event_bus.borrow_mut();
@@ -3114,6 +3144,7 @@ let input = input.borrow();
                 &self.material_cache,
                 draw_pool,
                 &mut self.swarm_bus.borrow_mut(),
+                self.gpu_timer.as_ref(),
                 dt,
             );
         }
@@ -3144,7 +3175,7 @@ let input = input.borrow();
 
     /// Render the 3D scene into `target`, without collider wireframes or
     /// the UI overlay. Used for the window and for frame captures.
-    fn render_scene_to(&self, gpu: &GpuState, target: &wgpu::TextureView) {
+    fn render_scene_to(&self, gpu: &GpuState, target: &wgpu::TextureView, timer: Option<&crate::gpu_timer::GpuTimer>) {
         if self.compiled_pipeline.is_some() {
             if let (
                 Some(scene_world),
@@ -3174,6 +3205,7 @@ let input = input.borrow();
                     &self.bone_palettes,
                     Some(&self.texture_cache),
                     &self.swarm_system.draws(),
+                    timer,
                 );
                 gpu.queue.submit(std::iter::once(encoder.finish()));
             }
@@ -3211,6 +3243,91 @@ let input = input.borrow();
         }
     }
 
+    /// GPU timings as JSON: average milliseconds per frame over the last 60
+    /// frames, for the frame and per pass (the swarm step is "swarms").
+    fn gpu_timings_json(&self) -> serde_json::Value {
+        use serde_json::json;
+        match &self.gpu_timer {
+            Some(timer) => {
+                let t = timer.timings();
+                let passes: Vec<_> = t.passes.iter().map(|(name, ms)| json!({ "pass": name, "ms": ms })).collect();
+                json!({
+                    "available": true,
+                    "frame_ms": t.frame_ms,
+                    "passes": passes,
+                    "frames": t.frames,
+                })
+            }
+            None => json!({ "available": false }),
+        }
+    }
+
+    /// Handle gpu_timings: see `gpu_timings_json`.
+    fn handle_gpu_timings(&self) -> crate::command::CommandResponse {
+        crate::command::CommandResponse::ok(self.gpu_timings_json())
+    }
+
+    /// Handle benchmark: run `frames` whole frames (default 240) back to
+    /// back, each simulated with a fixed 1/60 s step, swarms stepped and
+    /// every render pass drawn into an offscreen target, without presenting;
+    /// then wait for the GPU. That measures what the engine sustains, free of
+    /// vsync and of the window server, with the GPU kept busy at full clock.
+    /// The simulation really advances.
+    fn handle_benchmark(&mut self, req: &crate::command::CommandRequest) -> crate::command::CommandResponse {
+        use crate::command::CommandResponse;
+        use serde_json::json;
+
+        let frames = req.params.get("frames").and_then(|v| v.as_u64()).unwrap_or(240).clamp(1, 10_000) as u32;
+        if self.scene_world.is_none() {
+            return CommandResponse::error("No scene loaded");
+        }
+        let Some(gpu) = &self.gpu else {
+            return CommandResponse::error("The renderer is not running");
+        };
+        let (width, height) = (gpu.config.width, gpu.config.height);
+        let target = crate::capture::create_capture_target(gpu);
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        if let Some(timer) = self.gpu_timer.as_mut() {
+            timer.reset();
+        }
+
+        let saved_dt = self.delta_time;
+        self.delta_time = 1.0 / 60.0;
+        let start = std::time::Instant::now();
+        for _ in 0..frames {
+            if !self.paused {
+                self.tick_simulation();
+            }
+            self.prepare_render();
+            if let Some(gpu) = &self.gpu {
+                self.render_scene_to(gpu, &view, self.gpu_timer.as_ref());
+                if let Some(timer) = self.gpu_timer.as_mut() {
+                    timer.finish_frame(&gpu.device, &gpu.queue);
+                }
+            }
+        }
+        if let Some(gpu) = &self.gpu {
+            let _ = gpu.device.poll(wgpu::Maintain::Wait);
+            // Pick up the timestamps that have just come back.
+            if let Some(timer) = self.gpu_timer.as_mut() {
+                timer.finish_frame(&gpu.device, &gpu.queue);
+            }
+        }
+        let seconds = start.elapsed().as_secs_f64();
+        self.delta_time = saved_dt;
+        self.last_frame_time = Some(std::time::Instant::now());
+
+        CommandResponse::ok(json!({
+            "frames": frames,
+            "seconds": seconds,
+            "fps": f64::from(frames) / seconds,
+            "ms_per_frame": seconds * 1000.0 / f64::from(frames),
+            "width": width,
+            "height": height,
+            "gpu": self.gpu_timings_json(),
+        }))
+    }
+
     /// Handle capture_frame: render the scene to a PNG file inside the project.
     fn handle_capture_frame(&mut self, req: &crate::command::CommandRequest) -> crate::command::CommandResponse {
         use crate::command::CommandResponse;
@@ -3232,7 +3349,7 @@ let input = input.borrow();
 
         let target = crate::capture::create_capture_target(gpu);
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        self.render_scene_to(gpu, &view);
+        self.render_scene_to(gpu, &view, None);
         match crate::capture::save_texture_png(gpu, &target, &path) {
             Ok((width, height)) => {
                 tracing::info!("Frame captured to {:?}", path);
@@ -3268,7 +3385,7 @@ let input = input.borrow();
                 .create_view(&wgpu::TextureViewDescriptor::default());
 
             // Render 3D scene
-            self.render_scene_to(gpu, &swapchain_view);
+            self.render_scene_to(gpu, &swapchain_view, self.gpu_timer.as_ref());
 
             // Debug wireframe pass: draw collider shapes over 3D scene
             if self.render_debug.show_colliders {
@@ -3326,6 +3443,14 @@ let input = input.borrow();
                     ui.draw_text(x, y, "[0] Toggle this HUD", sz, hdr, font); y += sz + 2.0;
                     let c = if self.render_debug.show_colliders { on } else { off };
                     ui.draw_text(x, y, &format!("[H] Colliders: {}", if self.render_debug.show_colliders { "ON" } else { "OFF" }), sz, c, font);
+                    y += sz + 2.0;
+                    if let Some(timer) = &self.gpu_timer {
+                        let t = timer.timings();
+                        let swarms = t
+                            .pass_ms(crate::gpu_timer::SWARMS)
+                            .map_or(String::new(), |ms| format!(" (swarms {ms:.2})"));
+                        ui.draw_text(x, y, &format!("GPU: {:.2} ms{}", t.frame_ms, swarms), sz, val, font);
+                    }
                 }
 
                 // Always show collider indicator when active
@@ -3365,6 +3490,9 @@ let input = input.borrow();
                 gpu.queue.submit(std::iter::once(ui_encoder.finish()));
             }
 
+            if let Some(timer) = self.gpu_timer.as_mut() {
+                timer.finish_frame(&gpu.device, &gpu.queue);
+            }
             output.present();
         }
     }
@@ -3393,6 +3521,10 @@ impl ApplicationHandler for Engine {
         let gpu_state =
             pollster::block_on(crate::renderer::init_gpu(Arc::clone(&window), &initial_wgsl));
 
+        self.gpu_timer = crate::gpu_timer::GpuTimer::new(&gpu_state.device, &gpu_state.queue);
+        if self.gpu_timer.is_none() {
+            tracing::info!("GPU timings unavailable: the adapter has no timestamp queries");
+        }
         self.gpu = Some(gpu_state);
         tracing::info!("GPU initialized successfully");
 

@@ -283,7 +283,8 @@ pub async fn init_gpu(window: Arc<Window>, initial_wgsl: &str) -> GpuState {
         .request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("nAIVE Device"),
-                required_features: wgpu::Features::empty(),
+                // Timestamps for the GPU timer, where the adapter has them.
+                required_features: adapter.features() & crate::gpu_timer::FEATURES,
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::default(),
             },
