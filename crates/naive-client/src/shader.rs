@@ -193,9 +193,9 @@ fn fixup_slang_wgsl(wgsl: &str) -> String {
             if let Some(pos) = line.find(func) {
                 let after = &line[pos + func.len()..];
                 // Pattern: ((texture_name), ...) — extract name between (( and ))
-                if after.starts_with('(') {
-                    if let Some(end) = after[1..].find(')') {
-                        let name = after[1..1 + end].trim().to_string();
+                if let Some(rest) = after.strip_prefix('(') {
+                    if let Some(end) = rest.find(')') {
+                        let name = rest[..end].trim().to_string();
                         if !depth_texture_names.contains(&name) {
                             depth_texture_names.push(name);
                         }
@@ -213,13 +213,11 @@ fn fixup_slang_wgsl(wgsl: &str) -> String {
                 let after_var = &line[var_pos + 4..];
                 if let Some(colon_pos) = after_var.find(" : ") {
                     let name = after_var[..colon_pos].trim().to_string();
-                    if name.contains("depth")
-                        || name.contains("shadow")
-                    {
-                        if !depth_texture_names.contains(&name) {
+                    if (name.contains("depth")
+                        || name.contains("shadow"))
+                        && !depth_texture_names.contains(&name) {
                             depth_texture_names.push(name);
                         }
-                    }
                 }
             }
         }
@@ -254,8 +252,8 @@ fn fixup_slang_wgsl(wgsl: &str) -> String {
             let bytes = output.as_bytes();
             let mut depth = 0i32;
             let mut close_pos = None;
-            for i in call_open..bytes.len() {
-                match bytes[i] {
+            for (i, &byte) in bytes.iter().enumerate().skip(call_open) {
+                match byte {
                     b'(' => depth += 1,
                     b')' => {
                         depth -= 1;

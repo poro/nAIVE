@@ -245,3 +245,9 @@ impl MaterialCache {
         handle
     }
 }
+
+impl Default for MaterialCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}

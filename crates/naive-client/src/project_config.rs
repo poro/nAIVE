@@ -36,6 +36,7 @@ pub struct BuildConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[derive(Default)]
 pub struct DevLogConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -43,14 +44,6 @@ pub struct DevLogConfig {
     pub submit_on_complete: bool,
 }
 
-impl Default for DevLogConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            submit_on_complete: false,
-        }
-    }
-}
 
 fn default_engine() -> String {
     "naive-runtime".to_string()
@@ -138,10 +131,10 @@ pub fn discover_test_files(config: &NaiveConfig, project_root: &Path) -> Vec<Pat
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
-            p.extension().map_or(false, |ext| ext == "lua")
+            p.extension().is_some_and(|ext| ext == "lua")
                 && p.file_name()
                     .and_then(|n| n.to_str())
-                    .map_or(false, |n| n.starts_with("test_"))
+                    .is_some_and(|n| n.starts_with("test_"))
         })
         .collect();
 

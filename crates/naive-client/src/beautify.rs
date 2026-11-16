@@ -254,7 +254,7 @@ pub fn config_from_env() -> BeautifyConfig {
 
 // --- Internal helpers ---
 
-fn generate_procedural_geometry(mesh_type: &str) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+fn generate_procedural_geometry(mesh_type: &str) -> Geometry {
     match mesh_type {
         "procedural:cube" => generate_cube(),
         "procedural:sphere" => generate_sphere(16, 16),
@@ -265,7 +265,7 @@ fn generate_procedural_geometry(mesh_type: &str) -> (Vec<[f32; 3]>, Vec<[f32; 3]
     }
 }
 
-fn generate_cube() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+fn generate_cube() -> Geometry {
     // Unit cube centered at origin
     let positions = vec![
         // Front face
@@ -300,7 +300,7 @@ fn generate_cube() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
     (positions, normals, indices)
 }
 
-fn generate_sphere(stacks: u32, slices: u32) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>) {
+fn generate_sphere(stacks: u32, slices: u32) -> Geometry {
     use std::f32::consts::PI;
 
     let mut positions = Vec::new();
@@ -330,10 +330,13 @@ fn generate_sphere(stacks: u32, slices: u32) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, V
     (positions, normals, indices)
 }
 
+/// Positions, normals and triangle indices of a mesh.
+type Geometry = (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>);
+
 /// Read geometry from an existing GLB/glTF file.
 fn read_glb_geometry(
     path: &Path,
-) -> Result<(Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>), String> {
+) -> Result<Geometry, String> {
     let (document, buffers, _) =
         gltf::import(path).map_err(|e| format!("Failed to import GLB: {}", e))?;
 

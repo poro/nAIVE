@@ -55,6 +55,12 @@ impl CameraShakeState {
     }
 }
 
+impl Default for CameraShakeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// How often the CPU limit is checked, in Lua VM instructions.
 const HOOK_INTERVAL: u32 = 10_000;
 
@@ -1041,19 +1047,17 @@ impl ScriptRuntime {
         let emit_fn = self.lua.create_function(move |_, (event_type, data): (String, LuaTable)| {
             let mut bus = bus.borrow_mut();
             let mut map = HashMap::new();
-            for pair in data.pairs::<String, LuaValue>() {
-                if let Ok((key, val)) = pair {
-                    let json_val = match val {
-                        LuaValue::Integer(i) => serde_json::Value::Number(serde_json::Number::from(i)),
-                        LuaValue::Number(n) => serde_json::Number::from_f64(n)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null),
-                        LuaValue::String(s) => serde_json::Value::String(s.to_string_lossy().to_string()),
-                        LuaValue::Boolean(b) => serde_json::Value::Bool(b),
-                        _ => serde_json::Value::Null,
-                    };
-                    map.insert(key, json_val);
-                }
+            for (key, val) in data.pairs::<String, LuaValue>().flatten() {
+                let json_val = match val {
+                    LuaValue::Integer(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+                    LuaValue::Number(n) => serde_json::Number::from_f64(n)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null),
+                    LuaValue::String(s) => serde_json::Value::String(s.to_string_lossy().to_string()),
+                    LuaValue::Boolean(b) => serde_json::Value::Bool(b),
+                    _ => serde_json::Value::Null,
+                };
+                map.insert(key, json_val);
             }
             bus.emit(&event_type, map);
             Ok(())
@@ -1070,7 +1074,7 @@ impl ScriptRuntime {
             let mut id_map = id_map.borrow_mut();
 
             let owned_key = lua.create_registry_value(callback)
-                .map_err(|e| mlua::Error::external(e))?;
+                .map_err(mlua::Error::external)?;
             let list = listeners.entry(event_type.clone()).or_default();
             let index = list.len();
             list.push(owned_key);
@@ -1095,7 +1099,7 @@ impl ScriptRuntime {
                     if index < list.len() {
                         list.remove(index);
                         // Reindex the id_map entries for this event type
-                        for (_id, (et, idx)) in id_map.iter_mut() {
+                        for (et, idx) in id_map.values_mut() {
                             if *et == event_type && *idx > index {
                                 *idx -= 1;
                             }
@@ -1297,8 +1301,9 @@ impl ScriptRuntime {
         entity_table.set("set_visible", set_vis_fn).map_err(|e| e.to_string())?;
 
         // entity.spawn_projectile(owner_id, mesh, material, ox, oy, oz, dx, dy, dz, speed, damage, lifetime, gravity)
+        type SpawnProjectileArgs = (String, String, String, f32, f32, f32, f32, f32, f32, f32, f32, f32, bool);
         let cmd = cmd_queue.clone();
-        let spawn_proj_fn = self.lua.create_function(move |_, (owner_id, mesh, material, ox, oy, oz, dx, dy, dz, speed, damage, lifetime, gravity): (String, String, String, f32, f32, f32, f32, f32, f32, f32, f32, f32, bool)| {
+        let spawn_proj_fn = self.lua.create_function(move |_, (owner_id, mesh, material, ox, oy, oz, dx, dy, dz, speed, damage, lifetime, gravity): SpawnProjectileArgs| {
             let mut cmd = cmd.borrow_mut();
             cmd.projectile_counter += 1;
             let id = format!("proj_{}", cmd.projectile_counter);
@@ -1321,8 +1326,9 @@ impl ScriptRuntime {
 
         // entity.spawn_dynamic(mesh, material, x, y, z, vx, vy, vz, radius, mass, restitution, friction, lifetime)
         // Spawns a dynamic rigid body that bounces and persists (no destroy-on-hit).
+        type SpawnDynamicArgs = (String, String, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32);
         let cmd = cmd_queue.clone();
-        let spawn_dyn_fn = self.lua.create_function(move |_, (mesh, material, x, y, z, vx, vy, vz, radius, mass, restitution, friction, lifetime): (String, String, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32)| {
+        let spawn_dyn_fn = self.lua.create_function(move |_, (mesh, material, x, y, z, vx, vy, vz, radius, mass, restitution, friction, lifetime): SpawnDynamicArgs| {
             let mut cmd = cmd.borrow_mut();
             cmd.dynamic_counter += 1;
             let id = format!("dyn_{}", cmd.dynamic_counter);
@@ -1565,9 +1571,9 @@ impl ScriptRuntime {
             let ndc_x = clip.x / clip.w;
             let ndc_y = clip.y / clip.w;
             let ndc_z = clip.z / clip.w;
-            let visible = ndc_x >= -1.0 && ndc_x <= 1.0
-                && ndc_y >= -1.0 && ndc_y <= 1.0
-                && ndc_z >= 0.0 && ndc_z <= 1.0;
+            let visible = (-1.0..=1.0).contains(&ndc_x)
+                && (-1.0..=1.0).contains(&ndc_y)
+                && (0.0..=1.0).contains(&ndc_z);
             let sx = (ndc_x * 0.5 + 0.5) * config.width as f32;
             let sy = (1.0 - (ndc_y * 0.5 + 0.5)) * config.height as f32;
             Ok((sx, sy, visible))
@@ -1964,6 +1970,12 @@ impl ScriptRuntime {
 
         globals.set("animation", anim_table).map_err(|e| e.to_string())?;
         Ok(())
+    }
+}
+
+impl Default for ScriptRuntime {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

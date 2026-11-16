@@ -60,6 +60,12 @@ impl SkeletonStore {
     }
 }
 
+impl Default for SkeletonStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Per-entity bone matrix palette for GPU upload.
 /// Stored as column-major mat4x4 arrays for wgpu uniform buffer.
 #[repr(C)]
@@ -181,5 +187,11 @@ impl AnimationSystem {
         }
 
         palette
+    }
+}
+
+impl Default for AnimationSystem {
+    fn default() -> Self {
+        Self::new()
     }
 }

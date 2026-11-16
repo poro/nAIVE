@@ -153,6 +153,12 @@ impl SplatCache {
     }
 }
 
+impl Default for SplatCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Sigmoid activation: 1 / (1 + exp(-x))
 fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())

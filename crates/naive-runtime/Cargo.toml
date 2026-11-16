@@ -2,20 +2,11 @@
 name = "naive-runtime"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license = "MIT"
 description = "nAIVE runtime — single-process game binary (client + local game loop)"
 
-[[bin]]
-name = "naive-runtime"
-path = "src/main.rs"
-
-[[bin]]
-name = "naive"
-path = "src/main.rs"
-
-[[bin]]
-name = "naive_mcp"
-path = "src/bin/naive_mcp.rs"
+# Binaries are the files in src/bin: naive, naive-runtime and naive_mcp.
 
 [dependencies]
 naive-client = { workspace = true }

@@ -1029,7 +1029,7 @@ impl Engine {
                     &gpu.device,
                     &pipeline_file,
                     &self.project_root,
-                    &*camera_state,
+                    &camera_state,
                     draw_pool,
                     gpu.config.format,
                     gpu.config.width,
@@ -1174,10 +1174,10 @@ let mut scene_world = scene_world.borrow_mut();
 
         // Borrow physics_world for reconcile so new entities get physics bodies
         let mut pw_borrow = self.physics_world.as_ref().map(|pw| pw.borrow_mut());
-        let pw_ref = pw_borrow.as_mut().map(|b| &mut **b);
+        let pw_ref = pw_borrow.as_deref_mut();
 
         crate::world::reconcile_scene(
-            &mut *scene_world,
+            &mut scene_world,
             &new_scene,
             &gpu.device,
             &gpu.queue,
@@ -1614,7 +1614,7 @@ let mut scene_world = scene_world.borrow_mut();
         };
 
         // Tier 2: Process destroys FIRST (fixes destroy+spawn same-frame bug)
-        let destroys: Vec<_> = self.entity_commands.borrow_mut().destroys.drain(..).collect();
+        let destroys: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().destroys);
         for id in destroys {
             if let Some(scene_world) = &self.scene_world {
                 let mut scene_world = scene_world.borrow_mut();
@@ -1633,17 +1633,17 @@ let mut scene_world = scene_world.borrow_mut();
                         }
                     }
                 }
-                crate::world::destroy_runtime_entity(&mut *scene_world, &id);
+                crate::world::destroy_runtime_entity(&mut scene_world, &id);
             }
         }
 
         // Process spawns (after destroys, so destroy+spawn same ID works)
-        let spawns: Vec<_> = self.entity_commands.borrow_mut().spawns.drain(..).collect();
+        let spawns: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().spawns);
         for cmd in &spawns {
             if let Some(scene_world) = &self.scene_world {
                 let mut scene_world = scene_world.borrow_mut();
                 let ok = crate::world::spawn_runtime_entity(
-                    &mut *scene_world,
+                    &mut scene_world,
                     &cmd.id,
                     &cmd.mesh,
                     &cmd.material,
@@ -1730,47 +1730,47 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         // Process projectile spawns
-        let proj_spawns: Vec<_> = self.entity_commands.borrow_mut().projectile_spawns.drain(..).collect();
+        let proj_spawns: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().projectile_spawns);
         for cmd in &proj_spawns {
             if let (Some(scene_world), Some(physics_world)) = (&self.scene_world, &self.physics_world) {
                 let mut scene_world = scene_world.borrow_mut();
                 let mut physics_world = physics_world.borrow_mut();
                 crate::world::spawn_projectile_entity(
-                    &mut *scene_world,
+                    &mut scene_world,
                     cmd,
                     &gpu.device,
                     &gpu.queue,
                     &self.project_root,
                     &mut self.mesh_cache,
                     &mut self.material_cache,
-                    &mut *physics_world,
+                    &mut physics_world,
                     self.texture_resources.as_ref(),
                 );
             }
         }
 
         // Process dynamic spawns (bouncing physics objects)
-        let dyn_spawns: Vec<_> = self.entity_commands.borrow_mut().dynamic_spawns.drain(..).collect();
+        let dyn_spawns: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().dynamic_spawns);
         for cmd in &dyn_spawns {
             if let (Some(scene_world), Some(physics_world)) = (&self.scene_world, &self.physics_world) {
                 let mut scene_world = scene_world.borrow_mut();
                 let mut physics_world = physics_world.borrow_mut();
                 crate::world::spawn_dynamic_entity(
-                    &mut *scene_world,
+                    &mut scene_world,
                     cmd,
                     &gpu.device,
                     &gpu.queue,
                     &self.project_root,
                     &mut self.mesh_cache,
                     &mut self.material_cache,
-                    &mut *physics_world,
+                    &mut physics_world,
                     self.texture_resources.as_ref(),
                 );
             }
         }
 
         // Process pool operations
-        let pool_ops: Vec<_> = self.entity_commands.borrow_mut().pool_ops.drain(..).collect();
+        let pool_ops: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().pool_ops);
         for op in pool_ops {
             if let Some(scene_world) = &self.scene_world {
                 let mut scene_world = scene_world.borrow_mut();
@@ -1792,7 +1792,7 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         // Process scale updates
-        let scale_updates: Vec<_> = self.entity_commands.borrow_mut().scale_updates.drain(..).collect();
+        let scale_updates: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().scale_updates);
         for (id, scale) in scale_updates {
             if let Some(scene_world) = &self.scene_world {
                 let scene_world = scene_world.borrow_mut();
@@ -1806,7 +1806,7 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         // Process visibility updates
-        let vis_updates: Vec<_> = self.entity_commands.borrow_mut().visibility_updates.drain(..).collect();
+        let vis_updates: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().visibility_updates);
         for (id, visible) in vis_updates {
             if let Some(scene_world) = &self.scene_world {
                 let mut scene_world = scene_world.borrow_mut();
@@ -1821,7 +1821,7 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         // Process texture swaps
-        let tex_swaps: Vec<_> = self.entity_commands.borrow_mut().texture_swaps.drain(..).collect();
+        let tex_swaps: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().texture_swaps);
         if !tex_swaps.is_empty() {
             if let Some(tex_res) = &self.texture_resources {
                 let layout = &tex_res.bind_group_layout;
@@ -1849,7 +1849,7 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         // Process runtime mesh creates
-        let mesh_creates: Vec<_> = self.entity_commands.borrow_mut().mesh_creates.drain(..).collect();
+        let mesh_creates: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().mesh_creates);
         for cmd in mesh_creates {
             self.mesh_cache.insert_runtime_mesh(
                 &gpu.device,
@@ -1939,7 +1939,7 @@ let mut scene_world = scene_world.borrow_mut();
         if let Some(sw) = &self.scene_world {
             let mut sw = sw.borrow_mut();
             crate::world::spawn_all_entities(
-                &mut *sw,
+                &mut sw,
                 &scene,
                 &gpu.device,
                 &gpu.queue,
@@ -2309,7 +2309,7 @@ let mut scene_world = scene_world.borrow_mut();
                             crate::command::handle_command_rc(
                                 &pending.request,
                                 sw_opt.as_deref_mut(),
-                                &mut *eb,
+                                &mut eb,
                                 is_opt.as_deref_mut(),
                                 &mut self.paused,
                             )
@@ -2328,7 +2328,7 @@ let mut scene_world = scene_world.borrow_mut();
                         crate::command::handle_command_rc(
                             &pending.request,
                             sw_opt.as_deref_mut(),
-                            &mut *eb,
+                            &mut eb,
                             is_opt.as_deref_mut(),
                             &mut self.paused,
                         )
@@ -2421,7 +2421,7 @@ let mut scene_world = scene_world.borrow_mut();
 
             // Use spawn_runtime_entity for mesh entities
             let ok = crate::world::spawn_runtime_entity(
-                &mut *scene_world,
+                &mut scene_world,
                 &entity_id,
                 mesh,
                 material,
@@ -2698,7 +2698,7 @@ let mut scene_world = scene_world.borrow_mut();
 
             let print_output = output.lock().map(|o| o.clone()).unwrap_or_default();
 
-            Ok(mlua::Value::String(lua.create_string(&json!({
+            Ok(mlua::Value::String(lua.create_string(json!({
                 "result": result_str,
                 "print_output": print_output,
             }).to_string())?))
@@ -2838,7 +2838,7 @@ let mut scene_world = scene_world.borrow_mut();
 let input = input.borrow();
 
         if let Some(editor_cam) = &mut self.editor_camera {
-            editor_cam.update(&*input, self.delta_time);
+            editor_cam.update(&input, self.delta_time);
         }
 
         let gpu = match &self.gpu {
@@ -2848,7 +2848,7 @@ let input = input.borrow();
 
         if let (Some(editor_cam), Some(camera_state)) = (&self.editor_camera, &self.camera_state) {
             let mut camera_state = camera_state.borrow_mut();
-            editor_cam.apply_to_camera_state(&mut *camera_state, &gpu.queue, gpu.config.width, gpu.config.height);
+            editor_cam.apply_to_camera_state(&mut camera_state, &gpu.queue, gpu.config.width, gpu.config.height);
         }
     }
 
@@ -2860,7 +2860,7 @@ let input = input.borrow();
         };
         let mut ui = ui_rc.borrow_mut();
         let font_ref = font_rc.borrow();
-        let font: &BitmapFont = &*font_ref;
+        let font: &BitmapFont = &font_ref;
 
         let sz = 16.0;
         let x = 10.0;
@@ -3061,11 +3061,10 @@ let input = input.borrow();
         let dt = self.delta_time;
 
         // Phase 5: FPS controller update (skip in editor mode — uses free camera)
-        if !self.args.editor_mode {
-            if self.input_state.as_ref().map(|i| i.borrow().cursor_captured).unwrap_or(false) {
+        if !self.args.editor_mode
+            && self.input_state.as_ref().map(|i| i.borrow().cursor_captured).unwrap_or(false) {
                 self.update_fps_controller();
             }
-        }
 
         // Always advance physics (gravity, collisions, etc.), in
         // fixed steps so the simulation does not depend on the
@@ -3120,7 +3119,7 @@ let input = input.borrow();
         // Tier 2: Update particle system
         if let Some(scene_world) = &self.scene_world {
             let scene_world = scene_world.borrow();
-            self.particle_system.borrow_mut().update(dt, &*scene_world);
+            self.particle_system.borrow_mut().update(dt, &scene_world);
         }
 
         // Update listener position for spatial audio
@@ -3258,8 +3257,8 @@ let input = input.borrow();
                     let encoder = crate::pipeline::execute_pipeline_to_view(
                         gpu,
                         compiled,
-                        &*sw,
-                        &*cs,
+                        &sw,
+                        &cs,
                         draw_pool,
                         &self.mesh_cache,
                         &self.material_cache,
@@ -3292,8 +3291,8 @@ let input = input.borrow();
                 let cs = camera_state.borrow();
                 crate::renderer::render_scene_to_view(
                     gpu,
-                    &*sw,
-                    &*cs,
+                    &sw,
+                    &cs,
                     draw_pool,
                     &self.mesh_cache,
                     &self.material_cache,
@@ -3322,8 +3321,8 @@ let input = input.borrow();
                         &mut encoder,
                         &swapchain_view,
                         &gpu.depth_view,
-                        &*cs,
-                        &*pw,
+                        &cs,
+                        &pw,
                     );
                     gpu.queue.submit(std::iter::once(encoder.finish()));
                 }
@@ -3336,7 +3335,7 @@ let input = input.borrow();
             ) {
                 let mut ui = ui_rc.borrow_mut();
                 let font_guard = font_rc.borrow();
-                let font: &BitmapFont = &*font_guard;
+                let font: &BitmapFont = &font_guard;
                 // Queue render debug HUD if enabled
                 if self.render_debug.show_hud {
                     let on = [0.3, 1.0, 0.3, 1.0];

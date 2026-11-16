@@ -301,10 +301,12 @@ fn cmd_query_entity(req: &CommandRequest, sw: &SceneWorld) -> CommandResponse {
         }
     }
 
-    if filter.is_some() && data.is_empty() {
-        return CommandResponse::error(format!(
-            "Component '{}' not found on '{}'", filter.unwrap(), entity_id
-        ));
+    if let Some(component) = filter {
+        if data.is_empty() {
+            return CommandResponse::error(format!(
+                "Component '{}' not found on '{}'", component, entity_id
+            ));
+        }
     }
     CommandResponse::ok(Value::Object(data))
 }
@@ -460,7 +462,7 @@ fn cmd_query_events(req: &CommandRequest, event_bus: &EventBus) -> CommandRespon
 
     let log = event_bus.get_log();
     let events: Vec<Value> = log.iter()
-        .filter(|e| filter.as_ref().map_or(true, |f| e.event_type.contains(f.as_str())))
+        .filter(|e| filter.as_ref().is_none_or(|f| e.event_type.contains(f.as_str())))
         .rev()
         .take(limit)
         .map(|e| json!({

@@ -1,7 +1,11 @@
+//! The nAIVE command-line program. The `naive` and `naive-runtime` binaries
+//! are the same program under two names; both call [`run`].
+
 use clap::Parser;
 use naive_client::cli::CliArgs;
 
-fn main() {
+/// Parse the command line and run the requested subcommand.
+pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -19,7 +23,6 @@ fn main() {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
-            return;
         }
 
         // naive run [--scene X]
@@ -53,7 +56,6 @@ fn main() {
                 }
             };
             run_engine(args);
-            return;
         }
 
         // naive test [test_file]
@@ -109,7 +111,6 @@ fn main() {
                     }
                 }
             }
-            return;
         }
 
         // naive build [--target X]
@@ -134,7 +135,6 @@ fn main() {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
-            return;
         }
 
         // naive publish
@@ -158,7 +158,6 @@ fn main() {
                 eprintln!("Note: {}", e);
                 std::process::exit(1);
             }
-            return;
         }
 
         // naive submit-log
@@ -183,7 +182,6 @@ fn main() {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
-            return;
         }
 
         // naive edit [--scene X]
@@ -215,7 +213,6 @@ fn main() {
             args.editor_mode = true;
             args.hud = false; // Editor has its own overlay
             run_engine(args);
-            return;
         }
 
         // naive beautify [--scene X] [--style Y] [--output Z] [--mock P]
@@ -301,7 +298,6 @@ fn main() {
                     eprintln!("Beautification failed: {}", e);
                 }
             }
-            return;
         }
 
         // naive demo [selector] / naive demos [selector]
@@ -315,7 +311,6 @@ fn main() {
                     // User quit the menu
                 }
             }
-            return;
         }
 
         // No subcommand: auto-detect or legacy mode

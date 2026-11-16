@@ -179,7 +179,7 @@ pub fn compile_pipeline(
     let shadow_sampler = Some(shadow_cmp_sampler);
 
     for pass_def in &pipeline_file.passes {
-        let pass_type = PassType::from_str(&pass_def.pass_type).ok_or_else(|| {
+        let pass_type = PassType::from_name(&pass_def.pass_type).ok_or_else(|| {
             PipelineError::InvalidFormat(format!("Unknown pass type: '{}'", pass_def.pass_type))
         })?;
 
@@ -477,6 +477,7 @@ fn compile_pass_shader(shader_path: &Path, pass_name: &str) -> Result<String, Pi
 }
 
 /// Create a rasterize (geometry) pipeline with MRT outputs.
+#[allow(clippy::too_many_arguments)]
 fn create_rasterize_pipeline(
     device: &wgpu::Device,
     wgsl_source: &str,

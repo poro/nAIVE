@@ -80,7 +80,7 @@ impl TestRunner {
         {
             let mut sw = self.scene_world.borrow_mut();
             let mut pw = self.physics_world.borrow_mut();
-            crate::world::spawn_all_entities_headless(&mut *sw, &scene, &mut *pw);
+            crate::world::spawn_all_entities_headless(&mut sw, &scene, &mut pw);
         }
 
         // Initialize scripting
@@ -410,7 +410,7 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
         .create_function(move |_, path: String| {
             r.borrow_mut()
                 .load_scene(&path)
-                .map_err(|e| LuaError::RuntimeError(e))?;
+                .map_err(LuaError::RuntimeError)?;
             Ok(())
         })
         .map_err(|e| e.to_string())?;
@@ -608,10 +608,8 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
             let runner = r.borrow();
             let mut filter_map = std::collections::HashMap::new();
             if let Some(tbl) = filter {
-                for pair in tbl.pairs::<String, String>() {
-                    if let Ok((k, v)) = pair {
-                        filter_map.insert(k, v);
-                    }
+                for (k, v) in tbl.pairs::<String, String>().flatten() {
+                    filter_map.insert(k, v);
                 }
             }
             Ok(runner.event_occurred(&event_type, &filter_map))

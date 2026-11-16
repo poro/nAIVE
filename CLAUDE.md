@@ -196,6 +196,14 @@ cargo build
 cargo test
 ```
 
+CI fails on any clippy warning. Before pushing, run what it runs:
+
+```sh
+cargo test --workspace --exclude naive-web --locked
+cargo clippy --workspace --exclude naive-web --all-targets --locked -- -D warnings
+cd project && cargo run --locked -p naive-runtime --bin naive -- test   # Lua scene tests
+```
+
 ## Homebrew
 
 Formula lives at `../homebrew-tap/Formula/naive.rb`. Update URL, SHA256, and version on each release.

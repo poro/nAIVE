@@ -1,5 +1,5 @@
-/// Debug wireframe renderer for physics collider visualization.
-/// Toggle with 'H' key. Draws world-space wireframe lines over the 3D scene.
+//! Debug wireframe renderer for physics collider visualization.
+//! Toggle with 'H' key. Draws world-space wireframe lines over the 3D scene.
 
 use glam::{Vec3, Quat};
 use wgpu::util::DeviceExt;

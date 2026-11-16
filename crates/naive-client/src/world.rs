@@ -201,7 +201,14 @@ impl SceneWorld {
     }
 }
 
+impl Default for SceneWorld {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Spawn all entities from a parsed scene into the ECS world.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_all_entities(
     scene_world: &mut SceneWorld,
     scene: &SceneFile,
@@ -1235,5 +1242,11 @@ impl EntityPoolManager {
     /// Get pool stats: (total, available).
     pub fn pool_size(&self, name: &str) -> (usize, usize) {
         self.pools.get(name).map(|p| (p.all.len(), p.available.len())).unwrap_or((0, 0))
+    }
+}
+
+impl Default for EntityPoolManager {
+    fn default() -> Self {
+        Self::new()
     }
 }

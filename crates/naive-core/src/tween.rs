@@ -43,7 +43,7 @@ impl Easing {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_name(s: &str) -> Self {
         match s {
             "ease_in" => Easing::EaseIn,
             "ease_out" => Easing::EaseOut,
@@ -182,6 +182,12 @@ impl TweenSystem {
     /// Get the number of active tweens.
     pub fn active_count(&self) -> usize {
         self.tweens.len()
+    }
+}
+
+impl Default for TweenSystem {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

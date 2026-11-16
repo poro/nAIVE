@@ -1,5 +1,5 @@
-/// Bitmap font atlas — programmatically generated 6x8 pixel font.
-/// Covers ASCII 32–126 (95 printable characters) in a 16×6 grid.
+//! Bitmap font atlas — programmatically generated 6x8 pixel font.
+//! Covers ASCII 32–126 (95 printable characters) in a 16×6 grid.
 
 /// GPU-resident bitmap font atlas.
 pub struct BitmapFont {
@@ -119,7 +119,7 @@ pub fn create_bitmap_font(device: &wgpu::Device, queue: &wgpu::Queue) -> BitmapF
 /// Get UV coordinates for a character: [u0, v0, u1, v1].
 pub fn glyph_uvs(font: &BitmapFont, ch: char) -> [f32; 4] {
     let code = ch as u32;
-    if code < 32 || code > 126 {
+    if !(32..=126).contains(&code) {
         return glyph_uvs(font, '?');
     }
     let idx = code - 32;

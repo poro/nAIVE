@@ -62,6 +62,12 @@ impl TextureCache {
     }
 }
 
+impl Default for TextureCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Create a texture bind group from raw RGBA8 pixel data.
 pub fn create_texture_bind_group_from_rgba(
     device: &wgpu::Device,
