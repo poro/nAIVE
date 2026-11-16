@@ -2109,7 +2109,7 @@ dependencies = [
 
 [[package]]
 name = "naive-client"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "base64 0.22.1",
  "bytemuck",
@@ -2143,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "naive-core"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "glam",
  "hecs",
@@ -2155,7 +2155,7 @@ dependencies = [
 
 [[package]]
 name = "naive-runtime"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "clap",
  "naive-client",
@@ -2167,7 +2167,7 @@ dependencies = [
 
 [[package]]
 name = "naive-server"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "naive-core",
  "serde",
@@ -2179,7 +2179,7 @@ dependencies = [
 
 [[package]]
 name = "naive-web"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "bytemuck",
  "console_error_panic_hook",
