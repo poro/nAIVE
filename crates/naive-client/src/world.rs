@@ -4,8 +4,8 @@ use std::path::Path;
 use hecs::World;
 
 use crate::components::*;
-use crate::mesh::MeshCache;
 use crate::material::MaterialCache;
+use crate::mesh::MeshCache;
 use crate::physics::{self, CharacterController, PhysicsShape, PhysicsWorld};
 use crate::scene::{EntityDef, SceneFile};
 use crate::splat::SplatCache;
@@ -137,20 +137,26 @@ pub fn spawn_runtime_entity(
         return false;
     }
 
-    let mesh_handle = match mesh_cache.get_or_load(device, queue, project_root, mesh, texture_resources) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("spawn_runtime_entity: mesh '{}' failed: {}", mesh, e);
-            return false;
-        }
-    };
-    let material_handle = match material_cache.get_or_load(device, queue, project_root, material, None, None) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("spawn_runtime_entity: material '{}' failed: {}", material, e);
-            return false;
-        }
-    };
+    let mesh_handle =
+        match mesh_cache.get_or_load(device, queue, project_root, mesh, texture_resources) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("spawn_runtime_entity: mesh '{}' failed: {}", mesh, e);
+                return false;
+            }
+        };
+    let material_handle =
+        match material_cache.get_or_load(device, queue, project_root, material, None, None) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!(
+                    "spawn_runtime_entity: material '{}' failed: {}",
+                    material,
+                    e
+                );
+                return false;
+            }
+        };
 
     let transform = Transform {
         position: glam::Vec3::from(position),
@@ -223,7 +229,19 @@ pub fn spawn_all_entities(
     mut texture_cache: Option<&mut crate::texture_cache::TextureCache>,
 ) {
     for entity_def in &scene.entities {
-        spawn_entity(scene_world, entity_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, physics_world.as_deref_mut(), texture_resources, texture_cache.as_deref_mut());
+        spawn_entity(
+            scene_world,
+            entity_def,
+            device,
+            queue,
+            project_root,
+            mesh_cache,
+            material_cache,
+            splat_cache,
+            physics_world.as_deref_mut(),
+            texture_resources,
+            texture_cache.as_deref_mut(),
+        );
     }
     scene_world.current_scene = Some(scene.clone());
     tracing::info!(
@@ -270,31 +288,63 @@ fn spawn_entity(
         let splat_handle = match splat_cache.get_or_load(device, project_root, &gs.source) {
             Ok(h) => h,
             Err(e) => {
-                tracing::error!("Failed to load splat '{}' for entity '{}': {}", gs.source, entity_def.id, e);
+                tracing::error!(
+                    "Failed to load splat '{}' for entity '{}': {}",
+                    gs.source,
+                    entity_def.id,
+                    e
+                );
                 return;
             }
         };
         let gaussian_splat = GaussianSplat { splat_handle };
-        let entity = scene_world.world.spawn((entity_id, tags, transform, gaussian_splat));
-        scene_world.entity_registry.insert(entity_def.id.clone(), entity);
+        let entity = scene_world
+            .world
+            .spawn((entity_id, tags, transform, gaussian_splat));
+        scene_world
+            .entity_registry
+            .insert(entity_def.id.clone(), entity);
         return;
     }
 
     // Start with base components all entities have
     let entity = if let Some(mr) = &entity_def.components.mesh_renderer {
         // Load mesh and material
-        let mesh_handle = match mesh_cache.get_or_load(device, queue, project_root, &mr.mesh, texture_resources) {
+        let mesh_handle = match mesh_cache.get_or_load(
+            device,
+            queue,
+            project_root,
+            &mr.mesh,
+            texture_resources,
+        ) {
             Ok(h) => h,
             Err(e) => {
-                tracing::error!("Failed to load mesh '{}' for entity '{}': {}", mr.mesh, entity_def.id, e);
+                tracing::error!(
+                    "Failed to load mesh '{}' for entity '{}': {}",
+                    mr.mesh,
+                    entity_def.id,
+                    e
+                );
                 return;
             }
         };
         let tex_layout = texture_resources.map(|tr| &tr.bind_group_layout);
-        let material_handle = match material_cache.get_or_load(device, queue, project_root, &mr.material, texture_cache.as_deref_mut(), tex_layout) {
+        let material_handle = match material_cache.get_or_load(
+            device,
+            queue,
+            project_root,
+            &mr.material,
+            texture_cache.as_deref_mut(),
+            tex_layout,
+        ) {
             Ok(h) => h,
             Err(e) => {
-                tracing::error!("Failed to load material '{}' for entity '{}': {}", mr.material, entity_def.id, e);
+                tracing::error!(
+                    "Failed to load material '{}' for entity '{}': {}",
+                    mr.material,
+                    entity_def.id,
+                    e
+                );
                 return;
             }
         };
@@ -367,9 +417,7 @@ fn spawn_entity(
             .world
             .spawn((entity_id, tags, transform, dir_light))
     } else {
-        scene_world
-            .world
-            .spawn((entity_id, tags, transform))
+        scene_world.world.spawn((entity_id, tags, transform))
     };
 
     scene_world
@@ -417,7 +465,13 @@ fn spawn_entity(
 
     // Attach GpuSwarm if defined. The swarm system creates its GPU buffers.
     if let Some(swarm_def) = &entity_def.components.gpu_swarm {
-        let mesh = mesh_cache.get_or_load(device, queue, project_root, &swarm_def.mesh, texture_resources);
+        let mesh = mesh_cache.get_or_load(
+            device,
+            queue,
+            project_root,
+            &swarm_def.mesh,
+            texture_resources,
+        );
         let tex_layout = texture_resources.map(|tr| &tr.bind_group_layout);
         let material = material_cache.get_or_load(
             device,
@@ -437,10 +491,20 @@ fn spawn_entity(
                 let _ = scene_world.world.insert_one(entity, swarm);
             }
             (Err(e), _) => {
-                tracing::error!("Failed to load swarm mesh '{}' for entity '{}': {}", swarm_def.mesh, entity_def.id, e);
+                tracing::error!(
+                    "Failed to load swarm mesh '{}' for entity '{}': {}",
+                    swarm_def.mesh,
+                    entity_def.id,
+                    e
+                );
             }
             (_, Err(e)) => {
-                tracing::error!("Failed to load swarm material '{}' for entity '{}': {}", swarm_def.material, entity_def.id, e);
+                tracing::error!(
+                    "Failed to load swarm material '{}' for entity '{}': {}",
+                    swarm_def.material,
+                    entity_def.id,
+                    e
+                );
             }
         }
     }
@@ -503,7 +567,9 @@ fn spawn_entity(
                 height: cc_def.height,
                 radius: cc_def.radius,
             };
-            let _ = scene_world.world.insert(entity, (rb_comp, col_comp, cc_comp, player));
+            let _ = scene_world
+                .world
+                .insert(entity, (rb_comp, col_comp, cc_comp, player));
         } else if let Some(col_def) = &entity_def.components.collider {
             let shape = parse_collider_shape(col_def);
             let is_trigger = col_def.is_trigger;
@@ -532,8 +598,16 @@ fn spawn_entity(
                         .as_ref()
                         .map(|rb| rb.ccd)
                         .unwrap_or(false);
-                    let (rb_handle, col_handle) =
-                        pw.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
+                    let (rb_handle, col_handle) = pw.add_dynamic_body(
+                        entity,
+                        pos,
+                        rot,
+                        shape.clone(),
+                        mass,
+                        restitution,
+                        friction,
+                        ccd,
+                    );
                     let rb_comp = physics::RigidBody {
                         handle: rb_handle,
                         body_type: physics::PhysicsBodyType::Dynamic,
@@ -546,8 +620,15 @@ fn spawn_entity(
                     let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
                 }
                 "kinematic" => {
-                    let (rb_handle, col_handle) =
-                        pw.add_kinematic_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
+                    let (rb_handle, col_handle) = pw.add_kinematic_body(
+                        entity,
+                        pos,
+                        rot,
+                        shape.clone(),
+                        is_trigger,
+                        restitution,
+                        friction,
+                    );
                     let rb_comp = physics::RigidBody {
                         handle: rb_handle,
                         body_type: physics::PhysicsBodyType::Kinematic,
@@ -560,8 +641,15 @@ fn spawn_entity(
                     let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
                 }
                 _ => {
-                    let (rb_handle, col_handle) =
-                        pw.add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
+                    let (rb_handle, col_handle) = pw.add_static_body(
+                        entity,
+                        pos,
+                        rot,
+                        shape.clone(),
+                        is_trigger,
+                        restitution,
+                        friction,
+                    );
                     let rb_comp = physics::RigidBody {
                         handle: rb_handle,
                         body_type: physics::PhysicsBodyType::Static,
@@ -620,20 +708,26 @@ pub fn spawn_projectile_entity(
         return false;
     }
 
-    let mesh_handle = match mesh_cache.get_or_load(device, queue, project_root, &cmd.mesh, texture_resources) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("spawn_projectile_entity: mesh '{}' failed: {}", cmd.mesh, e);
-            return false;
-        }
-    };
-    let material_handle = match material_cache.get_or_load(device, queue, project_root, &cmd.material, None, None) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("spawn_projectile_entity: material '{}' failed: {}", cmd.material, e);
-            return false;
-        }
-    };
+    let mesh_handle =
+        match mesh_cache.get_or_load(device, queue, project_root, &cmd.mesh, texture_resources) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("spawn_projectile_entity: mesh '{}' failed: {}", cmd.mesh, e);
+                return false;
+            }
+        };
+    let material_handle =
+        match material_cache.get_or_load(device, queue, project_root, &cmd.material, None, None) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!(
+                    "spawn_projectile_entity: material '{}' failed: {}",
+                    cmd.material,
+                    e
+                );
+                return false;
+            }
+        };
 
     let position = glam::Vec3::from(cmd.position);
     let direction = glam::Vec3::from(cmd.direction).normalize_or_zero();
@@ -719,20 +813,26 @@ pub fn spawn_dynamic_entity(
         return false;
     }
 
-    let mesh_handle = match mesh_cache.get_or_load(device, queue, project_root, &cmd.mesh, texture_resources) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("spawn_dynamic_entity: mesh '{}' failed: {}", cmd.mesh, e);
-            return false;
-        }
-    };
-    let material_handle = match material_cache.get_or_load(device, queue, project_root, &cmd.material, None, None) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("spawn_dynamic_entity: material '{}' failed: {}", cmd.material, e);
-            return false;
-        }
-    };
+    let mesh_handle =
+        match mesh_cache.get_or_load(device, queue, project_root, &cmd.mesh, texture_resources) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("spawn_dynamic_entity: mesh '{}' failed: {}", cmd.mesh, e);
+                return false;
+            }
+        };
+    let material_handle =
+        match material_cache.get_or_load(device, queue, project_root, &cmd.material, None, None) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!(
+                    "spawn_dynamic_entity: material '{}' failed: {}",
+                    cmd.material,
+                    e
+                );
+                return false;
+            }
+        };
 
     let position = glam::Vec3::from(cmd.position);
     let velocity = glam::Vec3::from(cmd.velocity);
@@ -758,13 +858,10 @@ pub fn spawn_dynamic_entity(
         owner_id: String::new(),
     };
 
-    let entity = scene_world.world.spawn((
-        entity_id_comp,
-        tags,
-        transform,
-        mesh_renderer,
-        projectile,
-    ));
+    let entity =
+        scene_world
+            .world
+            .spawn((entity_id_comp, tags, transform, mesh_renderer, projectile));
     scene_world.entity_registry.insert(cmd.id.clone(), entity);
 
     let shape = PhysicsShape::Sphere { radius: cmd.radius };
@@ -874,9 +971,13 @@ fn spawn_entity_headless(
                 intensity: pl.intensity,
                 range: pl.range,
             };
-            scene_world.world.spawn((entity_id, tags, transform, camera, point_light))
+            scene_world
+                .world
+                .spawn((entity_id, tags, transform, camera, point_light))
         } else {
-            scene_world.world.spawn((entity_id, tags, transform, camera))
+            scene_world
+                .world
+                .spawn((entity_id, tags, transform, camera))
         }
     } else if let Some(pl) = &entity_def.components.point_light {
         let point_light = PointLight {
@@ -884,7 +985,9 @@ fn spawn_entity_headless(
             intensity: pl.intensity,
             range: pl.range,
         };
-        scene_world.world.spawn((entity_id, tags, transform, point_light))
+        scene_world
+            .world
+            .spawn((entity_id, tags, transform, point_light))
     } else if let Some(dl) = &entity_def.components.directional_light {
         let dir_light = crate::components::DirectionalLight {
             direction: glam::Vec3::from(dl.direction).normalize(),
@@ -892,12 +995,16 @@ fn spawn_entity_headless(
             intensity: dl.intensity,
             shadow_extent: dl.shadow_extent,
         };
-        scene_world.world.spawn((entity_id, tags, transform, dir_light))
+        scene_world
+            .world
+            .spawn((entity_id, tags, transform, dir_light))
     } else {
         scene_world.world.spawn((entity_id, tags, transform))
     };
 
-    scene_world.entity_registry.insert(entity_def.id.clone(), entity);
+    scene_world
+        .entity_registry
+        .insert(entity_def.id.clone(), entity);
 
     // Attach Health component if defined
     if let Some(health_def) = &entity_def.components.health {
@@ -969,7 +1076,9 @@ fn spawn_entity_headless(
             radius: cc_def.radius,
             ..Default::default()
         };
-        let _ = scene_world.world.insert(entity, (rb_comp, col_comp, cc_comp, player));
+        let _ = scene_world
+            .world
+            .insert(entity, (rb_comp, col_comp, cc_comp, player));
     } else if let Some(col_def) = &entity_def.components.collider {
         let shape = parse_collider_shape(col_def);
         let is_trigger = col_def.is_trigger;
@@ -996,8 +1105,16 @@ fn spawn_entity_headless(
                     .as_ref()
                     .map(|rb| rb.ccd)
                     .unwrap_or(false);
-                let (rb_handle, col_handle) =
-                    physics_world.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
+                let (rb_handle, col_handle) = physics_world.add_dynamic_body(
+                    entity,
+                    pos,
+                    rot,
+                    shape.clone(),
+                    mass,
+                    restitution,
+                    friction,
+                    ccd,
+                );
                 let rb_comp = physics::RigidBody {
                     handle: rb_handle,
                     body_type: physics::PhysicsBodyType::Dynamic,
@@ -1010,8 +1127,15 @@ fn spawn_entity_headless(
                 let _ = scene_world.world.insert(entity, (rb_comp, col_comp));
             }
             _ => {
-                let (rb_handle, col_handle) =
-                    physics_world.add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
+                let (rb_handle, col_handle) = physics_world.add_static_body(
+                    entity,
+                    pos,
+                    rot,
+                    shape.clone(),
+                    is_trigger,
+                    restitution,
+                    friction,
+                );
                 let rb_comp = physics::RigidBody {
                     handle: rb_handle,
                     body_type: physics::PhysicsBodyType::Static,
@@ -1044,7 +1168,19 @@ pub fn reconcile_scene(
     let old_scene = match &scene_world.current_scene {
         Some(s) => s.clone(),
         None => {
-            spawn_all_entities(scene_world, new_scene, device, queue, project_root, mesh_cache, material_cache, splat_cache, physics_world, texture_resources, None);
+            spawn_all_entities(
+                scene_world,
+                new_scene,
+                device,
+                queue,
+                project_root,
+                mesh_cache,
+                material_cache,
+                splat_cache,
+                physics_world,
+                texture_resources,
+                None,
+            );
             return;
         }
     };
@@ -1070,7 +1206,19 @@ pub fn reconcile_scene(
     // 2. Spawn new entities (with physics)
     for entity_def in &new_scene.entities {
         if !old_ids.contains(entity_def.id.as_str()) {
-            spawn_entity(scene_world, entity_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, physics_world.as_deref_mut(), texture_resources, None);
+            spawn_entity(
+                scene_world,
+                entity_def,
+                device,
+                queue,
+                project_root,
+                mesh_cache,
+                material_cache,
+                splat_cache,
+                physics_world.as_deref_mut(),
+                texture_resources,
+                None,
+            );
             tracing::info!("Hot-reload: spawned entity '{}'", entity_def.id);
         }
     }
@@ -1111,7 +1259,19 @@ pub fn reconcile_scene(
             let _ = scene_world.world.despawn(entity);
         }
         if let Some(new_def) = new_scene.entities.iter().find(|e| &e.id == id) {
-            spawn_entity(scene_world, new_def, device, queue, project_root, mesh_cache, material_cache, splat_cache, physics_world.as_deref_mut(), texture_resources, None);
+            spawn_entity(
+                scene_world,
+                new_def,
+                device,
+                queue,
+                project_root,
+                mesh_cache,
+                material_cache,
+                splat_cache,
+                physics_world.as_deref_mut(),
+                texture_resources,
+                None,
+            );
 
             tracing::info!("Hot-reload: respawned entity '{}' (structural change)", id);
         }
@@ -1135,8 +1295,7 @@ fn patch_entity(
     material_cache: &mut MaterialCache,
 ) -> bool {
     // Detect structural changes: components added or removed require a full respawn.
-    let structural_change =
-        old_def.components.rigid_body.is_some() != new_def.components.rigid_body.is_some()
+    let structural_change = old_def.components.rigid_body.is_some() != new_def.components.rigid_body.is_some()
         || old_def.components.collider.is_some() != new_def.components.collider.is_some()
         || old_def.components.character_controller.is_some() != new_def.components.character_controller.is_some()
         || old_def.components.gaussian_splat.is_some() != new_def.components.gaussian_splat.is_some()
@@ -1180,15 +1339,22 @@ fn patch_entity(
     }
 
     // Patch mesh renderer (mesh and/or material changes)
-    if let (Some(old_mr), Some(new_mr)) = (&old_def.components.mesh_renderer, &new_def.components.mesh_renderer) {
+    if let (Some(old_mr), Some(new_mr)) = (
+        &old_def.components.mesh_renderer,
+        &new_def.components.mesh_renderer,
+    ) {
         if old_mr.mesh != new_mr.mesh || old_mr.material != new_mr.material {
             let mesh_handle = if old_mr.mesh != new_mr.mesh {
-                mesh_cache.get_or_load(device, queue, project_root, &new_mr.mesh, None).ok()
+                mesh_cache
+                    .get_or_load(device, queue, project_root, &new_mr.mesh, None)
+                    .ok()
             } else {
                 None
             };
             let material_handle = if old_mr.material != new_mr.material {
-                material_cache.get_or_load(device, queue, project_root, &new_mr.material, None, None).ok()
+                material_cache
+                    .get_or_load(device, queue, project_root, &new_mr.material, None, None)
+                    .ok()
             } else {
                 None
             };
@@ -1204,7 +1370,9 @@ fn patch_entity(
     }
 
     // Patch script source path
-    if let (Some(_old_script), Some(new_script)) = (&old_def.components.script, &new_def.components.script) {
+    if let (Some(_old_script), Some(new_script)) =
+        (&old_def.components.script, &new_def.components.script)
+    {
         if let Ok(mut script) = world.get::<&mut crate::scripting::Script>(entity) {
             let new_path = std::path::PathBuf::from(&new_script.source);
             if script.source != new_path {
@@ -1242,17 +1410,22 @@ impl EntityPoolManager {
 
     /// Create a new pool (does not pre-warm — that happens via acquire calls).
     pub fn create_pool(&mut self, name: &str, mesh: &str, material: &str) {
-        self.pools.insert(name.to_string(), EntityPool {
-            available: Vec::new(),
-            all: Vec::new(),
-            mesh: mesh.to_string(),
-            material: material.to_string(),
-        });
+        self.pools.insert(
+            name.to_string(),
+            EntityPool {
+                available: Vec::new(),
+                all: Vec::new(),
+                mesh: mesh.to_string(),
+                material: material.to_string(),
+            },
+        );
     }
 
     /// Return an available entity ID from the pool, or None if pool is empty.
     pub fn try_acquire(&mut self, pool_name: &str) -> Option<String> {
-        self.pools.get_mut(pool_name).and_then(|pool| pool.available.pop())
+        self.pools
+            .get_mut(pool_name)
+            .and_then(|pool| pool.available.pop())
     }
 
     /// Release an entity back to the pool's available list.
@@ -1273,7 +1446,9 @@ impl EntityPoolManager {
 
     /// Get the mesh and material for a pool.
     pub fn get_pool_assets(&self, pool_name: &str) -> Option<(String, String)> {
-        self.pools.get(pool_name).map(|p| (p.mesh.clone(), p.material.clone()))
+        self.pools
+            .get(pool_name)
+            .map(|p| (p.mesh.clone(), p.material.clone()))
     }
 
     /// Check if a pool exists.
@@ -1283,7 +1458,10 @@ impl EntityPoolManager {
 
     /// Get pool stats: (total, available).
     pub fn pool_size(&self, name: &str) -> (usize, usize) {
-        self.pools.get(name).map(|p| (p.all.len(), p.available.len())).unwrap_or((0, 0))
+        self.pools
+            .get(name)
+            .map(|p| (p.all.len(), p.available.len()))
+            .unwrap_or((0, 0))
     }
 }
 

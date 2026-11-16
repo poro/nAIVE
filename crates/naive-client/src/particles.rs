@@ -1,6 +1,6 @@
-use glam::{Vec3, Vec4};
 use crate::components::{ParticleConfig, ParticleEmitter, Transform};
 use crate::world::SceneWorld;
+use glam::{Vec3, Vec4};
 
 /// A single particle in the simulation.
 struct Particle {
@@ -53,7 +53,8 @@ impl ParticleSystem {
         }
 
         // Remove emitters for despawned entities
-        self.emitters.retain(|e| active_entities.contains(&e.owner_entity));
+        self.emitters
+            .retain(|e| active_entities.contains(&e.owner_entity));
     }
 
     /// Update all particles: spawn new, age existing, kill expired.
@@ -62,12 +63,16 @@ impl ParticleSystem {
 
         for emitter in &mut self.emitters {
             // Get owner position
-            let owner_pos = scene_world.world.get::<&Transform>(emitter.owner_entity)
+            let owner_pos = scene_world
+                .world
+                .get::<&Transform>(emitter.owner_entity)
                 .map(|t| t.position)
                 .unwrap_or(Vec3::ZERO);
 
             // Check if emitter is enabled
-            let enabled = scene_world.world.get::<&ParticleEmitter>(emitter.owner_entity)
+            let enabled = scene_world
+                .world
+                .get::<&ParticleEmitter>(emitter.owner_entity)
                 .map(|e| e.enabled)
                 .unwrap_or(false);
 
@@ -81,7 +86,9 @@ impl ParticleSystem {
                     if emitter.particles.len() >= emitter.config.max_particles as usize {
                         break;
                     }
-                    emitter.particles.push(spawn_particle(&emitter.config, owner_pos));
+                    emitter
+                        .particles
+                        .push(spawn_particle(&emitter.config, owner_pos));
                 }
             }
 
@@ -129,7 +136,9 @@ impl ParticleSystem {
             Some(e) => e,
             None => return,
         };
-        let owner_pos = scene_world.world.get::<&Transform>(entity)
+        let owner_pos = scene_world
+            .world
+            .get::<&Transform>(entity)
             .map(|t| t.position)
             .unwrap_or(Vec3::ZERO);
 
@@ -137,16 +146,24 @@ impl ParticleSystem {
             if emitter.particles.len() >= emitter.config.max_particles as usize {
                 break;
             }
-            emitter.particles.push(spawn_particle(&emitter.config, owner_pos));
+            emitter
+                .particles
+                .push(spawn_particle(&emitter.config, owner_pos));
         }
     }
 
     /// Collect all live particle data for rendering (position, size, color).
     /// Returns a flat Vec of billboard vertex data.
-    pub fn collect_billboard_data(&self, camera_right: Vec3, camera_up: Vec3) -> Vec<ParticleBillboardVertex> {
+    pub fn collect_billboard_data(
+        &self,
+        camera_right: Vec3,
+        camera_up: Vec3,
+    ) -> Vec<ParticleBillboardVertex> {
         let mut vertices = Vec::new();
 
-        let all_particles = self.emitters.iter()
+        let all_particles = self
+            .emitters
+            .iter()
             .flat_map(|e| e.particles.iter())
             .chain(self.orphan_particles.iter());
 
@@ -156,16 +173,39 @@ impl ParticleSystem {
             let up = camera_up * half;
 
             let p = particle.position;
-            let color = [particle.color.x, particle.color.y, particle.color.z, particle.color.w];
+            let color = [
+                particle.color.x,
+                particle.color.y,
+                particle.color.z,
+                particle.color.w,
+            ];
 
             // Quad: two triangles
-            vertices.push(ParticleBillboardVertex { position: (p - right - up).to_array(), color });
-            vertices.push(ParticleBillboardVertex { position: (p + right - up).to_array(), color });
-            vertices.push(ParticleBillboardVertex { position: (p + right + up).to_array(), color });
+            vertices.push(ParticleBillboardVertex {
+                position: (p - right - up).to_array(),
+                color,
+            });
+            vertices.push(ParticleBillboardVertex {
+                position: (p + right - up).to_array(),
+                color,
+            });
+            vertices.push(ParticleBillboardVertex {
+                position: (p + right + up).to_array(),
+                color,
+            });
 
-            vertices.push(ParticleBillboardVertex { position: (p - right - up).to_array(), color });
-            vertices.push(ParticleBillboardVertex { position: (p + right + up).to_array(), color });
-            vertices.push(ParticleBillboardVertex { position: (p - right + up).to_array(), color });
+            vertices.push(ParticleBillboardVertex {
+                position: (p - right - up).to_array(),
+                color,
+            });
+            vertices.push(ParticleBillboardVertex {
+                position: (p + right + up).to_array(),
+                color,
+            });
+            vertices.push(ParticleBillboardVertex {
+                position: (p - right + up).to_array(),
+                color,
+            });
         }
 
         vertices
@@ -173,7 +213,10 @@ impl ParticleSystem {
 
     /// Get total live particle count (for diagnostics).
     pub fn particle_count(&self) -> usize {
-        self.emitters.iter().map(|e| e.particles.len()).sum::<usize>()
+        self.emitters
+            .iter()
+            .map(|e| e.particles.len())
+            .sum::<usize>()
             + self.orphan_particles.len()
     }
 }
@@ -211,13 +254,16 @@ fn spawn_particle(config: &ParticleConfig, origin: Vec3) -> Particle {
     let rand01 = || -> f32 {
         // Use a simple pseudo-random based on incremented state
         static SEED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let s = SEED.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(hash);
+        let s = SEED
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .wrapping_add(hash);
         let s = s.wrapping_mul(2654435761); // Knuth's multiplicative hash
         (s as f32) / (u32::MAX as f32)
     };
 
     let lifetime = config.lifetime[0] + (config.lifetime[1] - config.lifetime[0]) * rand01();
-    let speed = config.initial_speed[0] + (config.initial_speed[1] - config.initial_speed[0]) * rand01();
+    let speed =
+        config.initial_speed[0] + (config.initial_speed[1] - config.initial_speed[0]) * rand01();
 
     // Random direction within cone
     let spread_rad = config.spread.to_radians();
@@ -225,11 +271,7 @@ fn spawn_particle(config: &ParticleConfig, origin: Vec3) -> Particle {
     let phi = rand01() * spread_rad;
     let sin_phi = phi.sin();
 
-    let local_dir = Vec3::new(
-        sin_phi * theta.cos(),
-        phi.cos(),
-        sin_phi * theta.sin(),
-    ).normalize();
+    let local_dir = Vec3::new(sin_phi * theta.cos(), phi.cos(), sin_phi * theta.sin()).normalize();
 
     // Rotate local_dir to align with config.direction
     let up = Vec3::Y;

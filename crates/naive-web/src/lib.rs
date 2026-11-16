@@ -27,7 +27,9 @@ pub fn version() -> String {
 #[wasm_bindgen]
 pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
-    let document = window.document().ok_or_else(|| JsValue::from_str("no document"))?;
+    let document = window
+        .document()
+        .ok_or_else(|| JsValue::from_str("no document"))?;
     let canvas = document
         .get_element_by_id(&canvas_id)
         .ok_or_else(|| JsValue::from_str("canvas not found"))?
@@ -71,7 +73,11 @@ pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
         .map_err(|e| JsValue::from_str(&format!("request_device: {e}")))?;
 
     let caps = surface.get_capabilities(&adapter);
-    let format = caps.formats.first().copied().unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
+    let format = caps
+        .formats
+        .first()
+        .copied()
+        .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format,
@@ -87,7 +93,9 @@ pub async fn run_clear_demo(canvas_id: String) -> Result<(), JsValue> {
     let frame = surface
         .get_current_texture()
         .map_err(|e| JsValue::from_str(&format!("get_current_texture: {e}")))?;
-    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let view = frame
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("naive-web clear encoder"),

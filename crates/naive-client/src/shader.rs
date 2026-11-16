@@ -108,12 +108,10 @@ fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
     })?;
     let search_paths_ptrs = [search_path_c.as_ptr(), modules_path_c.as_ptr()];
 
-    let target_desc = slang::TargetDesc::default()
-        .format(slang::CompileTarget::Wgsl);
+    let target_desc = slang::TargetDesc::default().format(slang::CompileTarget::Wgsl);
     let targets = [target_desc];
 
-    let options = slang::CompilerOptions::default()
-        .matrix_layout_column(true);
+    let options = slang::CompilerOptions::default().matrix_layout_column(true);
 
     let session_desc = slang::SessionDesc::default()
         .targets(&targets)
@@ -142,14 +140,9 @@ fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
         ShaderError::SlangCompilationFailed("Vertex entry point 'vs_main' not found".to_string())
     })?;
 
-    let fragment_entry =
-        module
-            .find_entry_point_by_name("fs_main")
-            .ok_or_else(|| {
-                ShaderError::SlangCompilationFailed(
-                    "Fragment entry point 'fs_main' not found".to_string(),
-                )
-            })?;
+    let fragment_entry = module.find_entry_point_by_name("fs_main").ok_or_else(|| {
+        ShaderError::SlangCompilationFailed("Fragment entry point 'fs_main' not found".to_string())
+    })?;
 
     use slang::Downcast;
 
@@ -172,11 +165,9 @@ fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
         ShaderError::SlangCompilationFailed(format!("Failed to get compiled code: {:?}", e))
     })?;
 
-    let wgsl = code.as_str()
-        .map(|s| s.to_string())
-        .map_err(|e| {
-            ShaderError::SlangCompilationFailed(format!("Invalid UTF-8 in WGSL output: {:?}", e))
-        })?;
+    let wgsl = code.as_str().map(|s| s.to_string()).map_err(|e| {
+        ShaderError::SlangCompilationFailed(format!("Invalid UTF-8 in WGSL output: {:?}", e))
+    })?;
 
     Ok(fixup_slang_wgsl(&wgsl))
 }
@@ -184,6 +175,7 @@ fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
 /// Fix known SLANG WGSL backend issues:
 /// 1. Depth textures emitted as `texture_2d<f32>` instead of `texture_depth_2d`
 /// 2. `textureLoad(depth_tex, ...).x` should be `textureLoad(depth_tex, ...)` (returns f32)
+#[cfg(feature = "slang")]
 fn fixup_slang_wgsl(wgsl: &str) -> String {
     let mut depth_texture_names: Vec<String> = Vec::new();
 
@@ -213,11 +205,11 @@ fn fixup_slang_wgsl(wgsl: &str) -> String {
                 let after_var = &line[var_pos + 4..];
                 if let Some(colon_pos) = after_var.find(" : ") {
                     let name = after_var[..colon_pos].trim().to_string();
-                    if (name.contains("depth")
-                        || name.contains("shadow"))
-                        && !depth_texture_names.contains(&name) {
-                            depth_texture_names.push(name);
-                        }
+                    if (name.contains("depth") || name.contains("shadow"))
+                        && !depth_texture_names.contains(&name)
+                    {
+                        depth_texture_names.push(name);
+                    }
                 }
             }
         }
@@ -427,8 +419,7 @@ pub fn compile_shader(
     let target_desc = slang::TargetDesc::default().format(slang::CompileTarget::Wgsl);
     let targets = [target_desc];
 
-    let options = slang::CompilerOptions::default()
-        .matrix_layout_column(true);
+    let options = slang::CompilerOptions::default().matrix_layout_column(true);
 
     let session_desc = slang::SessionDesc::default()
         .targets(&targets)
@@ -458,14 +449,12 @@ pub fn compile_shader(
     let mut components: Vec<slang::ComponentType> = vec![module.downcast().clone()];
 
     for (ep_name, _stage) in entry_points {
-        let entry = module
-            .find_entry_point_by_name(ep_name)
-            .ok_or_else(|| {
-                ShaderError::SlangCompilationFailed(format!(
-                    "Entry point '{}' not found in {}",
-                    ep_name, file_name
-                ))
-            })?;
+        let entry = module.find_entry_point_by_name(ep_name).ok_or_else(|| {
+            ShaderError::SlangCompilationFailed(format!(
+                "Entry point '{}' not found in {}",
+                ep_name, file_name
+            ))
+        })?;
         components.push(entry.downcast().clone());
     }
 
@@ -487,12 +476,9 @@ pub fn compile_shader(
         ShaderError::SlangCompilationFailed(format!("Failed to get compiled code: {:?}", e))
     })?;
 
-    let wgsl = code
-        .as_str()
-        .map(|s| s.to_string())
-        .map_err(|e| {
-            ShaderError::SlangCompilationFailed(format!("Invalid UTF-8 in WGSL output: {:?}", e))
-        })?;
+    let wgsl = code.as_str().map(|s| s.to_string()).map_err(|e| {
+        ShaderError::SlangCompilationFailed(format!("Invalid UTF-8 in WGSL output: {:?}", e))
+    })?;
 
     Ok((wgsl, reflection))
 }
@@ -510,10 +496,15 @@ pub fn compile_shader(
 }
 
 /// Attempt to compile the mesh forward shader, falling back to WGSL.
-pub fn compile_mesh_forward_shader(slang_path: Option<&std::path::Path>) -> Result<String, ShaderError> {
+pub fn compile_mesh_forward_shader(
+    slang_path: Option<&std::path::Path>,
+) -> Result<String, ShaderError> {
     if let Some(path) = slang_path {
         if !path.exists() {
-            tracing::warn!("Forward SLANG file not found: {:?}, using fallback WGSL", path);
+            tracing::warn!(
+                "Forward SLANG file not found: {:?}, using fallback WGSL",
+                path
+            );
             return Ok(get_mesh_forward_wgsl());
         }
 
@@ -523,7 +514,10 @@ pub fn compile_mesh_forward_shader(slang_path: Option<&std::path::Path>) -> Resu
                 return Ok(wgsl);
             }
             Err(e) => {
-                tracing::warn!("Forward SLANG compilation failed: {}, using fallback WGSL", e);
+                tracing::warn!(
+                    "Forward SLANG compilation failed: {}, using fallback WGSL",
+                    e
+                );
                 return Ok(get_mesh_forward_wgsl());
             }
         }
@@ -1646,12 +1640,18 @@ mod tests {
             ("gbuffer", get_gbuffer_wgsl()),
             ("deferred light", get_deferred_light_wgsl()),
             ("splat render", get_splat_render_wgsl()),
-            ("deferred light with splats", get_deferred_light_with_splats_wgsl()),
+            (
+                "deferred light with splats",
+                get_deferred_light_with_splats_wgsl(),
+            ),
             ("bloom", get_bloom_wgsl()),
             ("tonemap", get_tonemap_wgsl()),
             ("fxaa", get_fxaa_wgsl()),
             ("shadow depth", get_shadow_depth_wgsl()),
-            ("swarm compute", crate::swarm::SWARM_COMPUTE_WGSL.to_string()),
+            (
+                "swarm compute",
+                crate::swarm::SWARM_COMPUTE_WGSL.to_string(),
+            ),
         ];
         for (name, source) in &shaders {
             validate(name, source);
@@ -1666,7 +1666,10 @@ mod tests {
         let shaders = [
             ("gbuffer", get_gbuffer_wgsl()),
             ("shadow depth", get_shadow_depth_wgsl()),
-            ("swarm compute", crate::swarm::SWARM_COMPUTE_WGSL.to_string()),
+            (
+                "swarm compute",
+                crate::swarm::SWARM_COMPUTE_WGSL.to_string(),
+            ),
         ];
         for (name, source) in &shaders {
             let module = validate(name, source);
@@ -1674,7 +1677,9 @@ mod tests {
                 .types
                 .iter()
                 .find_map(|(_, ty)| match (&ty.name, &ty.inner) {
-                    (Some(n), naga::TypeInner::Struct { span, .. }) if n == "DrawUniforms" => Some(*span),
+                    (Some(n), naga::TypeInner::Struct { span, .. }) if n == "DrawUniforms" => {
+                        Some(*span)
+                    }
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("{name} has no DrawUniforms struct"));

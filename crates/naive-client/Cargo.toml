@@ -64,6 +64,7 @@ kira = { workspace = true }
 
 # Async / IPC
 tokio = { workspace = true }
+libc = "0.2"
 
 # HTTP client (for submit-log)
 ureq = { workspace = true }

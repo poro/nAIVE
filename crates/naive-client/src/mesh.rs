@@ -124,7 +124,11 @@ impl TextureResources {
         let white_pixel: [u8; 4] = [255, 255, 255, 255];
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("White 1x1 Fallback"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -134,12 +138,22 @@ impl TextureResources {
         });
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &texture, mip_level: 0,
-                origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
             &white_pixel,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) },
-            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
         );
         let view = texture.create_view(&Default::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -151,12 +165,21 @@ impl TextureResources {
             label: Some("Default White Texture BG"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
             ],
         });
 
-        Self { bind_group_layout, default_bind_group }
+        Self {
+            bind_group_layout,
+            default_bind_group,
+        }
     }
 }
 
@@ -168,24 +191,36 @@ fn create_texture_bind_group(
 ) -> wgpu::BindGroup {
     // Ensure RGBA8 format
     let (rgba_pixels, width, height) = match image_data.format {
-        gltf::image::Format::R8G8B8A8 => {
-            (image_data.pixels.clone(), image_data.width, image_data.height)
-        }
+        gltf::image::Format::R8G8B8A8 => (
+            image_data.pixels.clone(),
+            image_data.width,
+            image_data.height,
+        ),
         gltf::image::Format::R8G8B8 => {
-            let rgba: Vec<u8> = image_data.pixels.chunks(3)
+            let rgba: Vec<u8> = image_data
+                .pixels
+                .chunks(3)
                 .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
                 .collect();
             (rgba, image_data.width, image_data.height)
         }
         _ => {
             // Fallback: try to use as RGBA
-            (image_data.pixels.clone(), image_data.width, image_data.height)
+            (
+                image_data.pixels.clone(),
+                image_data.width,
+                image_data.height,
+            )
         }
     };
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("GLB Albedo Texture"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -196,8 +231,10 @@ fn create_texture_bind_group(
 
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
-            texture: &texture, mip_level: 0,
-            origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
         },
         &rgba_pixels,
         wgpu::TexelCopyBufferLayout {
@@ -205,7 +242,11 @@ fn create_texture_bind_group(
             bytes_per_row: Some(4 * width),
             rows_per_image: Some(height),
         },
-        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
     );
 
     let view = texture.create_view(&Default::default());
@@ -219,8 +260,14 @@ fn create_texture_bind_group(
         label: Some("GLB Albedo Texture BG"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
         ],
     })
 }
@@ -321,28 +368,39 @@ impl MeshCache {
 
         let j = [0u32, 0, 0, 0];
         let w = [1.0f32, 0.0, 0.0, 0.0];
-        let vertices: Vec<Vertex3D> = positions.iter().enumerate().map(|(i, pos)| {
-            Vertex3D {
+        let vertices: Vec<Vertex3D> = positions
+            .iter()
+            .enumerate()
+            .map(|(i, pos)| Vertex3D {
                 position: *pos,
                 normal: normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
                 tex_coords: uvs.get(i).copied().unwrap_or([0.0, 0.0]),
                 color: [1.0, 1.0, 1.0, 1.0],
                 joint_indices: j,
                 joint_weights: w,
-            }
-        }).collect();
+            })
+            .collect();
 
-        let gpu_mesh = build_procedural_gpu_mesh(device, &vertices, indices, &format!("Runtime: {}", name));
+        let gpu_mesh =
+            build_procedural_gpu_mesh(device, &vertices, indices, &format!("Runtime: {}", name));
         let handle = MeshHandle(self.meshes.len());
         self.meshes.push(gpu_mesh);
         self.path_to_handle.insert(key, handle);
-        tracing::info!("Created runtime mesh '{}': {} vertices, {} indices", name, positions.len(), indices.len());
+        tracing::info!(
+            "Created runtime mesh '{}': {} vertices, {} indices",
+            name,
+            positions.len(),
+            indices.len()
+        );
         handle
     }
 
     /// Check if a mesh has skin data.
     pub fn has_skin(&self, handle: MeshHandle) -> bool {
-        self.meshes.get(handle.0).map(|m| m.skin_data.is_some()).unwrap_or(false)
+        self.meshes
+            .get(handle.0)
+            .map(|m| m.skin_data.is_some())
+            .unwrap_or(false)
     }
 
     /// Take skin data from all meshes that have it (ownership transfer).
@@ -358,11 +416,16 @@ impl MeshCache {
     }
 
     /// Get physics trimesh data for a mesh handle (vertices scaled by transform scale).
-    pub fn get_physics_trimesh(&self, handle: MeshHandle, scale: glam::Vec3) -> Option<PhysicsTrimesh> {
+    pub fn get_physics_trimesh(
+        &self,
+        handle: MeshHandle,
+        scale: glam::Vec3,
+    ) -> Option<PhysicsTrimesh> {
         let mesh = self.meshes.get(handle.0)?;
         let verts = mesh.physics_vertices.as_ref()?;
         let idxs = mesh.physics_indices.as_ref()?;
-        let scaled_verts: Vec<rapier3d::na::Point3<f32>> = verts.iter()
+        let scaled_verts: Vec<rapier3d::na::Point3<f32>> = verts
+            .iter()
             .map(|v| rapier3d::na::Point3::new(v[0] * scale.x, v[1] * scale.y, v[2] * scale.z))
             .collect();
         Some((scaled_verts, idxs.clone()))
@@ -392,7 +455,8 @@ fn load_stl(
     project_root: &Path,
     mesh_path: &str,
 ) -> Result<GpuMesh, MeshError> {
-    let full_path = project_root.join(mesh_path);
+    let full_path =
+        crate::project_path::resolve(project_root, mesh_path).map_err(MeshError::IoError)?;
 
     if !full_path.exists() {
         tracing::warn!("STL file not found: {:?}, using procedural cube", full_path);
@@ -452,7 +516,9 @@ fn load_stl(
         });
     }
 
-    let indices: Vec<u32> = stl.faces.iter()
+    let indices: Vec<u32> = stl
+        .faces
+        .iter()
         .flat_map(|face| face.vertices.iter().map(|&vi| vi as u32))
         .collect();
 
@@ -465,11 +531,15 @@ fn load_stl(
     );
 
     let physics_vertices: Vec<[f32; 3]> = vertices.iter().map(|v| v.position).collect();
-    let physics_indices: Vec<[u32; 3]> = indices.chunks_exact(3)
+    let physics_indices: Vec<[u32; 3]> = indices
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2]])
         .collect();
 
-    let mut gpu_mesh = build_procedural_gpu_mesh(device, &vertices, &indices, &format!("STL: {}", mesh_path));
+    let mut gpu_mesh =
+        build_procedural_gpu_mesh(device, &vertices, &indices, &format!("STL: {}", mesh_path));
     gpu_mesh.physics_vertices = Some(physics_vertices);
     gpu_mesh.physics_indices = Some(physics_indices);
 
@@ -486,7 +556,8 @@ fn load_gltf(
     mesh_path: &str,
     texture_resources: Option<&TextureResources>,
 ) -> Result<GpuMesh, MeshError> {
-    let full_path = project_root.join(mesh_path);
+    let full_path =
+        crate::project_path::resolve(project_root, mesh_path).map_err(MeshError::IoError)?;
 
     // If the file doesn't exist, generate a procedural cube
     if !full_path.exists() {
@@ -497,6 +568,8 @@ fn load_gltf(
         return Ok(create_procedural_cube(device));
     }
 
+    crate::project_path::validate_gltf_resources(project_root, &full_path)
+        .map_err(MeshError::IoError)?;
     let (document, buffers, images) = gltf::import(&full_path)?;
 
     let mut all_vertices: Vec<Vertex3D> = Vec::new();
@@ -546,7 +619,11 @@ fn load_gltf(
         let mut texture_image_index: Option<usize> = None;
         'outer: for mesh in document.meshes() {
             for prim in mesh.primitives() {
-                if let Some(info) = prim.material().pbr_metallic_roughness().base_color_texture() {
+                if let Some(info) = prim
+                    .material()
+                    .pbr_metallic_roughness()
+                    .base_color_texture()
+                {
                     texture_image_index = Some(info.texture().source().index());
                     break 'outer;
                 }
@@ -554,8 +631,18 @@ fn load_gltf(
         }
         if let Some(idx) = texture_image_index {
             if idx < images.len() {
-                tracing::info!("GLB '{}': loading albedo texture ({}x{})", mesh_path, images[idx].width, images[idx].height);
-                Some(create_texture_bind_group(device, queue, &images[idx], &tex_res.bind_group_layout))
+                tracing::info!(
+                    "GLB '{}': loading albedo texture ({}x{})",
+                    mesh_path,
+                    images[idx].width,
+                    images[idx].height
+                );
+                Some(create_texture_bind_group(
+                    device,
+                    queue,
+                    &images[idx],
+                    &tex_res.bind_group_layout,
+                ))
             } else {
                 None
             }
@@ -571,7 +658,10 @@ fn load_gltf(
 
     // Keep CPU-side data for physics trimesh colliders
     let physics_vertices: Vec<[f32; 3]> = all_vertices.iter().map(|v| v.position).collect();
-    let physics_indices: Vec<[u32; 3]> = all_indices.chunks_exact(3)
+    let physics_indices: Vec<[u32; 3]> = all_indices
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2]])
         .collect();
 
@@ -801,23 +891,28 @@ fn collect_node_meshes(
                 (0..positions.len() as u32).collect()
             };
 
-            let normals: Vec<[f32; 3]> = reader
-                .read_normals()
-                .map(|n| n.collect())
-                .unwrap_or_else(|| {
-                    if !prim_indices.is_empty() {
-                        generate_smooth_normals(&positions, &prim_indices)
-                    } else {
-                        generate_flat_normals(&positions)
-                    }
-                });
+            let normals: Vec<[f32; 3]> =
+                reader
+                    .read_normals()
+                    .map(|n| n.collect())
+                    .unwrap_or_else(|| {
+                        if !prim_indices.is_empty() {
+                            generate_smooth_normals(&positions, &prim_indices)
+                        } else {
+                            generate_flat_normals(&positions)
+                        }
+                    });
 
             let base_vertex = vertices.len() as u32;
 
             // Read joint indices and weights for skinned meshes
             let joints: Vec<[u32; 4]> = reader
                 .read_joints(0)
-                .map(|j| j.into_u16().map(|v| [v[0] as u32, v[1] as u32, v[2] as u32, v[3] as u32]).collect())
+                .map(|j| {
+                    j.into_u16()
+                        .map(|v| [v[0] as u32, v[1] as u32, v[2] as u32, v[3] as u32])
+                        .collect()
+                })
                 .unwrap_or_else(|| vec![[0, 0, 0, 0]; positions.len()]);
 
             let weights: Vec<[f32; 4]> = reader
@@ -836,9 +931,7 @@ fn collect_node_meshes(
                 let (p, n) = if has_joints {
                     // Skinned: store local-space positions (skeleton transforms at runtime)
                     let local_p = local.transform_point3(glam::Vec3::from(*pos));
-                    let local_n = glam::Mat3::from_mat4(local)
-                        .inverse()
-                        .transpose()
+                    let local_n = glam::Mat3::from_mat4(local).inverse().transpose()
                         * glam::Vec3::from(normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]));
                     (local_p, local_n)
                 } else {
@@ -877,7 +970,7 @@ fn generate_smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32;
     let mut normals = vec![glam::Vec3::ZERO; positions.len()];
 
     // Accumulate face normals at each vertex
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let i0 = tri[0] as usize;
         let i1 = tri[1] as usize;
         let i2 = tri[2] as usize;
@@ -926,7 +1019,12 @@ fn generate_flat_normals(positions: &[[f32; 3]]) -> Vec<[f32; 3]> {
 }
 
 /// Create a procedural UV sphere.
-fn create_procedural_sphere(device: &wgpu::Device, radius: f32, rings: u32, sectors: u32) -> GpuMesh {
+fn create_procedural_sphere(
+    device: &wgpu::Device,
+    radius: f32,
+    rings: u32,
+    sectors: u32,
+) -> GpuMesh {
     let (vertices, indices) = sphere_geometry(radius, rings, sectors);
     build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Sphere")
 }
@@ -1038,7 +1136,12 @@ fn cube_geometry() -> (Vec<Vertex3D>, Vec<u32>) {
 }
 
 /// Create a procedural XZ plane centered at the origin.
-fn create_procedural_plane(device: &wgpu::Device, width: f32, depth: f32, subdivisions: u32) -> GpuMesh {
+fn create_procedural_plane(
+    device: &wgpu::Device,
+    width: f32,
+    depth: f32,
+    subdivisions: u32,
+) -> GpuMesh {
     let (vertices, indices) = plane_geometry(width, depth, subdivisions);
     build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Plane")
 }
@@ -1082,7 +1185,12 @@ fn plane_geometry(width: f32, depth: f32, subdivisions: u32) -> (Vec<Vertex3D>, 
 }
 
 /// Create a procedural Y-axis aligned cylinder with caps.
-fn create_procedural_cylinder(device: &wgpu::Device, radius: f32, height: f32, segments: u32) -> GpuMesh {
+fn create_procedural_cylinder(
+    device: &wgpu::Device,
+    radius: f32,
+    height: f32,
+    segments: u32,
+) -> GpuMesh {
     let (vertices, indices) = cylinder_geometry(radius, height, segments);
     build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Cylinder")
 }
@@ -1107,7 +1215,8 @@ fn cylinder_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>,
             normal: [cos_a, 0.0, sin_a],
             tex_coords: [u, 1.0],
             color: [1.0, 1.0, 1.0, 1.0],
-            joint_indices: j, joint_weights: w,
+            joint_indices: j,
+            joint_weights: w,
         });
         // Top ring
         vertices.push(Vertex3D {
@@ -1115,7 +1224,8 @@ fn cylinder_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>,
             normal: [cos_a, 0.0, sin_a],
             tex_coords: [u, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
-            joint_indices: j, joint_weights: w,
+            joint_indices: j,
+            joint_weights: w,
         });
     }
 
@@ -1131,17 +1241,23 @@ fn cylinder_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>,
     // Top cap
     let top_center = vertices.len() as u32;
     vertices.push(Vertex3D {
-        position: [0.0, half_h, 0.0], normal: [0.0, 1.0, 0.0],
-        tex_coords: [0.5, 0.5], color: [1.0, 1.0, 1.0, 1.0],
-        joint_indices: j, joint_weights: w,
+        position: [0.0, half_h, 0.0],
+        normal: [0.0, 1.0, 0.0],
+        tex_coords: [0.5, 0.5],
+        color: [1.0, 1.0, 1.0, 1.0],
+        joint_indices: j,
+        joint_weights: w,
     });
     for i in 0..=segments {
         let angle = 2.0 * std::f32::consts::PI * i as f32 / segments as f32;
         let (sin_a, cos_a) = (angle.sin(), angle.cos());
         vertices.push(Vertex3D {
-            position: [radius * cos_a, half_h, radius * sin_a], normal: [0.0, 1.0, 0.0],
+            position: [radius * cos_a, half_h, radius * sin_a],
+            normal: [0.0, 1.0, 0.0],
             tex_coords: [0.5 + 0.5 * cos_a, 0.5 + 0.5 * sin_a],
-            color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w,
+            color: [1.0, 1.0, 1.0, 1.0],
+            joint_indices: j,
+            joint_weights: w,
         });
     }
     for i in 0..segments {
@@ -1151,17 +1267,23 @@ fn cylinder_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>,
     // Bottom cap
     let bot_center = vertices.len() as u32;
     vertices.push(Vertex3D {
-        position: [0.0, -half_h, 0.0], normal: [0.0, -1.0, 0.0],
-        tex_coords: [0.5, 0.5], color: [1.0, 1.0, 1.0, 1.0],
-        joint_indices: j, joint_weights: w,
+        position: [0.0, -half_h, 0.0],
+        normal: [0.0, -1.0, 0.0],
+        tex_coords: [0.5, 0.5],
+        color: [1.0, 1.0, 1.0, 1.0],
+        joint_indices: j,
+        joint_weights: w,
     });
     for i in 0..=segments {
         let angle = 2.0 * std::f32::consts::PI * i as f32 / segments as f32;
         let (sin_a, cos_a) = (angle.sin(), angle.cos());
         vertices.push(Vertex3D {
-            position: [radius * cos_a, -half_h, radius * sin_a], normal: [0.0, -1.0, 0.0],
+            position: [radius * cos_a, -half_h, radius * sin_a],
+            normal: [0.0, -1.0, 0.0],
             tex_coords: [0.5 + 0.5 * cos_a, 0.5 - 0.5 * sin_a],
-            color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w,
+            color: [1.0, 1.0, 1.0, 1.0],
+            joint_indices: j,
+            joint_weights: w,
         });
     }
     for i in 0..segments {
@@ -1172,7 +1294,12 @@ fn cylinder_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>,
 }
 
 /// Create a procedural Y-axis cone with a base cap.
-fn create_procedural_cone(device: &wgpu::Device, radius: f32, height: f32, segments: u32) -> GpuMesh {
+fn create_procedural_cone(
+    device: &wgpu::Device,
+    radius: f32,
+    height: f32,
+    segments: u32,
+) -> GpuMesh {
     let (vertices, indices) = cone_geometry(radius, height, segments);
     build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Cone")
 }
@@ -1189,9 +1316,12 @@ fn cone_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>, Vec
     // Tip vertex
     let tip_idx = 0u32;
     vertices.push(Vertex3D {
-        position: [0.0, half_h, 0.0], normal: [0.0, 1.0, 0.0],
-        tex_coords: [0.5, 0.0], color: [1.0, 1.0, 1.0, 1.0],
-        joint_indices: j, joint_weights: w,
+        position: [0.0, half_h, 0.0],
+        normal: [0.0, 1.0, 0.0],
+        tex_coords: [0.5, 0.0],
+        color: [1.0, 1.0, 1.0, 1.0],
+        joint_indices: j,
+        joint_weights: w,
     });
 
     // Base ring vertices for sides
@@ -1204,7 +1334,9 @@ fn cone_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>, Vec
             position: [radius * cos_a, -half_h, radius * sin_a],
             normal: [cos_a / len, ny / len, sin_a / len],
             tex_coords: [i as f32 / segments as f32, 1.0],
-            color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w,
+            color: [1.0, 1.0, 1.0, 1.0],
+            joint_indices: j,
+            joint_weights: w,
         });
     }
 
@@ -1216,17 +1348,23 @@ fn cone_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>, Vec
     // Base cap
     let bot_center = vertices.len() as u32;
     vertices.push(Vertex3D {
-        position: [0.0, -half_h, 0.0], normal: [0.0, -1.0, 0.0],
-        tex_coords: [0.5, 0.5], color: [1.0, 1.0, 1.0, 1.0],
-        joint_indices: j, joint_weights: w,
+        position: [0.0, -half_h, 0.0],
+        normal: [0.0, -1.0, 0.0],
+        tex_coords: [0.5, 0.5],
+        color: [1.0, 1.0, 1.0, 1.0],
+        joint_indices: j,
+        joint_weights: w,
     });
     for i in 0..=segments {
         let angle = 2.0 * std::f32::consts::PI * i as f32 / segments as f32;
         let (sin_a, cos_a) = (angle.sin(), angle.cos());
         vertices.push(Vertex3D {
-            position: [radius * cos_a, -half_h, radius * sin_a], normal: [0.0, -1.0, 0.0],
+            position: [radius * cos_a, -half_h, radius * sin_a],
+            normal: [0.0, -1.0, 0.0],
             tex_coords: [0.5 + 0.5 * cos_a, 0.5 - 0.5 * sin_a],
-            color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w,
+            color: [1.0, 1.0, 1.0, 1.0],
+            joint_indices: j,
+            joint_weights: w,
         });
     }
     for i in 0..segments {
@@ -1277,9 +1415,13 @@ fn torus_geometry(
             vertices.push(Vertex3D {
                 position: [x, y, z],
                 normal: [cos_p * cos_t, sin_p, cos_p * sin_t],
-                tex_coords: [i as f32 / major_segments as f32, k as f32 / minor_segments as f32],
+                tex_coords: [
+                    i as f32 / major_segments as f32,
+                    k as f32 / minor_segments as f32,
+                ],
                 color: [1.0, 1.0, 1.0, 1.0],
-                joint_indices: j, joint_weights: w,
+                joint_indices: j,
+                joint_weights: w,
             });
         }
     }
@@ -1338,7 +1480,7 @@ mod tests {
     /// point to. One wound the other way is culled from outside and drawn
     /// from inside, where its normals face away from the light.
     fn assert_wound_outward(shape: &str, (vertices, indices): (Vec<Vertex3D>, Vec<u32>)) {
-        for tri in indices.chunks_exact(3) {
+        for tri in indices.as_chunks::<3>().0 {
             let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| &vertices[i as usize]);
             let (pa, pb, pc) = (
                 Vec3::from(a.position),

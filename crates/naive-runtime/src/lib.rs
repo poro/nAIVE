@@ -40,7 +40,11 @@ pub fn run() {
                         }
                     };
                     tracing::info!("Loaded project: {} v{}", config.name, config.version);
-                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root, &args.socket);
+                    let mut cli_args = naive_client::project_config::to_cli_args(
+                        &config,
+                        project_root,
+                        &args.socket,
+                    );
                     // CLI scene override takes priority
                     if scene.is_some() {
                         cli_args.scene = scene.clone();
@@ -59,59 +63,62 @@ pub fn run() {
         }
 
         // naive test [test_file]
-        Some(naive_client::cli::Command::Test { test_file }) => {
-            match test_file {
-                Some(file) => {
-                    let cwd = std::env::current_dir().expect("Failed to get current directory");
-                    let project_root = match naive_client::project_config::find_config(&cwd) {
-                        Some(config_path) => config_path.parent().unwrap().to_path_buf(),
-                        None => std::path::PathBuf::from(&args.project),
-                    };
-                    let test_path = project_root.join(file);
-                    run_single_test(&project_root, &test_path);
-                }
-                None => {
-                    let cwd = std::env::current_dir().expect("Failed to get current directory");
-                    let config_path = match naive_client::project_config::find_config(&cwd) {
-                        Some(p) => p,
-                        None => {
-                            eprintln!("Error: No naive.yaml found. Specify a test file or run from a project directory.");
-                            std::process::exit(1);
-                        }
-                    };
-                    let project_root = config_path.parent().unwrap();
-                    let config = match naive_client::project_config::load_config(&config_path) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            eprintln!("Error: {}", e);
-                            std::process::exit(1);
-                        }
-                    };
-                    let test_files = naive_client::project_config::discover_test_files(&config, project_root);
-                    if test_files.is_empty() {
-                        println!("No test files found.");
-                        return;
-                    }
-                    println!("Running {} test file(s)...\n", test_files.len());
-                    let mut total_passed = 0;
-                    let mut total_failed = 0;
-                    for test_path in &test_files {
-                        println!("--- {} ---", test_path.display());
-                        let results = naive_client::test_runner::run_test_file(project_root, test_path);
-                        let passed = results.iter().filter(|r| r.passed).count();
-                        let failed = results.len() - passed;
-                        total_passed += passed;
-                        total_failed += failed;
-                        println!();
-                    }
-                    println!("{} passed, {} failed across {} files.",
-                        total_passed, total_failed, test_files.len());
-                    if total_failed > 0 {
+        Some(naive_client::cli::Command::Test { test_file }) => match test_file {
+            Some(file) => {
+                let cwd = std::env::current_dir().expect("Failed to get current directory");
+                let project_root = match naive_client::project_config::find_config(&cwd) {
+                    Some(config_path) => config_path.parent().unwrap().to_path_buf(),
+                    None => std::path::PathBuf::from(&args.project),
+                };
+                let test_path = project_root.join(file);
+                run_single_test(&project_root, &test_path);
+            }
+            None => {
+                let cwd = std::env::current_dir().expect("Failed to get current directory");
+                let config_path = match naive_client::project_config::find_config(&cwd) {
+                    Some(p) => p,
+                    None => {
+                        eprintln!("Error: No naive.yaml found. Specify a test file or run from a project directory.");
                         std::process::exit(1);
                     }
+                };
+                let project_root = config_path.parent().unwrap();
+                let config = match naive_client::project_config::load_config(&config_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                let test_files =
+                    naive_client::project_config::discover_test_files(&config, project_root);
+                if test_files.is_empty() {
+                    println!("No test files found.");
+                    return;
+                }
+                println!("Running {} test file(s)...\n", test_files.len());
+                let mut total_passed = 0;
+                let mut total_failed = 0;
+                for test_path in &test_files {
+                    println!("--- {} ---", test_path.display());
+                    let results = naive_client::test_runner::run_test_file(project_root, test_path);
+                    let passed = results.iter().filter(|r| r.passed).count();
+                    let failed = results.len() - passed;
+                    total_passed += passed;
+                    total_failed += failed;
+                    println!();
+                }
+                println!(
+                    "{} passed, {} failed across {} files.",
+                    total_passed,
+                    total_failed,
+                    test_files.len()
+                );
+                if total_failed > 0 {
+                    std::process::exit(1);
                 }
             }
-        }
+        },
 
         // naive build [--target X]
         Some(naive_client::cli::Command::Build { target }) => {
@@ -131,7 +138,9 @@ pub fn run() {
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = naive_client::build::bundle_project(&config, project_root, target.as_deref()) {
+            if let Err(e) =
+                naive_client::build::bundle_project(&config, project_root, target.as_deref())
+            {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
@@ -198,7 +207,11 @@ pub fn run() {
                         }
                     };
                     tracing::info!("Loaded project: {} v{}", config.name, config.version);
-                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root, &args.socket);
+                    let mut cli_args = naive_client::project_config::to_cli_args(
+                        &config,
+                        project_root,
+                        &args.socket,
+                    );
                     // In edit mode, only use --scene flag, not project default_scene.
                     // A blank canvas is the default when no --scene is given.
                     cli_args.scene = scene.clone();
@@ -216,7 +229,12 @@ pub fn run() {
         }
 
         // naive beautify [--scene X] [--style Y] [--output Z] [--mock P]
-        Some(naive_client::cli::Command::Beautify { scene, style, output, mock }) => {
+        Some(naive_client::cli::Command::Beautify {
+            scene,
+            style,
+            output,
+            mock,
+        }) => {
             let cwd = std::env::current_dir().expect("Failed to get current directory");
             let project_root = naive_client::project_config::find_config(&cwd)
                 .and_then(|p| p.parent().map(|pp| pp.to_path_buf()))
@@ -255,17 +273,22 @@ pub fn run() {
             let scene_yaml = match std::fs::read_to_string(&full_scene_path) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("Failed to read scene '{}': {}", full_scene_path.display(), e);
+                    eprintln!(
+                        "Failed to read scene '{}': {}",
+                        full_scene_path.display(),
+                        e
+                    );
                     return;
                 }
             };
-            let scene: naive_client::scene::SceneFile = match naive_client::scene::parse_scene(&scene_yaml) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Failed to parse scene: {}", e);
-                    return;
-                }
-            };
+            let scene: naive_client::scene::SceneFile =
+                match naive_client::scene::parse_scene(&scene_yaml) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Failed to parse scene: {}", e);
+                        return;
+                    }
+                };
 
             // Build config
             let mut config = naive_client::beautify::config_from_env();
@@ -282,7 +305,10 @@ pub fn run() {
             }
 
             println!("Beautifying scene: {}", scene_path);
-            println!("Style: {}", config.style_prompt.as_deref().unwrap_or("photorealistic"));
+            println!(
+                "Style: {}",
+                config.style_prompt.as_deref().unwrap_or("photorealistic")
+            );
             println!("Output: {}", config.output_ply);
 
             match naive_client::beautify::beautify_scene(&project_root, &scene, &config) {
@@ -331,7 +357,11 @@ pub fn run() {
                         }
                     };
                     tracing::info!("Auto-detected project: {} v{}", config.name, config.version);
-                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root, &args.socket);
+                    let mut cli_args = naive_client::project_config::to_cli_args(
+                        &config,
+                        project_root,
+                        &args.socket,
+                    );
                     cli_args.hud = args.hud;
                     run_engine(cli_args);
                     return;
@@ -367,13 +397,10 @@ fn run_single_test(project_root: &std::path::Path, test_path: &std::path::Path) 
 }
 
 fn run_engine(args: CliArgs) {
-    let event_loop =
-        winit::event_loop::EventLoop::new().expect("Failed to create event loop");
+    let event_loop = winit::event_loop::EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
     let mut engine = naive_client::engine::Engine::new(args);
 
-    event_loop
-        .run_app(&mut engine)
-        .expect("Event loop error");
+    event_loop.run_app(&mut engine).expect("Event loop error");
 }

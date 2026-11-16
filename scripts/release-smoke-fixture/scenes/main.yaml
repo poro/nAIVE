@@ -1,0 +1,46 @@
+name: Release smoke
+settings:
+  ambient_light: [0.3, 0.3, 0.35]
+entities:
+  - id: main_camera
+    components:
+      transform:
+        position: [0, 3, 8]
+        rotation: [-15, 0, 0]
+      camera:
+        fov: 60
+        near: 0.1
+        far: 100
+        role: main
+  - id: sun
+    components:
+      transform:
+        position: [3, 6, 5]
+      point_light:
+        color: [1, 0.95, 0.9]
+        intensity: 40
+        range: 100
+  - id: smoke_cube
+    components:
+      transform:
+        position: [0, 1, 0]
+      mesh_renderer:
+        mesh: procedural:cube
+        material: procedural:default
+      script:
+        source: logic/main.lua
+  - id: smoke_sphere
+    components:
+      transform:
+        position: [2, 1, 0]
+      mesh_renderer:
+        mesh: procedural:sphere
+        material: procedural:default
+  - id: floor
+    components:
+      transform:
+        position: [0, -0.1, 0]
+        scale: [12, 0.1, 12]
+      mesh_renderer:
+        mesh: procedural:cube
+        material: procedural:default

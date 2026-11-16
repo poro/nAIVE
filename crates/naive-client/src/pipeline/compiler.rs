@@ -9,8 +9,7 @@ use crate::renderer::DrawUniformPool;
 
 use super::def::{PipelineError, PipelineFile};
 use super::resource::{
-    allocate_resources, GpuResource, LightingUniforms, PassType,
-    ShadowUniforms,
+    allocate_resources, GpuResource, LightingUniforms, PassType, ShadowUniforms,
 };
 use super::{CompiledPass, CompiledPipeline};
 
@@ -35,7 +34,12 @@ pub fn compile_pipeline(
     let pass_order = super::def::build_dag(&pipeline_file.passes)?;
 
     // 2. Allocate GPU resources
-    let resources = allocate_resources(device, &pipeline_file.resources, viewport_width, viewport_height)?;
+    let resources = allocate_resources(
+        device,
+        &pipeline_file.resources,
+        viewport_width,
+        viewport_height,
+    )?;
 
     // 3. Create light uniform buffer
     let light_uniform = LightingUniforms::default();
@@ -57,7 +61,11 @@ pub fn compile_pipeline(
     // Create a 1x1 dummy depth texture for when shadow_map is not present
     let shadow_dummy_tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Dummy Shadow Map"),
-        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -66,7 +74,8 @@ pub fn compile_pipeline(
         view_formats: &[],
     });
     let shadow_dummy_view = shadow_dummy_tex.create_view(&Default::default());
-    let shadow_map_view = resources.get("shadow_map")
+    let shadow_map_view = resources
+        .get("shadow_map")
         .map(|r| &r.view)
         .unwrap_or(&shadow_dummy_view);
 
@@ -138,19 +147,20 @@ pub fn compile_pipeline(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let skin_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Skin Bind Group Layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-    });
+    let skin_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Skin Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
     let skin_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Skin Bind Group"),
         layout: &skin_bind_group_layout,
@@ -212,24 +222,23 @@ pub fn compile_pipeline(
         color_targets = output_pairs.iter().map(|(_, v)| v.to_string()).collect();
 
         // Compile the shader (try SLANG first, then fallback)
-        let shader_path = project_root.join(&pass_def.shader);
+        let shader_path = crate::project_path::resolve(project_root, &pass_def.shader)
+            .map_err(PipelineError::ShaderError)?;
         let wgsl_source = compile_pass_shader(&shader_path, &pass_def.name, pass_type)?;
 
         // Create the render pipeline for this pass
         let pipeline = match pass_type {
-            PassType::Rasterize => {
-                create_rasterize_pipeline(
-                    device,
-                    &wgsl_source,
-                    &color_targets,
-                    depth_target.as_deref(),
-                    &resources,
-                    &camera_state.bind_group_layout,
-                    &draw_pool.storage_bind_group_layout,
-                    texture_bind_group_layout,
-                    Some(&skin_bind_group_layout),
-                )
-            }
+            PassType::Rasterize => create_rasterize_pipeline(
+                device,
+                &wgsl_source,
+                &color_targets,
+                depth_target.as_deref(),
+                &resources,
+                &camera_state.bind_group_layout,
+                &draw_pool.storage_bind_group_layout,
+                texture_bind_group_layout,
+                Some(&skin_bind_group_layout),
+            ),
             PassType::Fullscreen => {
                 if pass_def.name.contains("tonemap") {
                     // Tonemap pass: outputs to ldr_buffer (rgba8) if it exists, else swapchain
@@ -250,12 +259,8 @@ pub fn compile_pipeline(
                     pipeline
                 } else if pass_def.name.contains("fxaa") {
                     // FXAA pass: reads LDR buffer, writes to swapchain
-                    let (layout, bg, pipeline) = create_fxaa_pipeline(
-                        device,
-                        &wgsl_source,
-                        &resources,
-                        surface_format,
-                    );
+                    let (layout, bg, pipeline) =
+                        create_fxaa_pipeline(device, &wgsl_source, &resources, surface_format);
                     fxaa_bind_group_layout = Some(layout);
                     fxaa_bind_group = Some(bg);
                     pipeline
@@ -338,8 +343,8 @@ pub fn compile_pipeline(
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });
 
-                let shadow_bg_layout = device.create_bind_group_layout(
-                    &wgpu::BindGroupLayoutDescriptor {
+                let shadow_bg_layout =
+                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                         label: Some("Shadow Pass Bind Group Layout"),
                         entries: &[wgpu::BindGroupLayoutEntry {
                             binding: 0,
@@ -351,8 +356,7 @@ pub fn compile_pipeline(
                             },
                             count: None,
                         }],
-                    },
-                );
+                    });
 
                 let shadow_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("Shadow Pass Bind Group"),
@@ -503,7 +507,8 @@ fn create_rasterize_pipeline(
         source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
     });
 
-    let mut layouts: Vec<&wgpu::BindGroupLayout> = vec![camera_bind_group_layout, draw_bind_group_layout];
+    let mut layouts: Vec<&wgpu::BindGroupLayout> =
+        vec![camera_bind_group_layout, draw_bind_group_layout];
     if let Some(tex_layout) = texture_bind_group_layout {
         layouts.push(tex_layout);
     }
@@ -533,7 +538,9 @@ fn create_rasterize_pipeline(
         })
         .collect();
 
-    let depth_format = depth_target.and_then(|name| resources.get(name)).map(|r| r.format);
+    let depth_format = depth_target
+        .and_then(|name| resources.get(name))
+        .map(|r| r.format);
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("GBuffer Render Pipeline"),
@@ -648,7 +655,9 @@ fn create_splat_pipeline(
         })
         .collect();
 
-    let depth_format = depth_target.and_then(|name| resources.get(name)).map(|r| r.format);
+    let depth_format = depth_target
+        .and_then(|name| resources.get(name))
+        .map(|r| r.format);
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Gaussian Splat Pipeline"),
@@ -925,9 +934,18 @@ fn create_lighting_pipeline_with_splats(
         ],
     });
 
-    let albedo_view = &resources.get("gbuffer_albedo").expect("gbuffer_albedo missing").view;
-    let normal_view = &resources.get("gbuffer_normal").expect("gbuffer_normal missing").view;
-    let gbuffer_depth_view = &resources.get("gbuffer_depth").expect("gbuffer_depth missing").view;
+    let albedo_view = &resources
+        .get("gbuffer_albedo")
+        .expect("gbuffer_albedo missing")
+        .view;
+    let normal_view = &resources
+        .get("gbuffer_normal")
+        .expect("gbuffer_normal missing")
+        .view;
+    let gbuffer_depth_view = &resources
+        .get("gbuffer_depth")
+        .expect("gbuffer_depth missing")
+        .view;
     let emission_view = resources
         .get("gbuffer_emission")
         .map(|r| &r.view)
@@ -961,34 +979,41 @@ fn create_lighting_pipeline_with_splats(
     });
 
     // Group 3: splat composite textures (splat_color + splat_depth)
-    let splat_composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Splat Composite Layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+    let splat_composite_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Splat Composite Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-        ],
-    });
+            ],
+        });
 
-    let splat_color_view = &resources.get("splat_color").expect("splat_color missing").view;
-    let splat_depth_view = &resources.get("splat_depth").expect("splat_depth missing").view;
+    let splat_color_view = &resources
+        .get("splat_color")
+        .expect("splat_color missing")
+        .view;
+    let splat_depth_view = &resources
+        .get("splat_depth")
+        .expect("splat_depth missing")
+        .view;
 
     let splat_composite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Splat Composite Bind Group"),
@@ -1405,7 +1430,11 @@ fn create_shadow_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Shadow Pipeline Layout"),
-        bind_group_layouts: &[shadow_bind_group_layout, draw_bind_group_layout, skin_bind_group_layout],
+        bind_group_layouts: &[
+            shadow_bind_group_layout,
+            draw_bind_group_layout,
+            skin_bind_group_layout,
+        ],
         push_constant_ranges: &[],
     });
 

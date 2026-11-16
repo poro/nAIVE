@@ -135,11 +135,7 @@ impl AnimationChannel {
         }
 
         let duration = *self.timestamps.last().unwrap();
-        let t = if duration > 0.0 {
-            time % duration
-        } else {
-            0.0
-        };
+        let t = if duration > 0.0 { time % duration } else { 0.0 };
 
         // Find the two keyframes to interpolate between
         let (i0, i1, factor) = self.find_keyframes(t);
@@ -189,9 +185,7 @@ impl AnimationChannel {
     fn interpolate_quat(&self, vals: &[Quat], i0: usize, i1: usize, factor: f32) -> Quat {
         match self.interpolation {
             Interpolation::Step => vals[i0],
-            Interpolation::Linear | Interpolation::CubicSpline => {
-                vals[i0].slerp(vals[i1], factor)
-            }
+            Interpolation::Linear | Interpolation::CubicSpline => vals[i0].slerp(vals[i1], factor),
         }
     }
 }

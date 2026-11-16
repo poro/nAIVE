@@ -42,12 +42,10 @@ pub fn start_watching_all(
                                         let _ = tx.send(WatchEvent::SceneChanged(path.clone()));
                                     } else if path_str.contains("materials") {
                                         tracing::info!("Material file changed: {:?}", path);
-                                        let _ =
-                                            tx.send(WatchEvent::MaterialChanged(path.clone()));
+                                        let _ = tx.send(WatchEvent::MaterialChanged(path.clone()));
                                     } else if path_str.contains("pipelines") {
                                         tracing::info!("Pipeline file changed: {:?}", path);
-                                        let _ =
-                                            tx.send(WatchEvent::PipelineChanged(path.clone()));
+                                        let _ = tx.send(WatchEvent::PipelineChanged(path.clone()));
                                     }
                                 }
                                 "ply" => {

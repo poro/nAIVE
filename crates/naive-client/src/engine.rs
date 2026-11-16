@@ -15,24 +15,31 @@ use crate::audio::AudioSystem;
 use crate::camera::CameraState;
 use crate::cli::CliArgs;
 use crate::command::CommandServer;
-use crate::components::{Camera, CameraMode, CameraRole, GaussianSplat, MeshRenderer, Player, Transform};
+use crate::components::{
+    Camera, CameraMode, CameraRole, GaussianSplat, MeshRenderer, Player, Transform,
+};
 use crate::editor_camera::EditorCamera;
 use crate::events::EventBus;
 use crate::font::BitmapFont;
-use crate::tween::TweenSystem;
-use crate::ui::UiRenderer;
 use crate::input::InputState;
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
-use crate::physics::{CharacterController, Collider as ColliderComp, PhysicsBodyType, PhysicsShape, PhysicsWorld, RigidBody as RigidBodyComp};
-use crate::scripting::{CameraShakeState, Script, ScriptRuntime};
+use crate::physics::{
+    CharacterController, Collider as ColliderComp, PhysicsBodyType, PhysicsShape, PhysicsWorld,
+    RigidBody as RigidBodyComp,
+};
 use crate::pipeline::CompiledPipeline;
-use crate::splat::SplatCache;
 use crate::renderer::{DrawUniformPool, GpuState};
+use crate::scripting::{CameraShakeState, Script, ScriptRuntime};
+use crate::splat::SplatCache;
+use crate::tween::TweenSystem;
+use crate::ui::UiRenderer;
 use crate::watcher::WatchEvent;
 use crate::world::SceneWorld;
 
 use winit::keyboard::KeyCode;
+
+mod commands;
 
 /// Main engine struct implementing winit's ApplicationHandler.
 pub struct Engine {
@@ -131,7 +138,6 @@ pub struct Engine {
     pub animation_system: crate::anim_system::AnimationSystem,
     /// Per-entity bone matrix palettes computed this frame (entity -> palette).
     pub bone_palettes: HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
-
 }
 
 impl Engine {
@@ -233,20 +239,22 @@ impl Engine {
                 tracing::error!("Failed to register entity API: {}", e);
             }
             // Entity command API (spawn, destroy, scale, visibility, pooling)
-            if let Err(e) = script_runtime.register_entity_command_api(sw.clone(), self.entity_commands.clone(), self.pool_manager.clone()) {
+            if let Err(e) = script_runtime.register_entity_command_api(
+                sw.clone(),
+                self.entity_commands.clone(),
+                self.pool_manager.clone(),
+            ) {
                 tracing::error!("Failed to register entity command API: {}", e);
             }
         }
 
         // Register UI overlay API
-        if let (Some(ui), Some(font), Some(gpu)) = (
-            &self.ui_renderer,
-            &self.bitmap_font,
-            &self.gpu,
-        ) {
+        if let (Some(ui), Some(font), Some(gpu)) = (&self.ui_renderer, &self.bitmap_font, &self.gpu)
+        {
             let surface_config = Rc::new(RefCell::new(gpu.config.clone()));
             self.shared_surface_config = Some(surface_config.clone());
-            if let Err(e) = script_runtime.register_ui_api(ui.clone(), font.clone(), surface_config) {
+            if let Err(e) = script_runtime.register_ui_api(ui.clone(), font.clone(), surface_config)
+            {
                 tracing::error!("Failed to register UI API: {}", e);
             }
         }
@@ -267,21 +275,30 @@ impl Engine {
 
         // Register event bus API (with Lua listener support)
         {
-            if let Err(e) = script_runtime.register_event_api(self.event_bus.clone(), self.lua_event_listeners.clone(), self.next_lua_listener_id.clone(), self.lua_listener_id_map.clone()) {
+            if let Err(e) = script_runtime.register_event_api(
+                self.event_bus.clone(),
+                self.lua_event_listeners.clone(),
+                self.next_lua_listener_id.clone(),
+                self.lua_listener_id_map.clone(),
+            ) {
                 tracing::error!("Failed to register event API: {}", e);
             }
         }
 
         // Register audio API
         {
-            if let Err(e) = script_runtime.register_audio_api(self.audio_system.clone(), self.project_root.clone()) {
+            if let Err(e) = script_runtime
+                .register_audio_api(self.audio_system.clone(), self.project_root.clone())
+            {
                 tracing::error!("Failed to register audio API: {}", e);
             }
         }
 
         // Register particle API
         if let Some(sw) = &self.scene_world {
-            if let Err(e) = script_runtime.register_particle_api(sw.clone(), self.particle_system.clone()) {
+            if let Err(e) =
+                script_runtime.register_particle_api(sw.clone(), self.particle_system.clone())
+            {
                 tracing::error!("Failed to register particle API: {}", e);
             }
         }
@@ -301,7 +318,11 @@ impl Engine {
         *self.swarm_bus.borrow_mut() = crate::swarm_api::SwarmBus::new();
         self.swarm_system.clear();
         if let Some(sw) = &self.scene_world {
-            if let Err(e) = crate::swarm_api::register_swarm_api(&script_runtime.lua, self.swarm_bus.clone(), sw.clone()) {
+            if let Err(e) = crate::swarm_api::register_swarm_api(
+                &script_runtime.lua,
+                self.swarm_bus.clone(),
+                sw.clone(),
+            ) {
                 tracing::error!("Failed to register swarm API: {}", e);
             }
         }
@@ -323,7 +344,13 @@ impl Engine {
         };
 
         // Resolve scene path relative to project root
-        let scene_path = self.project_root.join(&scene_arg);
+        let scene_path = match crate::project_path::resolve(&self.project_root, &scene_arg) {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::error!("Invalid scene path: {}", e);
+                return;
+            }
+        };
         if !scene_path.exists() {
             tracing::error!("Scene file not found: {:?}", scene_path);
             return;
@@ -345,14 +372,13 @@ impl Engine {
 
         // Compile the forward shader (Phase 2 fallback pipeline)
         let forward_slang = self.project_root.join("shaders/passes/mesh_forward.slang");
-        let forward_wgsl =
-            match crate::shader::compile_mesh_forward_shader(Some(&forward_slang)) {
-                Ok(wgsl) => wgsl,
-                Err(e) => {
-                    tracing::error!("Forward shader compilation failed: {}", e);
-                    crate::shader::get_mesh_forward_wgsl()
-                }
-            };
+        let forward_wgsl = match crate::shader::compile_mesh_forward_shader(Some(&forward_slang)) {
+            Ok(wgsl) => wgsl,
+            Err(e) => {
+                tracing::error!("Forward shader compilation failed: {}", e);
+                crate::shader::get_mesh_forward_wgsl()
+            }
+        };
 
         // Create the forward render pipeline
         let forward_pipeline = crate::renderer::create_forward_pipeline(
@@ -475,7 +501,9 @@ impl Engine {
                                 radius: cc_def.radius,
                                 ..Default::default()
                             };
-                            let _ = sw.world.insert(entity, (rb_comp, col_comp, cc_comp, player));
+                            let _ = sw
+                                .world
+                                .insert(entity, (rb_comp, col_comp, cc_comp, player));
                         } else if let Some(col_def) = &entity_def.components.collider {
                             let mut shape = crate::world::parse_collider_shape(col_def);
                             let is_trigger = col_def.is_trigger;
@@ -489,16 +517,28 @@ impl Engine {
                                 .unwrap_or("static");
                             // Resolve trimesh: look up mesh data from cache
                             if matches!(shape, crate::physics::PhysicsShape::Trimesh { .. }) {
-                                let scale = entity_def.components.transform.as_ref()
+                                let scale = entity_def
+                                    .components
+                                    .transform
+                                    .as_ref()
                                     .map(|t| glam::Vec3::from(t.scale))
                                     .unwrap_or(glam::Vec3::ONE);
-                                if let Ok(mr) = sw.world.get::<&crate::components::MeshRenderer>(entity) {
-                                    if let Some((verts, idxs)) = self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale) {
-                                        shape = crate::physics::PhysicsShape::Trimesh { vertices: verts, indices: idxs };
+                                if let Ok(mr) =
+                                    sw.world.get::<&crate::components::MeshRenderer>(entity)
+                                {
+                                    if let Some((verts, idxs)) =
+                                        self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale)
+                                    {
+                                        shape = crate::physics::PhysicsShape::Trimesh {
+                                            vertices: verts,
+                                            indices: idxs,
+                                        };
                                     } else {
                                         tracing::warn!("Trimesh collider for '{}': no mesh data, falling back to box", entity_def.id);
                                         let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                        shape = crate::physics::PhysicsShape::Box { half_extents: glam::Vec3::from(he) };
+                                        shape = crate::physics::PhysicsShape::Box {
+                                            half_extents: glam::Vec3::from(he),
+                                        };
                                     }
                                 }
                             }
@@ -517,8 +557,16 @@ impl Engine {
                                         .as_ref()
                                         .map(|rb| rb.ccd)
                                         .unwrap_or(false);
-                                    let (rb_handle, col_handle) = physics_world
-                                        .add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
+                                    let (rb_handle, col_handle) = physics_world.add_dynamic_body(
+                                        entity,
+                                        pos,
+                                        rot,
+                                        shape.clone(),
+                                        mass,
+                                        restitution,
+                                        friction,
+                                        ccd,
+                                    );
                                     let rb_comp = crate::physics::RigidBody {
                                         handle: rb_handle,
                                         body_type: crate::physics::PhysicsBodyType::Dynamic,
@@ -531,8 +579,15 @@ impl Engine {
                                     let _ = sw.world.insert(entity, (rb_comp, col_comp));
                                 }
                                 "kinematic" => {
-                                    let (rb_handle, col_handle) = physics_world
-                                        .add_kinematic_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
+                                    let (rb_handle, col_handle) = physics_world.add_kinematic_body(
+                                        entity,
+                                        pos,
+                                        rot,
+                                        shape.clone(),
+                                        is_trigger,
+                                        restitution,
+                                        friction,
+                                    );
                                     let rb_comp = crate::physics::RigidBody {
                                         handle: rb_handle,
                                         body_type: crate::physics::PhysicsBodyType::Kinematic,
@@ -545,8 +600,15 @@ impl Engine {
                                     let _ = sw.world.insert(entity, (rb_comp, col_comp));
                                 }
                                 _ => {
-                                    let (rb_handle, col_handle) = physics_world
-                                        .add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
+                                    let (rb_handle, col_handle) = physics_world.add_static_body(
+                                        entity,
+                                        pos,
+                                        rot,
+                                        shape.clone(),
+                                        is_trigger,
+                                        restitution,
+                                        friction,
+                                    );
                                     let rb_comp = crate::physics::RigidBody {
                                         handle: rb_handle,
                                         body_type: crate::physics::PhysicsBodyType::Static,
@@ -587,12 +649,14 @@ impl Engine {
                             };
                             let _ = sw.world.insert_one(entity, script_comp);
 
-                            if let Err(e) = script_runtime.load_script(
-                                entity,
-                                &self.project_root,
-                                &source_path,
-                            ) {
-                                tracing::error!("Failed to load script for '{}': {}", entity_def.id, e);
+                            if let Err(e) =
+                                script_runtime.load_script(entity, &self.project_root, &source_path)
+                            {
+                                tracing::error!(
+                                    "Failed to load script for '{}': {}",
+                                    entity_def.id,
+                                    e
+                                );
                             } else {
                                 // Set the entity's YAML string ID in its script environment
                                 let _ = script_runtime.set_entity_string_id(entity, &entity_def.id);
@@ -607,7 +671,8 @@ impl Engine {
         let uninit_entities: Vec<hecs::Entity> = if let Some(sw) = &self.scene_world {
             let sw = sw.borrow();
             let mut query = sw.world.query::<&Script>();
-            query.iter()
+            query
+                .iter()
                 .filter(|(_, script)| !script.initialized)
                 .map(|(entity, _)| entity)
                 .collect()
@@ -691,7 +756,13 @@ impl Engine {
 
         // Load existing scene or create a default editor scene
         let (scene, scene_path) = if let Some(scene_arg) = &self.args.scene {
-            let path = self.project_root.join(scene_arg);
+            let path = match crate::project_path::resolve(&self.project_root, scene_arg) {
+                Ok(path) => path,
+                Err(e) => {
+                    tracing::error!("Invalid editor scene path: {}", e);
+                    return;
+                }
+            };
             if path.exists() {
                 match crate::scene::load_scene(&path) {
                     Ok(s) => (s, Some(path)),
@@ -742,10 +813,16 @@ impl Engine {
             let mut sw = sw.borrow_mut();
             for entity_def in &scene.entities {
                 if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
-                    let pos = entity_def.components.transform.as_ref()
+                    let pos = entity_def
+                        .components
+                        .transform
+                        .as_ref()
                         .map(|t| glam::Vec3::from(t.position))
                         .unwrap_or(glam::Vec3::ZERO);
-                    let rot = entity_def.components.transform.as_ref()
+                    let rot = entity_def
+                        .components
+                        .transform
+                        .as_ref()
                         .map(|t| crate::world::euler_degrees_to_quat(t.rotation))
                         .unwrap_or(glam::Quat::IDENTITY);
 
@@ -754,54 +831,128 @@ impl Engine {
                         let is_trigger = col_def.is_trigger;
                         let restitution = col_def.restitution;
                         let friction = col_def.friction;
-                        let body_type = entity_def.components.rigid_body.as_ref()
+                        let body_type = entity_def
+                            .components
+                            .rigid_body
+                            .as_ref()
                             .map(|rb| rb.body_type.as_str())
                             .unwrap_or("static");
 
                         // Resolve trimesh: look up mesh data from cache
                         if matches!(shape, crate::physics::PhysicsShape::Trimesh { .. }) {
-                            let scale = entity_def.components.transform.as_ref()
+                            let scale = entity_def
+                                .components
+                                .transform
+                                .as_ref()
                                 .map(|t| glam::Vec3::from(t.scale))
                                 .unwrap_or(glam::Vec3::ONE);
-                            if let Ok(mr) = sw.world.get::<&crate::components::MeshRenderer>(entity) {
-                                if let Some((verts, idxs)) = self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale) {
-                                    shape = crate::physics::PhysicsShape::Trimesh { vertices: verts, indices: idxs };
+                            if let Ok(mr) = sw.world.get::<&crate::components::MeshRenderer>(entity)
+                            {
+                                if let Some((verts, idxs)) =
+                                    self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale)
+                                {
+                                    shape = crate::physics::PhysicsShape::Trimesh {
+                                        vertices: verts,
+                                        indices: idxs,
+                                    };
                                 } else {
                                     tracing::warn!("Trimesh collider for '{}': no mesh data, falling back to box", entity_def.id);
                                     let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                    shape = crate::physics::PhysicsShape::Box { half_extents: glam::Vec3::from(he) };
+                                    shape = crate::physics::PhysicsShape::Box {
+                                        half_extents: glam::Vec3::from(he),
+                                    };
                                 }
                             }
                         }
 
                         match body_type {
                             "dynamic" => {
-                                let mass = entity_def.components.rigid_body.as_ref()
-                                    .map(|rb| rb.mass).unwrap_or(1.0);
-                                let ccd = entity_def.components.rigid_body.as_ref()
-                                    .map(|rb| rb.ccd).unwrap_or(false);
-                                let (rb_handle, col_handle) = physics_world
-                                    .add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
-                                let _ = sw.world.insert(entity, (
-                                    crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Dynamic },
-                                    crate::physics::Collider { handle: col_handle, shape, is_trigger },
-                                ));
+                                let mass = entity_def
+                                    .components
+                                    .rigid_body
+                                    .as_ref()
+                                    .map(|rb| rb.mass)
+                                    .unwrap_or(1.0);
+                                let ccd = entity_def
+                                    .components
+                                    .rigid_body
+                                    .as_ref()
+                                    .map(|rb| rb.ccd)
+                                    .unwrap_or(false);
+                                let (rb_handle, col_handle) = physics_world.add_dynamic_body(
+                                    entity,
+                                    pos,
+                                    rot,
+                                    shape.clone(),
+                                    mass,
+                                    restitution,
+                                    friction,
+                                    ccd,
+                                );
+                                let _ = sw.world.insert(
+                                    entity,
+                                    (
+                                        crate::physics::RigidBody {
+                                            handle: rb_handle,
+                                            body_type: crate::physics::PhysicsBodyType::Dynamic,
+                                        },
+                                        crate::physics::Collider {
+                                            handle: col_handle,
+                                            shape,
+                                            is_trigger,
+                                        },
+                                    ),
+                                );
                             }
                             "kinematic" => {
-                                let (rb_handle, col_handle) = physics_world
-                                    .add_kinematic_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
-                                let _ = sw.world.insert(entity, (
-                                    crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Kinematic },
-                                    crate::physics::Collider { handle: col_handle, shape, is_trigger },
-                                ));
+                                let (rb_handle, col_handle) = physics_world.add_kinematic_body(
+                                    entity,
+                                    pos,
+                                    rot,
+                                    shape.clone(),
+                                    is_trigger,
+                                    restitution,
+                                    friction,
+                                );
+                                let _ = sw.world.insert(
+                                    entity,
+                                    (
+                                        crate::physics::RigidBody {
+                                            handle: rb_handle,
+                                            body_type: crate::physics::PhysicsBodyType::Kinematic,
+                                        },
+                                        crate::physics::Collider {
+                                            handle: col_handle,
+                                            shape,
+                                            is_trigger,
+                                        },
+                                    ),
+                                );
                             }
                             _ => {
-                                let (rb_handle, col_handle) = physics_world
-                                    .add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
-                                let _ = sw.world.insert(entity, (
-                                    crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Static },
-                                    crate::physics::Collider { handle: col_handle, shape, is_trigger },
-                                ));
+                                let (rb_handle, col_handle) = physics_world.add_static_body(
+                                    entity,
+                                    pos,
+                                    rot,
+                                    shape.clone(),
+                                    is_trigger,
+                                    restitution,
+                                    friction,
+                                );
+                                let _ = sw.world.insert(
+                                    entity,
+                                    (
+                                        crate::physics::RigidBody {
+                                            handle: rb_handle,
+                                            body_type: crate::physics::PhysicsBodyType::Static,
+                                        },
+                                        crate::physics::Collider {
+                                            handle: col_handle,
+                                            shape,
+                                            is_trigger,
+                                        },
+                                    ),
+                                );
                             }
                         }
                     }
@@ -833,15 +984,21 @@ impl Engine {
         self.last_frame_time = Some(std::time::Instant::now());
 
         // Initialize editor camera: try to extract position from scene's main camera
-        let cam_pos = self.scene_world.as_ref().and_then(|sw| {
-            let sw = sw.borrow();
-            for (_entity, (transform, camera)) in sw.world.query::<(&Transform, &Camera)>().iter() {
-                if camera.role == CameraRole::Main {
-                    return Some(transform.position);
+        let cam_pos = self
+            .scene_world
+            .as_ref()
+            .and_then(|sw| {
+                let sw = sw.borrow();
+                for (_entity, (transform, camera)) in
+                    sw.world.query::<(&Transform, &Camera)>().iter()
+                {
+                    if camera.role == CameraRole::Main {
+                        return Some(transform.position);
+                    }
                 }
-            }
-            None
-        }).unwrap_or(glam::Vec3::new(0.0, 5.0, 10.0));
+                None
+            })
+            .unwrap_or(glam::Vec3::new(0.0, 5.0, 10.0));
 
         self.editor_camera = Some(EditorCamera::new(cam_pos, 0.0, -0.3));
 
@@ -1037,7 +1194,13 @@ impl Engine {
             None => return,
         };
 
-        let pipeline_path = self.project_root.join(&pipeline_arg);
+        let pipeline_path = match crate::project_path::resolve(&self.project_root, &pipeline_arg) {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::error!("Invalid pipeline path: {}", e);
+                return;
+            }
+        };
         if !pipeline_path.exists() {
             tracing::error!("Pipeline file not found: {:?}", pipeline_path);
             return;
@@ -1047,7 +1210,10 @@ impl Engine {
         match crate::pipeline::load_pipeline(&pipeline_path) {
             Ok(pipeline_file) => {
                 vsync = Some(pipeline_file.settings.vsync);
-                let tex_layout = self.texture_resources.as_ref().map(|tr| &tr.bind_group_layout);
+                let tex_layout = self
+                    .texture_resources
+                    .as_ref()
+                    .map(|tr| &tr.bind_group_layout);
                 match crate::pipeline::compile_pipeline(
                     &gpu.device,
                     &pipeline_file,
@@ -1142,13 +1308,15 @@ impl Engine {
                 }
             };
 
-            gpu.device
-                .push_error_scope(wgpu::ErrorFilter::Validation);
+            gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
 
             let camera_state = self.camera_state.as_ref().unwrap().borrow();
             let draw_pool = self.draw_pool.as_ref().unwrap();
 
-            let tex_layout = self.texture_resources.as_ref().map(|tr| &tr.bind_group_layout);
+            let tex_layout = self
+                .texture_resources
+                .as_ref()
+                .map(|tr| &tr.bind_group_layout);
             let new_pipeline = crate::renderer::create_forward_pipeline(
                 &gpu.device,
                 &wgsl,
@@ -1175,8 +1343,7 @@ impl Engine {
                 }
             };
 
-            gpu.device
-                .push_error_scope(wgpu::ErrorFilter::Validation);
+            gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
 
             let new_pipeline =
                 crate::renderer::create_render_pipeline(&gpu.device, &wgsl, gpu.config.format);
@@ -1200,18 +1367,25 @@ impl Engine {
         };
 
         let scene_world = match &self.scene_world {
-    Some(scene_world) => scene_world,
-    None => return,
-};
-let mut scene_world = scene_world.borrow_mut();
+            Some(scene_world) => scene_world,
+            None => return,
+        };
+        let mut scene_world = scene_world.borrow_mut();
 
         tracing::info!("Hot-reloading scene: {:?}", changed_path);
 
         let new_scene = match crate::scene::load_scene(changed_path) {
             Ok(s) => s,
             Err(e) => {
-                let file_name = changed_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-                self.reload_notifications.push((format!("Scene failed: {} - {}", file_name, e), std::time::Instant::now(), [1.0, 0.3, 0.3, 1.0]));
+                let file_name = changed_path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                self.reload_notifications.push((
+                    format!("Scene failed: {} - {}", file_name, e),
+                    std::time::Instant::now(),
+                    [1.0, 0.3, 0.3, 1.0],
+                ));
                 tracing::error!("Scene reload failed: {}, keeping old scene", e);
                 return;
             }
@@ -1240,58 +1414,129 @@ let mut scene_world = scene_world.borrow_mut();
                 if let Some(col_def) = &entity_def.components.collider {
                     if col_def.shape == "trimesh" {
                         if let Some(&entity) = scene_world.entity_registry.get(&entity_def.id) {
-                            let needs_resolve = if let Ok(col) = scene_world.world.get::<&crate::physics::Collider>(entity) {
+                            let needs_resolve = if let Ok(col) =
+                                scene_world.world.get::<&crate::physics::Collider>(entity)
+                            {
                                 matches!(&col.shape, crate::physics::PhysicsShape::Trimesh { vertices, .. } if vertices.is_empty())
                             } else {
                                 false
                             };
 
                             if needs_resolve {
-                                let scale = entity_def.components.transform.as_ref()
+                                let scale = entity_def
+                                    .components
+                                    .transform
+                                    .as_ref()
                                     .map(|t| glam::Vec3::from(t.scale))
                                     .unwrap_or(glam::Vec3::ONE);
-                                let resolved_shape = if let Ok(mr) = scene_world.world.get::<&crate::components::MeshRenderer>(entity) {
-                                    if let Some((verts, idxs)) = self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale) {
-                                        Some(crate::physics::PhysicsShape::Trimesh { vertices: verts, indices: idxs })
+                                let resolved_shape = if let Ok(mr) =
+                                    scene_world
+                                        .world
+                                        .get::<&crate::components::MeshRenderer>(entity)
+                                {
+                                    if let Some((verts, idxs)) =
+                                        self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale)
+                                    {
+                                        Some(crate::physics::PhysicsShape::Trimesh {
+                                            vertices: verts,
+                                            indices: idxs,
+                                        })
                                     } else {
                                         let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                        Some(crate::physics::PhysicsShape::Box { half_extents: glam::Vec3::from(he) })
+                                        Some(crate::physics::PhysicsShape::Box {
+                                            half_extents: glam::Vec3::from(he),
+                                        })
                                     }
                                 } else {
                                     None
                                 };
 
                                 if let Some(new_shape) = resolved_shape {
-                                    let rb_info = scene_world.world.get::<&crate::physics::RigidBody>(entity)
+                                    let rb_info = scene_world
+                                        .world
+                                        .get::<&crate::physics::RigidBody>(entity)
                                         .ok()
                                         .map(|rb| (rb.handle, rb.body_type.clone()));
                                     if let Some((old_handle, body_type_enum)) = rb_info {
                                         pw.remove_body(old_handle);
-                                        let pos = entity_def.components.transform.as_ref()
-                                            .map(|t| glam::Vec3::from(t.position)).unwrap_or(glam::Vec3::ZERO);
-                                        let rot = entity_def.components.transform.as_ref()
-                                            .map(|t| crate::world::euler_degrees_to_quat(t.rotation)).unwrap_or(glam::Quat::IDENTITY);
+                                        let pos = entity_def
+                                            .components
+                                            .transform
+                                            .as_ref()
+                                            .map(|t| glam::Vec3::from(t.position))
+                                            .unwrap_or(glam::Vec3::ZERO);
+                                        let rot = entity_def
+                                            .components
+                                            .transform
+                                            .as_ref()
+                                            .map(|t| {
+                                                crate::world::euler_degrees_to_quat(t.rotation)
+                                            })
+                                            .unwrap_or(glam::Quat::IDENTITY);
                                         let is_trigger = col_def.is_trigger;
                                         let restitution = col_def.restitution;
                                         let friction = col_def.friction;
 
                                         let (rb_handle, col_handle) = match body_type_enum {
                                             crate::physics::PhysicsBodyType::Dynamic => {
-                                                let mass = entity_def.components.rigid_body.as_ref().map(|rb| rb.mass).unwrap_or(1.0);
-                                                let ccd = entity_def.components.rigid_body.as_ref().map(|rb| rb.ccd).unwrap_or(false);
-                                                pw.add_dynamic_body(entity, pos, rot, new_shape.clone(), mass, restitution, friction, ccd)
+                                                let mass = entity_def
+                                                    .components
+                                                    .rigid_body
+                                                    .as_ref()
+                                                    .map(|rb| rb.mass)
+                                                    .unwrap_or(1.0);
+                                                let ccd = entity_def
+                                                    .components
+                                                    .rigid_body
+                                                    .as_ref()
+                                                    .map(|rb| rb.ccd)
+                                                    .unwrap_or(false);
+                                                pw.add_dynamic_body(
+                                                    entity,
+                                                    pos,
+                                                    rot,
+                                                    new_shape.clone(),
+                                                    mass,
+                                                    restitution,
+                                                    friction,
+                                                    ccd,
+                                                )
                                             }
-                                            crate::physics::PhysicsBodyType::Kinematic => {
-                                                pw.add_kinematic_body(entity, pos, rot, new_shape.clone(), is_trigger, restitution, friction)
-                                            }
-                                            crate::physics::PhysicsBodyType::Static => {
-                                                pw.add_static_body(entity, pos, rot, new_shape.clone(), is_trigger, restitution, friction)
-                                            }
+                                            crate::physics::PhysicsBodyType::Kinematic => pw
+                                                .add_kinematic_body(
+                                                    entity,
+                                                    pos,
+                                                    rot,
+                                                    new_shape.clone(),
+                                                    is_trigger,
+                                                    restitution,
+                                                    friction,
+                                                ),
+                                            crate::physics::PhysicsBodyType::Static => pw
+                                                .add_static_body(
+                                                    entity,
+                                                    pos,
+                                                    rot,
+                                                    new_shape.clone(),
+                                                    is_trigger,
+                                                    restitution,
+                                                    friction,
+                                                ),
                                         };
-                                        let _ = scene_world.world.insert(entity, (
-                                            crate::physics::RigidBody { handle: rb_handle, body_type: body_type_enum },
-                                            crate::physics::Collider { handle: col_handle, shape: new_shape, is_trigger },
-                                        ));
+                                        let _ = scene_world.world.insert(
+                                            entity,
+                                            (
+                                                crate::physics::RigidBody {
+                                                    handle: rb_handle,
+                                                    body_type: body_type_enum,
+                                                },
+                                                crate::physics::Collider {
+                                                    handle: col_handle,
+                                                    shape: new_shape,
+                                                    is_trigger,
+                                                },
+                                            ),
+                                        );
                                     }
                                 }
                             }
@@ -1301,8 +1546,15 @@ let mut scene_world = scene_world.borrow_mut();
             }
         }
 
-        let file_name = changed_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-        self.reload_notifications.push((format!("Scene reloaded: {}", file_name), std::time::Instant::now(), [0.3, 1.0, 0.3, 1.0]));
+        let file_name = changed_path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.reload_notifications.push((
+            format!("Scene reloaded: {}", file_name),
+            std::time::Instant::now(),
+            [0.3, 1.0, 0.3, 1.0],
+        ));
         tracing::info!("Scene hot-reload complete");
     }
 
@@ -1403,14 +1655,23 @@ let mut scene_world = scene_world.borrow_mut();
                 (&self.scene_world, &mut self.script_runtime)
             {
                 let scene_world_guard = scene_world.borrow();
-                let reload_candidates: Vec<(hecs::Entity, std::path::PathBuf)> = scene_world_guard.world
-                    .query::<&Script>().iter()
+                let reload_candidates: Vec<(hecs::Entity, std::path::PathBuf)> = scene_world_guard
+                    .world
+                    .query::<&Script>()
+                    .iter()
                     .filter_map(|(entity, script)| {
                         let script_source_str = script.source.to_string_lossy();
                         for changed_path in &script_paths {
                             let changed_str = changed_path.to_string_lossy();
                             if changed_str.ends_with(&*script_source_str)
-                                || changed_str.ends_with(script.source.file_name().unwrap_or_default().to_string_lossy().as_ref())
+                                || changed_str.ends_with(
+                                    script
+                                        .source
+                                        .file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .as_ref(),
+                                )
                             {
                                 return Some((entity, script.source.clone()));
                             }
@@ -1463,7 +1724,9 @@ let mut scene_world = scene_world.borrow_mut();
     /// to entities whose meshes have skin data.
     fn register_skeletons(&mut self) {
         // Take skin data from mesh cache and register with animation system
-        let registered = self.animation_system.register_from_mesh_cache(&mut self.mesh_cache);
+        let registered = self
+            .animation_system
+            .register_from_mesh_cache(&mut self.mesh_cache);
         if registered.is_empty() {
             return;
         }
@@ -1473,10 +1736,10 @@ let mut scene_world = scene_world.borrow_mut();
             registered.into_iter().collect();
 
         let scene_world = match &self.scene_world {
-    Some(scene_world) => scene_world,
-    None => return,
-};
-let mut scene_world = scene_world.borrow_mut();
+            Some(scene_world) => scene_world,
+            None => return,
+        };
+        let mut scene_world = scene_world.borrow_mut();
 
         // Find entities with MeshRenderer whose mesh has a registered skeleton
         let to_animate: Vec<(hecs::Entity, crate::components::SkeletonHandle)> = scene_world
@@ -1484,13 +1747,19 @@ let mut scene_world = scene_world.borrow_mut();
             .query::<&crate::components::MeshRenderer>()
             .iter()
             .filter_map(|(entity, mr)| {
-                mesh_to_skeleton.get(&mr.mesh_handle.0).map(|sh| (entity, *sh))
+                mesh_to_skeleton
+                    .get(&mr.mesh_handle.0)
+                    .map(|sh| (entity, *sh))
             })
             .collect();
 
         for (entity, skeleton_handle) in to_animate {
             // Skip if already has an Animator
-            if scene_world.world.get::<&crate::components::Animator>(entity).is_ok() {
+            if scene_world
+                .world
+                .get::<&crate::components::Animator>(entity)
+                .is_ok()
+            {
                 continue;
             }
             let animator = crate::components::Animator {
@@ -1502,7 +1771,11 @@ let mut scene_world = scene_world.borrow_mut();
             };
             let _ = scene_world.world.insert_one(entity, animator);
             let _ = scene_world.world.insert_one(entity, skeleton_handle);
-            tracing::info!("Attached Animator to entity {:?} with skeleton {:?}", entity, skeleton_handle);
+            tracing::info!(
+                "Attached Animator to entity {:?} with skeleton {:?}",
+                entity,
+                skeleton_handle
+            );
         }
     }
 
@@ -1526,7 +1799,10 @@ let mut scene_world = scene_world.borrow_mut();
         self.bone_palettes.clear();
 
         for entity in animated {
-            if let Ok(mut animator) = scene_world.world.get::<&mut crate::components::Animator>(entity) {
+            if let Ok(mut animator) = scene_world
+                .world
+                .get::<&mut crate::components::Animator>(entity)
+            {
                 let palette = self.animation_system.tick_entity(&mut animator, dt);
                 self.bone_palettes.insert(entity, palette);
             }
@@ -1535,7 +1811,8 @@ let mut scene_world = scene_world.borrow_mut();
 
     /// Process the health system: detect deaths and fire on_death callbacks.
     fn process_health_system(&mut self) {
-        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime) {
+        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime)
+        {
             crate::sim::process_health(scene_world, script_runtime);
         }
     }
@@ -1588,12 +1865,17 @@ let mut scene_world = scene_world.borrow_mut();
                             match col.shape.as_str() {
                                 "cuboid" | "box" => {
                                     let he = col.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                    PhysicsShape::Box { half_extents: glam::Vec3::from(he) }
+                                    PhysicsShape::Box {
+                                        half_extents: glam::Vec3::from(he),
+                                    }
                                 }
                                 "capsule" => {
                                     let r = col.radius.unwrap_or(0.5);
                                     let he = col.half_extents.unwrap_or([0.5, 1.0, 0.5]);
-                                    PhysicsShape::Capsule { radius: r, half_height: he[1] }
+                                    PhysicsShape::Capsule {
+                                        radius: r,
+                                        half_height: he[1],
+                                    }
                                 }
                                 _ => {
                                     let r = col.radius.unwrap_or(0.5);
@@ -1605,44 +1887,110 @@ let mut scene_world = scene_world.borrow_mut();
                             PhysicsShape::Sphere { radius: r }
                         };
 
-                        let is_trigger = cmd.collider.as_ref().map(|c| c.is_trigger).unwrap_or(false);
-                        let restitution = cmd.collider.as_ref().map(|c| c.restitution).unwrap_or(0.3);
+                        let is_trigger =
+                            cmd.collider.as_ref().map(|c| c.is_trigger).unwrap_or(false);
+                        let restitution =
+                            cmd.collider.as_ref().map(|c| c.restitution).unwrap_or(0.3);
                         let friction = cmd.collider.as_ref().map(|c| c.friction).unwrap_or(0.5);
 
-                        if let (Some(rb_type), Some(physics_world)) = (&cmd.rigid_body, &self.physics_world) {
+                        if let (Some(rb_type), Some(physics_world)) =
+                            (&cmd.rigid_body, &self.physics_world)
+                        {
                             let mut pw = physics_world.borrow_mut();
                             let (rb_handle, col_handle, pbt) = match rb_type.as_str() {
                                 "dynamic" => {
-                                    let (r, c) = pw.add_dynamic_body(entity, position, rotation, shape.clone(), 1.0, restitution, friction, false);
+                                    let (r, c) = pw.add_dynamic_body(
+                                        entity,
+                                        position,
+                                        rotation,
+                                        shape.clone(),
+                                        1.0,
+                                        restitution,
+                                        friction,
+                                        false,
+                                    );
                                     (r, c, PhysicsBodyType::Dynamic)
                                 }
                                 "kinematic" => {
-                                    let (r, c) = pw.add_kinematic_body(entity, position, rotation, shape.clone(), is_trigger, restitution, friction);
+                                    let (r, c) = pw.add_kinematic_body(
+                                        entity,
+                                        position,
+                                        rotation,
+                                        shape.clone(),
+                                        is_trigger,
+                                        restitution,
+                                        friction,
+                                    );
                                     (r, c, PhysicsBodyType::Kinematic)
                                 }
                                 _ => {
-                                    let (r, c) = pw.add_static_body(entity, position, rotation, shape.clone(), is_trigger, restitution, friction);
+                                    let (r, c) = pw.add_static_body(
+                                        entity,
+                                        position,
+                                        rotation,
+                                        shape.clone(),
+                                        is_trigger,
+                                        restitution,
+                                        friction,
+                                    );
                                     (r, c, PhysicsBodyType::Static)
                                 }
                             };
-                            let _ = scene_world.world.insert_one(entity, RigidBodyComp { handle: rb_handle, body_type: pbt });
-                            let _ = scene_world.world.insert_one(entity, ColliderComp { handle: col_handle, shape, is_trigger });
+                            let _ = scene_world.world.insert_one(
+                                entity,
+                                RigidBodyComp {
+                                    handle: rb_handle,
+                                    body_type: pbt,
+                                },
+                            );
+                            let _ = scene_world.world.insert_one(
+                                entity,
+                                ColliderComp {
+                                    handle: col_handle,
+                                    shape,
+                                    is_trigger,
+                                },
+                            );
                         } else if cmd.collider.is_some() {
                             // Collider without rigid_body type: default to fixed
                             if let Some(physics_world) = &self.physics_world {
                                 let mut pw = physics_world.borrow_mut();
-                                let (rb_handle, col_handle) = pw.add_static_body(entity, position, rotation, shape.clone(), is_trigger, restitution, friction);
-                                let _ = scene_world.world.insert_one(entity, RigidBodyComp { handle: rb_handle, body_type: PhysicsBodyType::Static });
-                                let _ = scene_world.world.insert_one(entity, ColliderComp { handle: col_handle, shape, is_trigger });
+                                let (rb_handle, col_handle) = pw.add_static_body(
+                                    entity,
+                                    position,
+                                    rotation,
+                                    shape.clone(),
+                                    is_trigger,
+                                    restitution,
+                                    friction,
+                                );
+                                let _ = scene_world.world.insert_one(
+                                    entity,
+                                    RigidBodyComp {
+                                        handle: rb_handle,
+                                        body_type: PhysicsBodyType::Static,
+                                    },
+                                );
+                                let _ = scene_world.world.insert_one(
+                                    entity,
+                                    ColliderComp {
+                                        handle: col_handle,
+                                        shape,
+                                        is_trigger,
+                                    },
+                                );
                             }
                         }
 
                         // Attach script if specified
                         if let Some(script_path) = &cmd.script {
-                            let _ = scene_world.world.insert_one(entity, Script {
-                                source: std::path::PathBuf::from(script_path),
-                                initialized: false,
-                            });
+                            let _ = scene_world.world.insert_one(
+                                entity,
+                                Script {
+                                    source: std::path::PathBuf::from(script_path),
+                                    initialized: false,
+                                },
+                            );
                         }
                     }
                 }
@@ -1650,9 +1998,12 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         // Process projectile spawns
-        let proj_spawns: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().projectile_spawns);
+        let proj_spawns: Vec<_> =
+            std::mem::take(&mut self.entity_commands.borrow_mut().projectile_spawns);
         for cmd in &proj_spawns {
-            if let (Some(scene_world), Some(physics_world)) = (&self.scene_world, &self.physics_world) {
+            if let (Some(scene_world), Some(physics_world)) =
+                (&self.scene_world, &self.physics_world)
+            {
                 let mut scene_world = scene_world.borrow_mut();
                 let mut physics_world = physics_world.borrow_mut();
                 crate::world::spawn_projectile_entity(
@@ -1670,9 +2021,12 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         // Process dynamic spawns (bouncing physics objects)
-        let dyn_spawns: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().dynamic_spawns);
+        let dyn_spawns: Vec<_> =
+            std::mem::take(&mut self.entity_commands.borrow_mut().dynamic_spawns);
         for cmd in &dyn_spawns {
-            if let (Some(scene_world), Some(physics_world)) = (&self.scene_world, &self.physics_world) {
+            if let (Some(scene_world), Some(physics_world)) =
+                (&self.scene_world, &self.physics_world)
+            {
                 let mut scene_world = scene_world.borrow_mut();
                 let mut physics_world = physics_world.borrow_mut();
                 crate::world::spawn_dynamic_entity(
@@ -1698,8 +2052,13 @@ let mut scene_world = scene_world.borrow_mut();
                     crate::world::PoolOp::Release(id) => {
                         if let Some(&entity) = scene_world.entity_registry.get(&id) {
                             // Hide the entity and mark as inactive
-                            let _ = scene_world.world.insert_one(entity, crate::components::Hidden);
-                            if let Ok(mut pooled) = scene_world.world.get::<&mut crate::components::Pooled>(entity) {
+                            let _ = scene_world
+                                .world
+                                .insert_one(entity, crate::components::Hidden);
+                            if let Ok(mut pooled) = scene_world
+                                .world
+                                .get::<&mut crate::components::Pooled>(entity)
+                            {
                                 pooled.active = false;
                                 let pool_name = pooled.pool_name.clone();
                                 drop(pooled);
@@ -1712,7 +2071,8 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         // Process scale updates
-        let scale_updates: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().scale_updates);
+        let scale_updates: Vec<_> =
+            std::mem::take(&mut self.entity_commands.borrow_mut().scale_updates);
         for (id, scale) in scale_updates {
             if let Some(scene_world) = &self.scene_world {
                 let scene_world = scene_world.borrow_mut();
@@ -1726,27 +2086,39 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         // Process visibility updates
-        let vis_updates: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().visibility_updates);
+        let vis_updates: Vec<_> =
+            std::mem::take(&mut self.entity_commands.borrow_mut().visibility_updates);
         for (id, visible) in vis_updates {
             if let Some(scene_world) = &self.scene_world {
                 let mut scene_world = scene_world.borrow_mut();
                 if let Some(&entity) = scene_world.entity_registry.get(&id) {
                     if visible {
-                        let _ = scene_world.world.remove_one::<crate::components::Hidden>(entity);
+                        let _ = scene_world
+                            .world
+                            .remove_one::<crate::components::Hidden>(entity);
                     } else {
-                        let _ = scene_world.world.insert_one(entity, crate::components::Hidden);
+                        let _ = scene_world
+                            .world
+                            .insert_one(entity, crate::components::Hidden);
                     }
                 }
             }
         }
 
         // Process texture swaps
-        let tex_swaps: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().texture_swaps);
+        let tex_swaps: Vec<_> =
+            std::mem::take(&mut self.entity_commands.borrow_mut().texture_swaps);
         if !tex_swaps.is_empty() {
             if let Some(tex_res) = &self.texture_resources {
                 let layout = &tex_res.bind_group_layout;
                 for swap in tex_swaps {
-                    match self.texture_cache.get_or_load(&gpu.device, &gpu.queue, layout, &self.project_root, &swap.texture_path) {
+                    match self.texture_cache.get_or_load(
+                        &gpu.device,
+                        &gpu.queue,
+                        layout,
+                        &self.project_root,
+                        &swap.texture_path,
+                    ) {
                         Ok(tex_handle) => {
                             if let Some(scene_world) = &self.scene_world {
                                 let sw = scene_world.borrow();
@@ -1756,20 +2128,28 @@ let mut scene_world = scene_world.borrow_mut();
                                         match swap.slot.as_str() {
                                             "albedo" => mat.albedo_texture = Some(tex_handle),
                                             "normal" => mat.normal_texture = Some(tex_handle),
-                                            _ => tracing::warn!("entity.set_texture: unknown slot '{}'", swap.slot),
+                                            _ => tracing::warn!(
+                                                "entity.set_texture: unknown slot '{}'",
+                                                swap.slot
+                                            ),
                                         }
                                     }
                                 }
                             }
                         }
-                        Err(e) => tracing::warn!("entity.set_texture: failed to load '{}': {}", swap.texture_path, e),
+                        Err(e) => tracing::warn!(
+                            "entity.set_texture: failed to load '{}': {}",
+                            swap.texture_path,
+                            e
+                        ),
                     }
                 }
             }
         }
 
         // Process runtime mesh creates
-        let mesh_creates: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().mesh_creates);
+        let mesh_creates: Vec<_> =
+            std::mem::take(&mut self.entity_commands.borrow_mut().mesh_creates);
         for cmd in mesh_creates {
             self.mesh_cache.insert_runtime_mesh(
                 &gpu.device,
@@ -1795,7 +2175,13 @@ let mut scene_world = scene_world.borrow_mut();
             None => return,
         };
 
-        let scene_path = self.project_root.join(&scene_rel);
+        let scene_path = match crate::project_path::resolve(&self.project_root, &scene_rel) {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::error!("scene.load: {}", e);
+                return;
+            }
+        };
         if !scene_path.exists() {
             tracing::error!("scene.load: file not found: {:?}", scene_path);
             return;
@@ -1812,10 +2198,8 @@ let mut scene_world = scene_world.borrow_mut();
         // 1. Call on_destroy on all scripted entities
         if let (Some(sw), Some(sr)) = (&self.scene_world, &self.script_runtime) {
             let sw = sw.borrow();
-            let scripted: Vec<hecs::Entity> = sw.world.query::<&Script>()
-                .iter()
-                .map(|(e, _)| e)
-                .collect();
+            let scripted: Vec<hecs::Entity> =
+                sw.world.query::<&Script>().iter().map(|(e, _)| e).collect();
             for entity in scripted {
                 sr.call_on_destroy(entity);
             }
@@ -1885,62 +2269,168 @@ let mut scene_world = scene_world.borrow_mut();
                 let mut pw = pw.borrow_mut();
                 for entity_def in &scene_data.entities {
                     if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
-                        let pos = entity_def.components.transform.as_ref()
+                        let pos = entity_def
+                            .components
+                            .transform
+                            .as_ref()
                             .map(|t| glam::Vec3::from(t.position))
                             .unwrap_or(glam::Vec3::ZERO);
-                        let rot = entity_def.components.transform.as_ref()
+                        let rot = entity_def
+                            .components
+                            .transform
+                            .as_ref()
                             .map(|t| crate::world::euler_degrees_to_quat(t.rotation))
                             .unwrap_or(glam::Quat::IDENTITY);
 
                         if let Some(cc_def) = &entity_def.components.character_controller {
                             let half_height = cc_def.height / 2.0 - cc_def.radius;
-                            let (rb_handle, col_handle) = pw.add_character_body(entity, pos, half_height.max(0.1), cc_def.radius);
-                            let rb_comp = crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Kinematic };
-                            let col_comp = crate::physics::Collider { handle: col_handle, shape: crate::physics::PhysicsShape::Capsule { half_height: half_height.max(0.1), radius: cc_def.radius }, is_trigger: false };
-                            let cc_comp = CharacterController { move_speed: cc_def.move_speed, sprint_multiplier: cc_def.sprint_multiplier, jump_impulse: cc_def.jump_impulse, step_height: cc_def.step_height, ..Default::default() };
-                            let player = crate::components::Player { height: cc_def.height, radius: cc_def.radius, ..Default::default() };
-                            let _ = sw.world.insert(entity, (rb_comp, col_comp, cc_comp, player));
+                            let (rb_handle, col_handle) = pw.add_character_body(
+                                entity,
+                                pos,
+                                half_height.max(0.1),
+                                cc_def.radius,
+                            );
+                            let rb_comp = crate::physics::RigidBody {
+                                handle: rb_handle,
+                                body_type: crate::physics::PhysicsBodyType::Kinematic,
+                            };
+                            let col_comp = crate::physics::Collider {
+                                handle: col_handle,
+                                shape: crate::physics::PhysicsShape::Capsule {
+                                    half_height: half_height.max(0.1),
+                                    radius: cc_def.radius,
+                                },
+                                is_trigger: false,
+                            };
+                            let cc_comp = CharacterController {
+                                move_speed: cc_def.move_speed,
+                                sprint_multiplier: cc_def.sprint_multiplier,
+                                jump_impulse: cc_def.jump_impulse,
+                                step_height: cc_def.step_height,
+                                ..Default::default()
+                            };
+                            let player = crate::components::Player {
+                                height: cc_def.height,
+                                radius: cc_def.radius,
+                                ..Default::default()
+                            };
+                            let _ = sw
+                                .world
+                                .insert(entity, (rb_comp, col_comp, cc_comp, player));
                         } else if let Some(col_def) = &entity_def.components.collider {
                             let mut shape = crate::world::parse_collider_shape(col_def);
                             let is_trigger = col_def.is_trigger;
                             let restitution = col_def.restitution;
                             let friction = col_def.friction;
-                            let body_type = entity_def.components.rigid_body.as_ref().map(|rb| rb.body_type.as_str()).unwrap_or("static");
+                            let body_type = entity_def
+                                .components
+                                .rigid_body
+                                .as_ref()
+                                .map(|rb| rb.body_type.as_str())
+                                .unwrap_or("static");
 
                             // Resolve trimesh
                             if matches!(shape, crate::physics::PhysicsShape::Trimesh { .. }) {
-                                let scale = entity_def.components.transform.as_ref()
+                                let scale = entity_def
+                                    .components
+                                    .transform
+                                    .as_ref()
                                     .map(|t| glam::Vec3::from(t.scale))
                                     .unwrap_or(glam::Vec3::ONE);
-                                if let Ok(mr) = sw.world.get::<&crate::components::MeshRenderer>(entity) {
-                                    if let Some((verts, idxs)) = self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale) {
-                                        shape = crate::physics::PhysicsShape::Trimesh { vertices: verts, indices: idxs };
+                                if let Ok(mr) =
+                                    sw.world.get::<&crate::components::MeshRenderer>(entity)
+                                {
+                                    if let Some((verts, idxs)) =
+                                        self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale)
+                                    {
+                                        shape = crate::physics::PhysicsShape::Trimesh {
+                                            vertices: verts,
+                                            indices: idxs,
+                                        };
                                     } else {
                                         let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                        shape = crate::physics::PhysicsShape::Box { half_extents: glam::Vec3::from(he) };
+                                        shape = crate::physics::PhysicsShape::Box {
+                                            half_extents: glam::Vec3::from(he),
+                                        };
                                     }
                                 }
                             }
 
                             match body_type {
                                 "dynamic" => {
-                                    let mass = entity_def.components.rigid_body.as_ref().map(|rb| rb.mass).unwrap_or(1.0);
-                                    let ccd = entity_def.components.rigid_body.as_ref().map(|rb| rb.ccd).unwrap_or(false);
-                                    let (rb_handle, col_handle) = pw.add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
-                                    let rb_comp = crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Dynamic };
-                                    let col_comp = crate::physics::Collider { handle: col_handle, shape, is_trigger };
+                                    let mass = entity_def
+                                        .components
+                                        .rigid_body
+                                        .as_ref()
+                                        .map(|rb| rb.mass)
+                                        .unwrap_or(1.0);
+                                    let ccd = entity_def
+                                        .components
+                                        .rigid_body
+                                        .as_ref()
+                                        .map(|rb| rb.ccd)
+                                        .unwrap_or(false);
+                                    let (rb_handle, col_handle) = pw.add_dynamic_body(
+                                        entity,
+                                        pos,
+                                        rot,
+                                        shape.clone(),
+                                        mass,
+                                        restitution,
+                                        friction,
+                                        ccd,
+                                    );
+                                    let rb_comp = crate::physics::RigidBody {
+                                        handle: rb_handle,
+                                        body_type: crate::physics::PhysicsBodyType::Dynamic,
+                                    };
+                                    let col_comp = crate::physics::Collider {
+                                        handle: col_handle,
+                                        shape,
+                                        is_trigger,
+                                    };
                                     let _ = sw.world.insert(entity, (rb_comp, col_comp));
                                 }
                                 "kinematic" => {
-                                    let (rb_handle, col_handle) = pw.add_kinematic_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
-                                    let rb_comp = crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Kinematic };
-                                    let col_comp = crate::physics::Collider { handle: col_handle, shape, is_trigger };
+                                    let (rb_handle, col_handle) = pw.add_kinematic_body(
+                                        entity,
+                                        pos,
+                                        rot,
+                                        shape.clone(),
+                                        is_trigger,
+                                        restitution,
+                                        friction,
+                                    );
+                                    let rb_comp = crate::physics::RigidBody {
+                                        handle: rb_handle,
+                                        body_type: crate::physics::PhysicsBodyType::Kinematic,
+                                    };
+                                    let col_comp = crate::physics::Collider {
+                                        handle: col_handle,
+                                        shape,
+                                        is_trigger,
+                                    };
                                     let _ = sw.world.insert(entity, (rb_comp, col_comp));
                                 }
                                 _ => {
-                                    let (rb_handle, col_handle) = pw.add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
-                                    let rb_comp = crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Static };
-                                    let col_comp = crate::physics::Collider { handle: col_handle, shape, is_trigger };
+                                    let (rb_handle, col_handle) = pw.add_static_body(
+                                        entity,
+                                        pos,
+                                        rot,
+                                        shape.clone(),
+                                        is_trigger,
+                                        restitution,
+                                        friction,
+                                    );
+                                    let rb_comp = crate::physics::RigidBody {
+                                        handle: rb_handle,
+                                        body_type: crate::physics::PhysicsBodyType::Static,
+                                    };
+                                    let col_comp = crate::physics::Collider {
+                                        handle: col_handle,
+                                        shape,
+                                        is_trigger,
+                                    };
                                     let _ = sw.world.insert(entity, (rb_comp, col_comp));
                                 }
                             }
@@ -1959,10 +2449,19 @@ let mut scene_world = scene_world.borrow_mut();
                         if let Some(script_def) = &entity_def.components.script {
                             if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
                                 let source_path = std::path::PathBuf::from(&script_def.source);
-                                let script_comp = Script { source: source_path.clone(), initialized: false };
+                                let script_comp = Script {
+                                    source: source_path.clone(),
+                                    initialized: false,
+                                };
                                 let _ = sw.world.insert_one(entity, script_comp);
-                                if let Err(e) = sr.load_script(entity, &self.project_root, &source_path) {
-                                    tracing::error!("scene.load: script for '{}' failed: {}", entity_def.id, e);
+                                if let Err(e) =
+                                    sr.load_script(entity, &self.project_root, &source_path)
+                                {
+                                    tracing::error!(
+                                        "scene.load: script for '{}' failed: {}",
+                                        entity_def.id,
+                                        e
+                                    );
                                 } else {
                                     let _ = sr.set_entity_string_id(entity, &entity_def.id);
                                 }
@@ -1977,7 +2476,8 @@ let mut scene_world = scene_world.borrow_mut();
         let uninit: Vec<hecs::Entity> = if let Some(sw) = &self.scene_world {
             let sw = sw.borrow();
             let mut query = sw.world.query::<&Script>();
-            query.iter()
+            query
+                .iter()
                 .filter(|(_, s)| !s.initialized)
                 .map(|(e, _)| e)
                 .collect()
@@ -2049,19 +2549,28 @@ let mut scene_world = scene_world.borrow_mut();
 
         // Check if there's a player entity controlling the camera
         let mut player_camera_applied = false;
-        for (entity, (transform, player, camera)) in
-            scene_world.world.query::<(&Transform, &Player, &Camera)>().iter()
+        for (entity, (transform, player, camera)) in scene_world
+            .world
+            .query::<(&Transform, &Player, &Camera)>()
+            .iter()
         {
             if camera.role == CameraRole::Main {
                 // Check for CameraMode component
                 let camera_mode = scene_world.world.get::<&CameraMode>(entity).ok();
 
-                let is_third_person = camera_mode.as_ref().map(|cm| matches!(**cm, CameraMode::ThirdPerson { .. })).unwrap_or(false);
+                let is_third_person = camera_mode
+                    .as_ref()
+                    .map(|cm| matches!(**cm, CameraMode::ThirdPerson { .. }))
+                    .unwrap_or(false);
 
                 if is_third_person {
                     let (distance, height_offset) = if let Some(ref cm) = camera_mode {
                         match **cm {
-                            CameraMode::ThirdPerson { distance, height_offset, .. } => (distance, height_offset),
+                            CameraMode::ThirdPerson {
+                                distance,
+                                height_offset,
+                                ..
+                            } => (distance, height_offset),
                             _ => (4.0, 1.5),
                         }
                     } else {
@@ -2083,9 +2592,9 @@ let mut scene_world = scene_world.borrow_mut();
                         let physics_world = physics_world.borrow_mut();
                         let ray_dir = (desired_pos - target).normalize_or_zero();
                         let ray_dist = (desired_pos - target).length();
-                        if let Some((_entity, toi, _hit, _normal)) = physics_world.raycast_detailed(
-                            target, ray_dir, ray_dist, None,
-                        ) {
+                        if let Some((_entity, toi, _hit, _normal)) =
+                            physics_world.raycast_detailed(target, ray_dir, ray_dist, None)
+                        {
                             // Pull camera closer to avoid clipping through walls
                             desired_pos = target + ray_dir * (toi - 0.2).max(0.5);
                         }
@@ -2116,7 +2625,9 @@ let mut scene_world = scene_world.borrow_mut();
                     let look_rotation = glam::Quat::from_rotation_y(player.yaw)
                         * glam::Quat::from_rotation_x(player.pitch);
                     let cam_transform = Transform {
-                        position: transform.position + glam::Vec3::new(0.0, player.height * 0.4, 0.0) + shake_offset,
+                        position: transform.position
+                            + glam::Vec3::new(0.0, player.height * 0.4, 0.0)
+                            + shake_offset,
                         rotation: look_rotation,
                         ..transform.clone()
                     };
@@ -2156,603 +2667,6 @@ let mut scene_world = scene_world.borrow_mut();
         }
     }
 
-    /// Process commands from the command socket.
-    /// Editor-enhanced commands (spawn with mesh, save_scene, etc.) are handled here
-    /// at Engine level where we have access to GPU resources and caches.
-    fn process_commands(&mut self) {
-        let commands = match &self.command_server {
-            Some(s) => s.poll(),
-            None => return,
-        };
-
-        for pending in commands {
-            let cmd = pending.request.cmd.as_str();
-
-            // Log command for editor overlay (with detail)
-            if self.args.editor_mode {
-                let detail = match cmd {
-                    "spawn_entity" => {
-                        let eid = pending.request.params.get("entity_id")
-                            .and_then(|v| v.as_str()).unwrap_or("?");
-                        let mesh = pending.request.params.get("components")
-                            .and_then(|c| c.get("mesh_renderer"))
-                            .and_then(|m| m.get("mesh"))
-                            .and_then(|v| v.as_str()).unwrap_or("");
-                        if mesh.is_empty() {
-                            format!("spawn {}", eid)
-                        } else {
-                            format!("spawn {} [{}]", eid, mesh)
-                        }
-                    }
-                    "destroy_entity" => {
-                        let eid = pending.request.params.get("entity_id")
-                            .and_then(|v| v.as_str()).unwrap_or("?");
-                        format!("destroy {}", eid)
-                    }
-                    "modify_entity" => {
-                        let eid = pending.request.params.get("entity_id")
-                            .and_then(|v| v.as_str()).unwrap_or("?");
-                        format!("modify {}", eid)
-                    }
-                    "set_camera" => "set_camera".to_string(),
-                    "save_scene" => {
-                        let path = pending.request.params.get("path")
-                            .and_then(|v| v.as_str()).unwrap_or("scenes/editor_scene.yaml");
-                        format!("save -> {}", path)
-                    }
-                    "run_lua" => {
-                        let code = pending.request.params.get("code")
-                            .and_then(|v| v.as_str()).unwrap_or("");
-                        let preview: String = code.chars().take(40).collect();
-                        format!("lua: {}", preview)
-                    }
-                    other => other.to_string(),
-                };
-                self.editor_command_log.push((detail, std::time::Instant::now()));
-                // Keep only last 10
-                if self.editor_command_log.len() > 10 {
-                    self.editor_command_log.remove(0);
-                }
-            }
-
-            let response = match cmd {
-                // Enhanced spawn_entity: if it has mesh_renderer, handle at Engine level
-                "spawn_entity" => {
-                    let has_mesh = pending.request.params.get("components")
-                        .and_then(|c| c.get("mesh_renderer"))
-                        .is_some();
-                    if has_mesh {
-                        self.handle_spawn_with_mesh(&pending.request)
-                    } else {
-                        {
-                            let mut sw_opt = self.scene_world.as_ref().map(|rc| rc.borrow_mut());
-                            let mut eb = self.event_bus.borrow_mut();
-                            let mut is_opt = self.input_state.as_ref().map(|rc| rc.borrow_mut());
-                            crate::command::handle_command_rc(
-                                &pending.request,
-                                sw_opt.as_deref_mut(),
-                                &mut eb,
-                                is_opt.as_deref_mut(),
-                                &mut self.paused,
-                            )
-                        }
-                    }
-                }
-                "save_scene" => self.handle_save_scene(&pending.request),
-                "get_scene_yaml" => self.handle_get_scene_yaml(),
-                "set_camera" => self.handle_set_camera(&pending.request),
-                "editor_status" => self.handle_editor_status(),
-                "run_lua" => self.handle_run_lua(&pending.request),
-                "capture_frame" => self.handle_capture_frame(&pending.request),
-                "gpu_timings" => self.handle_gpu_timings(),
-                "benchmark" => self.handle_benchmark(&pending.request),
-                _ => {
-                        let mut sw_opt = self.scene_world.as_ref().map(|rc| rc.borrow_mut());
-                        let mut eb = self.event_bus.borrow_mut();
-                        let mut is_opt = self.input_state.as_ref().map(|rc| rc.borrow_mut());
-                        crate::command::handle_command_rc(
-                            &pending.request,
-                            sw_opt.as_deref_mut(),
-                            &mut eb,
-                            is_opt.as_deref_mut(),
-                            &mut self.paused,
-                        )
-                    },
-            };
-            let _ = pending.responder.send(response);
-        }
-    }
-
-    /// Handle spawn_entity with mesh_renderer component (needs GPU resources).
-    fn handle_spawn_with_mesh(&mut self, req: &crate::command::CommandRequest) -> crate::command::CommandResponse {
-        use crate::command::{CommandResponse};
-        use serde_json::json;
-
-        let entity_id = match req.params.get("entity_id").and_then(|v| v.as_str()) {
-            Some(id) => id.to_string(),
-            None => return CommandResponse::error("Missing 'entity_id' parameter"),
-        };
-
-        let gpu = match &self.gpu {
-            Some(gpu) => gpu,
-            None => return CommandResponse::error("GPU not initialized"),
-        };
-        let device = &gpu.device;
-
-        let components = match req.params.get("components") {
-            Some(c) => c,
-            None => return CommandResponse::error("Missing 'components' parameter"),
-        };
-
-        let mr = match components.get("mesh_renderer") {
-            Some(mr) => mr,
-            None => return CommandResponse::error("Missing 'mesh_renderer' in components"),
-        };
-
-        let mesh = mr.get("mesh").and_then(|v| v.as_str()).unwrap_or("procedural:cube");
-        let material = mr.get("material").and_then(|v| v.as_str()).unwrap_or("procedural:default");
-
-        // Parse transform
-        let mut position = [0.0f32; 3];
-        let mut scale = [1.0f32; 3];
-        let mut rotation = [0.0f32; 3];
-        if let Some(t) = components.get("transform") {
-            if let Some(arr) = t.get("position").and_then(|v| v.as_array()) {
-                if arr.len() == 3 {
-                    position = [
-                        arr[0].as_f64().unwrap_or(0.0) as f32,
-                        arr[1].as_f64().unwrap_or(0.0) as f32,
-                        arr[2].as_f64().unwrap_or(0.0) as f32,
-                    ];
-                }
-            }
-            if let Some(arr) = t.get("scale").and_then(|v| v.as_array()) {
-                if arr.len() == 3 {
-                    scale = [
-                        arr[0].as_f64().unwrap_or(1.0) as f32,
-                        arr[1].as_f64().unwrap_or(1.0) as f32,
-                        arr[2].as_f64().unwrap_or(1.0) as f32,
-                    ];
-                }
-            }
-            if let Some(arr) = t.get("rotation").and_then(|v| v.as_array()) {
-                if arr.len() == 3 {
-                    rotation = [
-                        arr[0].as_f64().unwrap_or(0.0) as f32,
-                        arr[1].as_f64().unwrap_or(0.0) as f32,
-                        arr[2].as_f64().unwrap_or(0.0) as f32,
-                    ];
-                }
-            }
-        }
-
-        // Parse tags
-        let tags = req.params.get("tags")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
-            .unwrap_or_default();
-
-        // Spawn entity, apply rotation/tags (scoped to release scene_world borrow)
-        {
-            let scene_world = match &self.scene_world {
-                Some(sw) => sw,
-                None => return CommandResponse::error("No scene loaded"),
-            };
-            let mut scene_world = scene_world.borrow_mut();
-
-            if scene_world.entity_registry.contains_key(&entity_id) {
-                return CommandResponse::error(format!("Entity '{}' already exists", entity_id));
-            }
-
-            // Use spawn_runtime_entity for mesh entities
-            let ok = crate::world::spawn_runtime_entity(
-                &mut scene_world,
-                &entity_id,
-                mesh,
-                material,
-                position,
-                scale,
-                device,
-                &gpu.queue,
-                &self.project_root,
-                &mut self.mesh_cache,
-                &mut self.material_cache,
-                self.texture_resources.as_ref(),
-            );
-
-            if !ok {
-                return CommandResponse::error(format!("Failed to spawn entity '{}'", entity_id));
-            }
-
-            // Apply rotation if non-zero
-            if rotation != [0.0, 0.0, 0.0] {
-                if let Some(&entity) = scene_world.entity_registry.get(&entity_id) {
-                    if let Ok(mut transform) = scene_world.world.get::<&mut Transform>(entity) {
-                        transform.rotation = crate::world::euler_degrees_to_quat(rotation);
-                        transform.dirty = true;
-                    }
-                }
-            }
-
-            // Apply tags
-            if !tags.is_empty() {
-                if let Some(&entity) = scene_world.entity_registry.get(&entity_id) {
-                    if let Ok(mut entity_tags) = scene_world.world.get::<&mut crate::components::Tags>(entity) {
-                        entity_tags.0 = tags;
-                    }
-                }
-            }
-        } // scene_world borrow released here
-
-        // Add physics body if rigid_body/collider components are specified
-        if let Some(collider_json) = components.get("collider") {
-            // Parse collider shape from JSON
-            let shape_str = collider_json.get("shape").and_then(|v| v.as_str()).unwrap_or("box");
-            let shape = match shape_str {
-                "sphere" => crate::physics::PhysicsShape::Sphere {
-                    radius: collider_json.get("radius").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32,
-                },
-                "capsule" => crate::physics::PhysicsShape::Capsule {
-                    half_height: collider_json.get("half_height").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32,
-                    radius: collider_json.get("radius").and_then(|v| v.as_f64()).unwrap_or(0.3) as f32,
-                },
-                _ => {
-                    let he = if let Some(arr) = collider_json.get("half_extents").and_then(|v| v.as_array()) {
-                        if arr.len() == 3 {
-                            glam::Vec3::new(
-                                arr[0].as_f64().unwrap_or(0.5) as f32,
-                                arr[1].as_f64().unwrap_or(0.5) as f32,
-                                arr[2].as_f64().unwrap_or(0.5) as f32,
-                            )
-                        } else {
-                            glam::Vec3::splat(0.5)
-                        }
-                    } else {
-                        glam::Vec3::new(scale[0] * 0.5, scale[1] * 0.5, scale[2] * 0.5)
-                    };
-                    crate::physics::PhysicsShape::Box { half_extents: he }
-                }
-            };
-
-            let is_trigger = collider_json.get("is_trigger").and_then(|v| v.as_bool()).unwrap_or(false);
-            let restitution = collider_json.get("restitution").and_then(|v| v.as_f64()).unwrap_or(0.3) as f32;
-            let friction = collider_json.get("friction").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
-
-            let rb_json = components.get("rigid_body");
-            let body_type = rb_json.and_then(|rb| rb.get("type")).and_then(|v| v.as_str()).unwrap_or("static");
-
-            let pos = glam::Vec3::from(position);
-            let rot = crate::world::euler_degrees_to_quat(rotation);
-
-            if let (Some(pw), Some(sw)) = (&self.physics_world, &self.scene_world) {
-                let mut pw = pw.borrow_mut();
-                let mut sw = sw.borrow_mut();
-                if let Some(&entity) = sw.entity_registry.get(&entity_id) {
-                    match body_type {
-                        "dynamic" => {
-                            let mass = rb_json.and_then(|rb| rb.get("mass")).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                            let ccd = rb_json.and_then(|rb| rb.get("ccd")).and_then(|v| v.as_bool()).unwrap_or(false);
-                            let (rb_handle, col_handle) = pw
-                                .add_dynamic_body(entity, pos, rot, shape.clone(), mass, restitution, friction, ccd);
-                            let _ = sw.world.insert(entity, (
-                                crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Dynamic },
-                                crate::physics::Collider { handle: col_handle, shape, is_trigger },
-                            ));
-                        }
-                        _ => {
-                            let (rb_handle, col_handle) = pw
-                                .add_static_body(entity, pos, rot, shape.clone(), is_trigger, restitution, friction);
-                            let _ = sw.world.insert(entity, (
-                                crate::physics::RigidBody { handle: rb_handle, body_type: crate::physics::PhysicsBodyType::Static },
-                                crate::physics::Collider { handle: col_handle, shape, is_trigger },
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        CommandResponse::ok(json!({"entity_id": entity_id}))
-    }
-
-    /// Handle save_scene: serialize current ECS state to YAML file.
-    fn handle_save_scene(&self, req: &crate::command::CommandRequest) -> crate::command::CommandResponse {
-        use crate::command::CommandResponse;
-        use serde_json::json;
-
-        let path = req.params.get("path").and_then(|v| v.as_str())
-            .unwrap_or("scenes/editor_scene.yaml");
-        let full_path = self.project_root.join(path);
-
-        let yaml = match self.serialize_scene_to_yaml() {
-            Some(y) => y,
-            None => return CommandResponse::error("No scene to save"),
-        };
-
-        // Ensure parent directory exists
-        if let Some(parent) = full_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        match std::fs::write(&full_path, &yaml) {
-            Ok(()) => {
-                tracing::info!("Scene saved to {:?}", full_path);
-                CommandResponse::ok(json!({"path": full_path.display().to_string(), "bytes": yaml.len()}))
-            }
-            Err(e) => CommandResponse::error(format!("Failed to write scene: {}", e)),
-        }
-    }
-
-    /// Handle get_scene_yaml: return current scene as YAML string.
-    fn handle_get_scene_yaml(&self) -> crate::command::CommandResponse {
-        use crate::command::CommandResponse;
-        use serde_json::json;
-
-        match self.serialize_scene_to_yaml() {
-            Some(yaml) => CommandResponse::ok(json!({"yaml": yaml})),
-            None => CommandResponse::error("No scene loaded"),
-        }
-    }
-
-    /// Handle set_camera: update editor camera position/rotation.
-    fn handle_set_camera(&mut self, req: &crate::command::CommandRequest) -> crate::command::CommandResponse {
-        use crate::command::CommandResponse;
-        use serde_json::json;
-
-        let editor_cam = match &mut self.editor_camera {
-            Some(c) => c,
-            None => return CommandResponse::error("Not in editor mode"),
-        };
-
-        if let Some(arr) = req.params.get("position").and_then(|v| v.as_array()) {
-            if arr.len() == 3 {
-                editor_cam.position = glam::Vec3::new(
-                    arr[0].as_f64().unwrap_or(0.0) as f32,
-                    arr[1].as_f64().unwrap_or(0.0) as f32,
-                    arr[2].as_f64().unwrap_or(0.0) as f32,
-                );
-            }
-        }
-        if let Some(yaw) = req.params.get("yaw").and_then(|v| v.as_f64()) {
-            editor_cam.yaw = (yaw as f32).to_radians();
-        }
-        if let Some(pitch) = req.params.get("pitch").and_then(|v| v.as_f64()) {
-            editor_cam.pitch = (pitch as f32).to_radians();
-        }
-        if let Some(arr) = req.params.get("look_at").and_then(|v| v.as_array()) {
-            if arr.len() == 3 {
-                let target = glam::Vec3::new(
-                    arr[0].as_f64().unwrap_or(0.0) as f32,
-                    arr[1].as_f64().unwrap_or(0.0) as f32,
-                    arr[2].as_f64().unwrap_or(0.0) as f32,
-                );
-                let dir = (target - editor_cam.position).normalize_or_zero();
-                editor_cam.yaw = (-dir.x).atan2(-dir.z);
-                editor_cam.pitch = dir.y.asin();
-            }
-        }
-
-        CommandResponse::ok(json!({
-            "position": [editor_cam.position.x, editor_cam.position.y, editor_cam.position.z],
-            "yaw": editor_cam.yaw.to_degrees(),
-            "pitch": editor_cam.pitch.to_degrees(),
-        }))
-    }
-
-    /// Handle editor_status: return editor mode info.
-    fn handle_editor_status(&self) -> crate::command::CommandResponse {
-        use crate::command::CommandResponse;
-        use serde_json::json;
-
-        let entity_count = self.scene_world.as_ref()
-            .map(|sw| sw.borrow().entity_registry.len())
-            .unwrap_or(0);
-
-        let camera_info = self.editor_camera.as_ref().map(|c| {
-            json!({
-                "position": [c.position.x, c.position.y, c.position.z],
-                "yaw": c.yaw.to_degrees(),
-                "pitch": c.pitch.to_degrees(),
-                "speed": c.speed,
-            })
-        });
-
-        let scene_path = self.editor_scene_path.as_ref()
-            .map(|p| p.display().to_string());
-
-        CommandResponse::ok(json!({
-            "editor_mode": self.args.editor_mode,
-            "entity_count": entity_count,
-            "scene_path": scene_path,
-            "camera": camera_info,
-        }))
-    }
-
-    /// Handle run_lua: execute arbitrary Lua code with access to all registered APIs.
-    fn handle_run_lua(&mut self, req: &crate::command::CommandRequest) -> crate::command::CommandResponse {
-        use crate::command::CommandResponse;
-        use serde_json::json;
-
-        let code = match req.params.get("code").and_then(|v| v.as_str()) {
-            Some(c) if !c.is_empty() => c,
-            _ => return CommandResponse::error("Missing or empty 'code' parameter"),
-        };
-
-        let script_runtime = match &self.script_runtime {
-            Some(sr) => sr,
-            None => return CommandResponse::error("Script runtime not initialized"),
-        };
-
-        let lua = &script_runtime.lua;
-
-        // Create a sandboxed environment with __index fallback to globals
-        // This gives access to all registered API tables (entity, physics, particles, etc.)
-        let result: Result<mlua::Value, mlua::Error> = (|| {
-            let env = lua.create_table()?;
-            let meta = lua.create_table()?;
-            meta.set("__index", lua.globals())?;
-            env.set_metatable(Some(meta));
-
-            // Capture print output
-            let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-            let output_clone = output.clone();
-            let print_fn = lua.create_function(move |_, args: mlua::MultiValue| {
-                let parts: Vec<String> = args.iter().map(|v| format!("{:?}", v)).collect();
-                let line = parts.join("\t");
-                if let Ok(mut out) = output_clone.lock() {
-                    out.push(line);
-                }
-                Ok(())
-            })?;
-            env.set("print", print_fn)?;
-
-            let chunk = lua.load(code)
-                .set_name("run_lua")
-                .set_environment(env);
-            let value = script_runtime.run_limited(|| chunk.eval::<mlua::Value>())?;
-
-            // Format return value
-            let result_str = match &value {
-                mlua::Value::Nil => "nil".to_string(),
-                mlua::Value::Boolean(b) => b.to_string(),
-                mlua::Value::Integer(i) => i.to_string(),
-                mlua::Value::Number(n) => n.to_string(),
-                mlua::Value::String(s) => s.to_string_lossy(),
-                other => format!("{:?}", other),
-            };
-
-            let print_output = output.lock().map(|o| o.clone()).unwrap_or_default();
-
-            Ok(mlua::Value::String(lua.create_string(json!({
-                "result": result_str,
-                "print_output": print_output,
-            }).to_string())?))
-        })();
-
-        match result {
-            Ok(val) => {
-                // Parse back the JSON we stuffed in
-                if let mlua::Value::String(s) = val {
-                    let s = s.to_string_lossy();
-                    let parsed: serde_json::Value = serde_json::from_str(&s).unwrap_or(json!({"result": s}));
-                    CommandResponse::ok(parsed)
-                } else {
-                    CommandResponse::ok(json!({"result": "ok"}))
-                }
-            }
-            Err(e) => CommandResponse::error(format!("Lua error: {}", e)),
-        }
-    }
-
-    /// Serialize the current ECS scene state to YAML.
-    fn serialize_scene_to_yaml(&self) -> Option<String> {
-        use crate::components::*;
-        use crate::scene::*;
-
-        let scene_world = self.scene_world.as_ref()?;
-        let scene_world = scene_world.borrow();
-
-        let scene_name = scene_world.current_scene.as_ref()
-            .map(|s| s.name.clone())
-            .unwrap_or_else(|| "Editor Scene".to_string());
-
-        let settings = scene_world.current_scene.as_ref()
-            .map(|s| s.settings.clone())
-            .unwrap_or_default();
-
-        let mut entities = Vec::new();
-
-        for (id, &entity) in &scene_world.entity_registry {
-            let mut components = ComponentMap::default();
-
-            // Transform
-            if let Ok(t) = scene_world.world.get::<&Transform>(entity) {
-                let (yaw, pitch, roll) = t.rotation.to_euler(glam::EulerRot::YXZ);
-                components.transform = Some(TransformDef {
-                    position: t.position.to_array(),
-                    rotation: [pitch.to_degrees(), yaw.to_degrees(), roll.to_degrees()],
-                    scale: t.scale.to_array(),
-                });
-            }
-
-            // MeshRenderer
-            if let Ok(mr) = scene_world.world.get::<&MeshRenderer>(entity) {
-                let mesh_name = self.mesh_cache.name_for_handle(mr.mesh_handle)
-                    .unwrap_or_else(|| format!("mesh:{}", mr.mesh_handle.0));
-                let material_name = self.material_cache.name_for_handle(mr.material_handle)
-                    .unwrap_or_else(|| format!("material:{}", mr.material_handle.0));
-                components.mesh_renderer = Some(MeshRendererDef {
-                    mesh: mesh_name,
-                    material: material_name,
-                    cast_shadows: true,
-                    receive_shadows: true,
-                });
-            }
-
-            // Camera
-            if let Ok(c) = scene_world.world.get::<&Camera>(entity) {
-                let role_str = match &c.role {
-                    CameraRole::Main => "main".to_string(),
-                    CameraRole::Other(s) => s.clone(),
-                };
-                components.camera = Some(CameraDef {
-                    fov: c.fov_degrees,
-                    near: c.near,
-                    far: c.far,
-                    role: role_str,
-                    mode: "first_person".to_string(),
-                    distance: 4.0,
-                    height_offset: 1.5,
-                    pitch_limits: None,
-                });
-            }
-
-            // PointLight
-            if let Ok(pl) = scene_world.world.get::<&PointLight>(entity) {
-                components.point_light = Some(PointLightDef {
-                    color: pl.color.to_array(),
-                    intensity: pl.intensity,
-                    range: pl.range,
-                });
-            }
-
-            // DirectionalLight
-            if let Ok(dl) = scene_world.world.get::<&DirectionalLight>(entity) {
-                components.directional_light = Some(DirectionalLightDef {
-                    direction: dl.direction.to_array(),
-                    color: dl.color.to_array(),
-                    intensity: dl.intensity,
-                    shadow_extent: dl.shadow_extent,
-                });
-            }
-
-            // GpuSwarm
-            if let Ok(swarm) = scene_world.world.get::<&crate::components::GpuSwarm>(entity) {
-                components.gpu_swarm = Some(swarm.def.clone());
-            }
-
-            // Tags
-            let tags = scene_world.world.get::<&Tags>(entity)
-                .map(|t| t.0.clone())
-                .unwrap_or_default();
-
-            entities.push(EntityDef {
-                id: id.clone(),
-                tags,
-                extends: None,
-                components,
-            });
-        }
-
-        let scene_file = SceneFile {
-            name: scene_name,
-            settings,
-            entities,
-        };
-
-        serde_yaml::to_string(&scene_file).ok()
-    }
-
     /// Update the editor camera and apply to CameraState.
     fn update_editor_camera(&mut self) {
         // Compute mouse delta from cursor position snapshot (event-order independent)
@@ -2762,10 +2676,10 @@ let mut scene_world = scene_world.borrow_mut();
         }
 
         let input = match &self.input_state {
-    Some(input) => input,
-    None => return,
-};
-let input = input.borrow();
+            Some(input) => input,
+            None => return,
+        };
+        let input = input.borrow();
 
         if let Some(editor_cam) = &mut self.editor_camera {
             editor_cam.update(&input, self.delta_time);
@@ -2778,14 +2692,21 @@ let input = input.borrow();
 
         if let (Some(editor_cam), Some(camera_state)) = (&self.editor_camera, &self.camera_state) {
             let mut camera_state = camera_state.borrow_mut();
-            editor_cam.apply_to_camera_state(&mut camera_state, &gpu.queue, gpu.config.width, gpu.config.height);
+            editor_cam.apply_to_camera_state(
+                &mut camera_state,
+                &gpu.queue,
+                gpu.config.width,
+                gpu.config.height,
+            );
         }
     }
 
     /// Render a full editor frame: 3D scene + overlay.
     /// Draw editor status overlay.
     fn draw_editor_overlay(&mut self) {
-        let (Some(ui_rc), Some(font_rc), Some(gpu)) = (&self.ui_renderer, &self.bitmap_font, &self.gpu) else {
+        let (Some(ui_rc), Some(font_rc), Some(gpu)) =
+            (&self.ui_renderer, &self.bitmap_font, &self.gpu)
+        else {
             return;
         };
         let mut ui = ui_rc.borrow_mut();
@@ -2799,26 +2720,46 @@ let input = input.borrow();
         let dim = [0.7, 0.7, 0.7, 0.7];
 
         // Background strip
-        ui.draw_rect(0.0, 0.0, gpu.config.width as f32, 30.0, [0.0, 0.0, 0.0, 0.6]);
+        ui.draw_rect(
+            0.0,
+            0.0,
+            gpu.config.width as f32,
+            30.0,
+            [0.0, 0.0, 0.0, 0.6],
+        );
         ui.draw_text(x, 7.0, "EDITOR MODE", sz, green, font);
 
         // Entity count
-        let entity_count = self.scene_world.as_ref()
+        let entity_count = self
+            .scene_world
+            .as_ref()
             .map(|sw| sw.borrow().entity_registry.len())
             .unwrap_or(0);
-        ui.draw_text(180.0, 7.0, &format!("Entities: {}", entity_count), sz, white, font);
+        ui.draw_text(
+            180.0,
+            7.0,
+            &format!("Entities: {}", entity_count),
+            sz,
+            white,
+            font,
+        );
 
         // Camera position
         if let Some(cam) = &self.editor_camera {
-            let pos_text = format!("Cam: ({:.1}, {:.1}, {:.1})  Speed: {:.1}",
-                cam.position.x, cam.position.y, cam.position.z, cam.speed);
+            let pos_text = format!(
+                "Cam: ({:.1}, {:.1}, {:.1})  Speed: {:.1}",
+                cam.position.x, cam.position.y, cam.position.z, cam.speed
+            );
             ui.draw_text(380.0, 7.0, &pos_text, sz, dim, font);
         }
 
         // Recent commands (bottom-left, with background panel)
         let now = std::time::Instant::now();
         let h = gpu.config.height as f32;
-        let visible_cmds: Vec<_> = self.editor_command_log.iter().rev()
+        let visible_cmds: Vec<_> = self
+            .editor_command_log
+            .iter()
+            .rev()
             .filter(|(_, ts)| now.duration_since(*ts).as_secs_f32() < 10.0)
             .take(8)
             .collect();
@@ -2830,7 +2771,11 @@ let input = input.borrow();
             let mut y = panel_y + 22.0;
             for &(cmd_text, timestamp) in visible_cmds.iter().rev() {
                 let age = now.duration_since(*timestamp).as_secs_f32();
-                let alpha = if age > 7.0 { 1.0 - (age - 7.0) / 3.0 } else { 1.0 };
+                let alpha = if age > 7.0 {
+                    1.0 - (age - 7.0) / 3.0
+                } else {
+                    1.0
+                };
                 let color = [0.5, 0.9, 1.0, alpha.clamp(0.0, 1.0)];
                 ui.draw_text(x + 4.0, y, &format!("> {}", cmd_text), 14.0, color, font);
                 y += 18.0;
@@ -2902,7 +2847,9 @@ let input = input.borrow();
                 let mut input = input_rc.borrow_mut();
                 if input.key_held(KeyCode::Escape) {
                     if let Some(gpu) = &self.gpu {
-                        let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::None);
+                        let _ = gpu
+                            .window
+                            .set_cursor_grab(winit::window::CursorGrabMode::None);
                         gpu.window.set_cursor_visible(true);
                     }
                     input.cursor_captured = false;
@@ -2920,8 +2867,13 @@ let input = input.borrow();
                     if should_capture {
                         tracing::info!("Capturing cursor for FPS mode");
                         if let Some(gpu) = &self.gpu {
-                            let _ = gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                                .or_else(|_| gpu.window.set_cursor_grab(winit::window::CursorGrabMode::Confined));
+                            let _ = gpu
+                                .window
+                                .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                .or_else(|_| {
+                                    gpu.window
+                                        .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                });
                             gpu.window.set_cursor_visible(false);
                         }
                         input.cursor_captured = true;
@@ -2941,34 +2893,75 @@ let input = input.borrow();
             }
             if input.just_pressed_key(KeyCode::KeyH) {
                 self.render_debug.show_colliders = !self.render_debug.show_colliders;
-                tracing::info!("Collider wireframes: {}", if self.render_debug.show_colliders { "ON" } else { "OFF" });
+                tracing::info!(
+                    "Collider wireframes: {}",
+                    if self.render_debug.show_colliders {
+                        "ON"
+                    } else {
+                        "OFF"
+                    }
+                );
             }
             if self.render_debug.show_hud {
                 if input.just_pressed_key(KeyCode::Digit1) {
                     self.render_debug.bloom_enabled = !self.render_debug.bloom_enabled;
-                    tracing::info!("Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" });
+                    tracing::info!(
+                        "Bloom: {}",
+                        if self.render_debug.bloom_enabled {
+                            "ON"
+                        } else {
+                            "OFF"
+                        }
+                    );
                 }
                 if input.just_pressed_key(KeyCode::Digit2) {
                     // Cycle light intensity: 1x → 5x → 10x → 20x → 1x
-                    self.render_debug.light_intensity_mult = match self.render_debug.light_intensity_mult as u32 {
-                        0..=1 => 5.0,
-                        2..=5 => 10.0,
-                        6..=10 => 20.0,
-                        _ => 1.0,
-                    };
-                    tracing::info!("Light intensity: {}x", self.render_debug.light_intensity_mult);
+                    self.render_debug.light_intensity_mult =
+                        match self.render_debug.light_intensity_mult as u32 {
+                            0..=1 => 5.0,
+                            2..=5 => 10.0,
+                            6..=10 => 20.0,
+                            _ => 1.0,
+                        };
+                    tracing::info!(
+                        "Light intensity: {}x",
+                        self.render_debug.light_intensity_mult
+                    );
                 }
                 if input.just_pressed_key(KeyCode::Digit3) {
-                    self.render_debug.point_lights_enabled = !self.render_debug.point_lights_enabled;
-                    tracing::info!("Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" });
+                    self.render_debug.point_lights_enabled =
+                        !self.render_debug.point_lights_enabled;
+                    tracing::info!(
+                        "Point Lights: {}",
+                        if self.render_debug.point_lights_enabled {
+                            "ON"
+                        } else {
+                            "OFF"
+                        }
+                    );
                 }
                 if input.just_pressed_key(KeyCode::Digit4) {
                     self.render_debug.emission_enabled = !self.render_debug.emission_enabled;
-                    tracing::info!("Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" });
+                    tracing::info!(
+                        "Emission: {}",
+                        if self.render_debug.emission_enabled {
+                            "ON"
+                        } else {
+                            "OFF"
+                        }
+                    );
                 }
                 if input.just_pressed_key(KeyCode::Digit5) {
-                    self.render_debug.torch_flicker_enabled = !self.render_debug.torch_flicker_enabled;
-                    tracing::info!("Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" });
+                    self.render_debug.torch_flicker_enabled =
+                        !self.render_debug.torch_flicker_enabled;
+                    tracing::info!(
+                        "Torch Flicker: {}",
+                        if self.render_debug.torch_flicker_enabled {
+                            "ON"
+                        } else {
+                            "OFF"
+                        }
+                    );
                 }
                 if input.just_pressed_key(KeyCode::Digit6) {
                     // Cycle ambient override: 0 → 0.3 → 1.0 → 3.0 → 0
@@ -2992,16 +2985,19 @@ let input = input.borrow();
 
         // Phase 5: FPS controller update (skip in editor mode — uses free camera)
         if !self.args.editor_mode
-            && self.input_state.as_ref().map(|i| i.borrow().cursor_captured).unwrap_or(false) {
-                self.update_fps_controller();
-            }
+            && self
+                .input_state
+                .as_ref()
+                .map(|i| i.borrow().cursor_captured)
+                .unwrap_or(false)
+        {
+            self.update_fps_controller();
+        }
 
         // Always advance physics (gravity, collisions, etc.), in
         // fixed steps so the simulation does not depend on the
         // frame rate. Scripts get `fixed_update` before each step.
-        if let (Some(scene_world), Some(physics_world)) =
-            (&self.scene_world, &self.physics_world)
-        {
+        if let (Some(scene_world), Some(physics_world)) = (&self.scene_world, &self.physics_world) {
             crate::sim::run_fixed_steps(
                 physics_world,
                 scene_world,
@@ -3019,8 +3015,14 @@ let input = input.borrow();
         self.update_projectiles();
 
         // Tier 4: swarm attacks hurt their targets; kill and hit events
-        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime) {
-            crate::sim::process_swarm_reports(&self.swarm_bus, scene_world, script_runtime, &self.event_bus);
+        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime)
+        {
+            crate::sim::process_swarm_reports(
+                &self.swarm_bus,
+                scene_world,
+                script_runtime,
+                &self.event_bus,
+            );
         }
 
         // Tier 1: Process health system (on_death callbacks)
@@ -3044,7 +3046,11 @@ let input = input.borrow();
         // Show any script or listener that was stopped for exceeding a limit
         if let Some(script_runtime) = &self.script_runtime {
             for message in script_runtime.take_limit_reports() {
-                self.reload_notifications.push((message, std::time::Instant::now(), [1.0, 0.3, 0.3, 1.0]));
+                self.reload_notifications.push((
+                    message,
+                    std::time::Instant::now(),
+                    [1.0, 0.3, 0.3, 1.0],
+                ));
             }
         }
 
@@ -3084,8 +3090,7 @@ let input = input.borrow();
 
     /// Call `update(dt)` on every scripted entity.
     fn update_scripts(&self, dt: f32) {
-        if let (Some(scene_world), Some(script_runtime)) =
-            (&self.scene_world, &self.script_runtime)
+        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime)
         {
             crate::sim::update_scripts(scene_world, script_runtime, dt);
         }
@@ -3156,14 +3161,9 @@ let input = input.borrow();
             let cs = camera_state.borrow();
             let view_matrix = cs.view_matrix();
             let sw = scene_world.borrow();
-            for (_entity, splat) in
-                sw.world.query::<&GaussianSplat>().iter()
-            {
-                self.splat_cache.sort_splats(
-                    splat.splat_handle,
-                    &view_matrix,
-                    &gpu.queue,
-                );
+            for (_entity, splat) in sw.world.query::<&GaussianSplat>().iter() {
+                self.splat_cache
+                    .sort_splats(splat.splat_handle, &view_matrix, &gpu.queue);
             }
         }
 
@@ -3175,14 +3175,14 @@ let input = input.borrow();
 
     /// Render the 3D scene into `target`, without collider wireframes or
     /// the UI overlay. Used for the window and for frame captures.
-    fn render_scene_to(&self, gpu: &GpuState, target: &wgpu::TextureView, timer: Option<&crate::gpu_timer::GpuTimer>) {
+    fn render_scene_to(
+        &self,
+        gpu: &GpuState,
+        target: &wgpu::TextureView,
+        timer: Option<&crate::gpu_timer::GpuTimer>,
+    ) {
         if self.compiled_pipeline.is_some() {
-            if let (
-                Some(scene_world),
-                Some(camera_state),
-                Some(draw_pool),
-                Some(compiled),
-            ) = (
+            if let (Some(scene_world), Some(camera_state), Some(draw_pool), Some(compiled)) = (
                 &self.scene_world,
                 &self.camera_state,
                 &self.draw_pool,
@@ -3220,11 +3220,11 @@ let input = input.borrow();
             &self.draw_pool,
             &self.forward_pipeline,
         ) {
-            let mut encoder = gpu.device.create_command_encoder(
-                &wgpu::CommandEncoderDescriptor {
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Forward Render Encoder"),
-                },
-            );
+                });
             let sw = scene_world.borrow();
             let cs = camera_state.borrow();
             crate::renderer::render_scene_to_view(
@@ -3245,126 +3245,6 @@ let input = input.borrow();
 
     /// GPU timings as JSON: average milliseconds per frame over the last 60
     /// frames, for the frame and per pass (the swarm step is "swarms").
-    fn gpu_timings_json(&self) -> serde_json::Value {
-        use serde_json::json;
-        match &self.gpu_timer {
-            Some(timer) => {
-                let t = timer.timings();
-                let passes: Vec<_> = t.passes.iter().map(|(name, ms)| json!({ "pass": name, "ms": ms })).collect();
-                json!({
-                    "available": true,
-                    "frame_ms": t.frame_ms,
-                    "passes": passes,
-                    "frames": t.frames,
-                })
-            }
-            None => json!({ "available": false }),
-        }
-    }
-
-    /// Handle gpu_timings: see `gpu_timings_json`.
-    fn handle_gpu_timings(&self) -> crate::command::CommandResponse {
-        crate::command::CommandResponse::ok(self.gpu_timings_json())
-    }
-
-    /// Handle benchmark: run `frames` whole frames (default 240) back to
-    /// back, each simulated with a fixed 1/60 s step, swarms stepped and
-    /// every render pass drawn into an offscreen target, without presenting;
-    /// then wait for the GPU. That measures what the engine sustains, free of
-    /// vsync and of the window server, with the GPU kept busy at full clock.
-    /// The simulation really advances.
-    fn handle_benchmark(&mut self, req: &crate::command::CommandRequest) -> crate::command::CommandResponse {
-        use crate::command::CommandResponse;
-        use serde_json::json;
-
-        let frames = req.params.get("frames").and_then(|v| v.as_u64()).unwrap_or(240).clamp(1, 10_000) as u32;
-        if self.scene_world.is_none() {
-            return CommandResponse::error("No scene loaded");
-        }
-        let Some(gpu) = &self.gpu else {
-            return CommandResponse::error("The renderer is not running");
-        };
-        let (width, height) = (gpu.config.width, gpu.config.height);
-        let target = crate::capture::create_capture_target(gpu);
-        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        if let Some(timer) = self.gpu_timer.as_mut() {
-            timer.reset();
-        }
-
-        let saved_dt = self.delta_time;
-        self.delta_time = 1.0 / 60.0;
-        let start = std::time::Instant::now();
-        for _ in 0..frames {
-            if !self.paused {
-                self.tick_simulation();
-            }
-            self.prepare_render();
-            if let Some(gpu) = &self.gpu {
-                self.render_scene_to(gpu, &view, self.gpu_timer.as_ref());
-                if let Some(timer) = self.gpu_timer.as_mut() {
-                    timer.finish_frame(&gpu.device, &gpu.queue);
-                }
-            }
-        }
-        if let Some(gpu) = &self.gpu {
-            let _ = gpu.device.poll(wgpu::Maintain::Wait);
-            // Pick up the timestamps that have just come back.
-            if let Some(timer) = self.gpu_timer.as_mut() {
-                timer.finish_frame(&gpu.device, &gpu.queue);
-            }
-        }
-        let seconds = start.elapsed().as_secs_f64();
-        self.delta_time = saved_dt;
-        self.last_frame_time = Some(std::time::Instant::now());
-
-        CommandResponse::ok(json!({
-            "frames": frames,
-            "seconds": seconds,
-            "fps": f64::from(frames) / seconds,
-            "ms_per_frame": seconds * 1000.0 / f64::from(frames),
-            "width": width,
-            "height": height,
-            "gpu": self.gpu_timings_json(),
-        }))
-    }
-
-    /// Handle capture_frame: render the scene to a PNG file inside the project.
-    fn handle_capture_frame(&mut self, req: &crate::command::CommandRequest) -> crate::command::CommandResponse {
-        use crate::command::CommandResponse;
-        use serde_json::json;
-
-        let relative = req.params.get("path").and_then(|v| v.as_str())
-            .unwrap_or("captures/frame.png");
-        let path = match crate::capture::capture_path(&self.project_root, relative) {
-            Ok(path) => path,
-            Err(e) => return CommandResponse::error(e),
-        };
-        let gpu = match &self.gpu {
-            Some(gpu) => gpu,
-            None => return CommandResponse::error("The renderer is not running"),
-        };
-        if self.scene_world.is_none() {
-            return CommandResponse::error("No scene loaded");
-        }
-
-        let target = crate::capture::create_capture_target(gpu);
-        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        self.render_scene_to(gpu, &view, None);
-        match crate::capture::save_texture_png(gpu, &target, &path) {
-            Ok((width, height)) => {
-                tracing::info!("Frame captured to {:?}", path);
-                CommandResponse::ok(json!({
-                    "path": path.display().to_string(),
-                    "width": width,
-                    "height": height,
-                }))
-            }
-            Err(e) => CommandResponse::error(format!("Capture failed: {}", e)),
-        }
-    }
-
-    /// Draw the frame: 3D scene, collider wireframes, UI overlay, then
-    /// present. Returns early, drawing nothing, if the surface is unavailable.
     fn render_frame(&mut self) {
         // Acquire swapchain and render 3D scene + UI overlay
         if let Some(gpu) = &self.gpu {
@@ -3389,16 +3269,16 @@ let input = input.borrow();
 
             // Debug wireframe pass: draw collider shapes over 3D scene
             if self.render_debug.show_colliders {
-                if let (Some(debug_draw), Some(physics_world), Some(camera_state)) = (
-                    &self.debug_draw,
-                    &self.physics_world,
-                    &self.camera_state,
-                ) {
+                if let (Some(debug_draw), Some(physics_world), Some(camera_state)) =
+                    (&self.debug_draw, &self.physics_world, &self.camera_state)
+                {
                     let pw = physics_world.borrow();
                     let cs = camera_state.borrow();
-                    let mut encoder = gpu.device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor { label: Some("Debug Wireframe Encoder") },
-                    );
+                    let mut encoder =
+                        gpu.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("Debug Wireframe Encoder"),
+                            });
                     debug_draw.render(
                         &gpu.device,
                         &mut encoder,
@@ -3412,10 +3292,7 @@ let input = input.borrow();
             }
 
             // UI overlay pass (drawn on top of 3D scene)
-            if let (Some(ui_rc), Some(font_rc)) = (
-                &self.ui_renderer,
-                &self.bitmap_font,
-            ) {
+            if let (Some(ui_rc), Some(font_rc)) = (&self.ui_renderer, &self.bitmap_font) {
                 let mut ui = ui_rc.borrow_mut();
                 let font_guard = font_rc.borrow();
                 let font: &BitmapFont = &font_guard;
@@ -3429,37 +3306,174 @@ let input = input.borrow();
                     let x = 10.0;
                     let mut y = 10.0;
 
-                    ui.draw_text(x, y, "RENDER DEBUG", sz, hdr, font); y += sz + 4.0;
-                    let c = if self.render_debug.bloom_enabled { on } else { off };
-                    ui.draw_text(x, y, &format!("[1] Bloom: {}", if self.render_debug.bloom_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
-                    ui.draw_text(x, y, &format!("[2] Light Boost: {}x", self.render_debug.light_intensity_mult), sz, val, font); y += sz + 2.0;
-                    let c = if self.render_debug.point_lights_enabled { on } else { off };
-                    ui.draw_text(x, y, &format!("[3] Point Lights: {}", if self.render_debug.point_lights_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
-                    let c = if self.render_debug.emission_enabled { on } else { off };
-                    ui.draw_text(x, y, &format!("[4] Emission: {}", if self.render_debug.emission_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
-                    let c = if self.render_debug.torch_flicker_enabled { on } else { off };
-                    ui.draw_text(x, y, &format!("[5] Torch Flicker: {}", if self.render_debug.torch_flicker_enabled { "ON" } else { "OFF" }), sz, c, font); y += sz + 2.0;
-                    ui.draw_text(x, y, &format!("[6] Ambient: {}", if self.render_debug.ambient_override < 0.1 { "scene".to_string() } else { format!("{:.1}", self.render_debug.ambient_override) }), sz, val, font); y += sz + 2.0;
-                    ui.draw_text(x, y, "[0] Toggle this HUD", sz, hdr, font); y += sz + 2.0;
-                    let c = if self.render_debug.show_colliders { on } else { off };
-                    ui.draw_text(x, y, &format!("[H] Colliders: {}", if self.render_debug.show_colliders { "ON" } else { "OFF" }), sz, c, font);
+                    ui.draw_text(x, y, "RENDER DEBUG", sz, hdr, font);
+                    y += sz + 4.0;
+                    let c = if self.render_debug.bloom_enabled {
+                        on
+                    } else {
+                        off
+                    };
+                    ui.draw_text(
+                        x,
+                        y,
+                        &format!(
+                            "[1] Bloom: {}",
+                            if self.render_debug.bloom_enabled {
+                                "ON"
+                            } else {
+                                "OFF"
+                            }
+                        ),
+                        sz,
+                        c,
+                        font,
+                    );
+                    y += sz + 2.0;
+                    ui.draw_text(
+                        x,
+                        y,
+                        &format!(
+                            "[2] Light Boost: {}x",
+                            self.render_debug.light_intensity_mult
+                        ),
+                        sz,
+                        val,
+                        font,
+                    );
+                    y += sz + 2.0;
+                    let c = if self.render_debug.point_lights_enabled {
+                        on
+                    } else {
+                        off
+                    };
+                    ui.draw_text(
+                        x,
+                        y,
+                        &format!(
+                            "[3] Point Lights: {}",
+                            if self.render_debug.point_lights_enabled {
+                                "ON"
+                            } else {
+                                "OFF"
+                            }
+                        ),
+                        sz,
+                        c,
+                        font,
+                    );
+                    y += sz + 2.0;
+                    let c = if self.render_debug.emission_enabled {
+                        on
+                    } else {
+                        off
+                    };
+                    ui.draw_text(
+                        x,
+                        y,
+                        &format!(
+                            "[4] Emission: {}",
+                            if self.render_debug.emission_enabled {
+                                "ON"
+                            } else {
+                                "OFF"
+                            }
+                        ),
+                        sz,
+                        c,
+                        font,
+                    );
+                    y += sz + 2.0;
+                    let c = if self.render_debug.torch_flicker_enabled {
+                        on
+                    } else {
+                        off
+                    };
+                    ui.draw_text(
+                        x,
+                        y,
+                        &format!(
+                            "[5] Torch Flicker: {}",
+                            if self.render_debug.torch_flicker_enabled {
+                                "ON"
+                            } else {
+                                "OFF"
+                            }
+                        ),
+                        sz,
+                        c,
+                        font,
+                    );
+                    y += sz + 2.0;
+                    ui.draw_text(
+                        x,
+                        y,
+                        &format!(
+                            "[6] Ambient: {}",
+                            if self.render_debug.ambient_override < 0.1 {
+                                "scene".to_string()
+                            } else {
+                                format!("{:.1}", self.render_debug.ambient_override)
+                            }
+                        ),
+                        sz,
+                        val,
+                        font,
+                    );
+                    y += sz + 2.0;
+                    ui.draw_text(x, y, "[0] Toggle this HUD", sz, hdr, font);
+                    y += sz + 2.0;
+                    let c = if self.render_debug.show_colliders {
+                        on
+                    } else {
+                        off
+                    };
+                    ui.draw_text(
+                        x,
+                        y,
+                        &format!(
+                            "[H] Colliders: {}",
+                            if self.render_debug.show_colliders {
+                                "ON"
+                            } else {
+                                "OFF"
+                            }
+                        ),
+                        sz,
+                        c,
+                        font,
+                    );
                     y += sz + 2.0;
                     if let Some(timer) = &self.gpu_timer {
                         let t = timer.timings();
                         let swarms = t
                             .pass_ms(crate::gpu_timer::SWARMS)
                             .map_or(String::new(), |ms| format!(" (swarms {ms:.2})"));
-                        ui.draw_text(x, y, &format!("GPU: {:.2} ms{}", t.frame_ms, swarms), sz, val, font);
+                        ui.draw_text(
+                            x,
+                            y,
+                            &format!("GPU: {:.2} ms{}", t.frame_ms, swarms),
+                            sz,
+                            val,
+                            font,
+                        );
                     }
                 }
 
                 // Always show collider indicator when active
                 if self.render_debug.show_colliders {
-                    ui.draw_text(10.0, (gpu.config.height as f32) - 30.0, "[H] Collider wireframes ON", 14.0, [0.0, 1.0, 1.0, 1.0], font);
+                    ui.draw_text(
+                        10.0,
+                        (gpu.config.height as f32) - 30.0,
+                        "[H] Collider wireframes ON",
+                        14.0,
+                        [0.0, 1.0, 1.0, 1.0],
+                        font,
+                    );
                 }
 
                 // Reload notifications (always visible, auto-fade)
-                self.reload_notifications.retain(|(_, t, _)| t.elapsed().as_secs_f32() < 4.0);
+                self.reload_notifications
+                    .retain(|(_, t, _)| t.elapsed().as_secs_f32() < 4.0);
                 let screen_w = gpu.config.width as f32;
                 let screen_h = gpu.config.height as f32;
                 for (i, (msg, t, color)) in self.reload_notifications.iter().rev().enumerate() {
@@ -3472,11 +3486,11 @@ let input = input.borrow();
                     ui.draw_text(x.max(10.0), y, msg, 14.0, c, font);
                 }
 
-                let mut ui_encoder = gpu.device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor {
-                        label: Some("UI Encoder"),
-                    },
-                );
+                let mut ui_encoder =
+                    gpu.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("UI Encoder"),
+                        });
                 ui.render(
                     &gpu.device,
                     &gpu.queue,
@@ -3518,8 +3532,10 @@ impl ApplicationHandler for Engine {
 
         let initial_wgsl = self.get_initial_shader();
 
-        let gpu_state =
-            pollster::block_on(crate::renderer::init_gpu(Arc::clone(&window), &initial_wgsl));
+        let gpu_state = pollster::block_on(crate::renderer::init_gpu(
+            Arc::clone(&window),
+            &initial_wgsl,
+        ));
 
         self.gpu_timer = crate::gpu_timer::GpuTimer::new(&gpu_state.device, &gpu_state.queue);
         if self.gpu_timer.is_none() {
@@ -3564,12 +3580,11 @@ impl ApplicationHandler for Engine {
                         gpu.surface.configure(&gpu.device, &gpu.config);
 
                         // Recreate depth texture on resize
-                        let (depth_texture, depth_view) =
-                            crate::renderer::create_depth_texture(
-                                &gpu.device,
-                                new_size.width,
-                                new_size.height,
-                            );
+                        let (depth_texture, depth_view) = crate::renderer::create_depth_texture(
+                            &gpu.device,
+                            new_size.width,
+                            new_size.height,
+                        );
                         gpu.depth_texture = depth_texture;
                         gpu.depth_view = depth_view;
 

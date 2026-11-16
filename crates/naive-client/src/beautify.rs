@@ -15,14 +15,9 @@ pub enum BeautifyBackend {
         gateway_key: String,
     },
     /// World Labs / Marble cloud API.
-    CloudApi {
-        api_url: String,
-        api_key: String,
-    },
+    CloudApi { api_url: String, api_key: String },
     /// Mock backend for testing: copies a pre-existing PLY.
-    Mock {
-        ply_path: PathBuf,
-    },
+    Mock { ply_path: PathBuf },
 }
 
 /// Configuration for the beautification pipeline.
@@ -107,8 +102,9 @@ pub fn export_scene_to_glb(
             }
         } else {
             // File-based mesh: try to read from project
-            let mesh_path = project_root.join(&mr.mesh);
+            let mesh_path = crate::project_path::resolve(project_root, &mr.mesh)?;
             if mesh_path.exists() {
+                crate::project_path::validate_gltf_resources(project_root, &mesh_path)?;
                 match read_glb_geometry(&mesh_path) {
                     Ok((verts, norms, idxs)) => {
                         for (v, n) in verts.iter().zip(norms.iter()) {
@@ -157,7 +153,8 @@ pub fn beautify(
     glb_data: &[u8],
     project_root: &Path,
 ) -> Result<BeautifyResult, String> {
-    let output_path = project_root.join(&config.output_ply);
+    let output_path =
+        crate::project_path::resolve_with_extension(project_root, &config.output_ply, "ply")?;
 
     // Ensure output directory exists
     if let Some(parent) = output_path.parent() {
@@ -178,9 +175,7 @@ pub fn beautify(
         BeautifyBackend::LocalGpu {
             gateway_url,
             gateway_key,
-        } => {
-            send_to_gateway(gateway_url, gateway_key, glb_data, config, &output_path)
-        }
+        } => send_to_gateway(gateway_url, gateway_key, glb_data, config, &output_path),
         BeautifyBackend::CloudApi { api_url, api_key } => {
             send_to_cloud_api(api_url, api_key, glb_data, config, &output_path)
         }
@@ -198,7 +193,7 @@ pub fn beautify_scene(
     tracing::info!("Beautify: exported {} bytes of GLB", glb_data.len());
 
     // Optionally save the intermediate GLB for debugging
-    let glb_path = project_root.join("assets/splats/beautify_export.glb");
+    let glb_path = crate::project_path::resolve(project_root, "assets/splats/beautify_export.glb")?;
     if let Some(parent) = glb_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -269,30 +264,66 @@ fn generate_cube() -> Geometry {
     // Unit cube centered at origin
     let positions = vec![
         // Front face
-        [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+        [-0.5, -0.5, 0.5],
+        [0.5, -0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [-0.5, 0.5, 0.5],
         // Back face
-        [0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5],
+        [0.5, -0.5, -0.5],
+        [-0.5, -0.5, -0.5],
+        [-0.5, 0.5, -0.5],
+        [0.5, 0.5, -0.5],
         // Top face
-        [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+        [-0.5, 0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [0.5, 0.5, -0.5],
+        [-0.5, 0.5, -0.5],
         // Bottom face
-        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
+        [-0.5, -0.5, -0.5],
+        [0.5, -0.5, -0.5],
+        [0.5, -0.5, 0.5],
+        [-0.5, -0.5, 0.5],
         // Right face
-        [0.5, -0.5, 0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5],
+        [0.5, -0.5, 0.5],
+        [0.5, -0.5, -0.5],
+        [0.5, 0.5, -0.5],
+        [0.5, 0.5, 0.5],
         // Left face
-        [-0.5, -0.5, -0.5], [-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, -0.5],
+        [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, 0.5],
+        [-0.5, 0.5, -0.5],
     ];
     let normals = vec![
-        [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
-        [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
-        [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
-        [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-        [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
     ];
     let indices = vec![
-        0, 1, 2, 0, 2, 3,       // front
-        4, 5, 6, 4, 6, 7,       // back
-        8, 9, 10, 8, 10, 11,    // top
+        0, 1, 2, 0, 2, 3, // front
+        4, 5, 6, 4, 6, 7, // back
+        8, 9, 10, 8, 10, 11, // top
         12, 13, 14, 12, 14, 15, // bottom
         16, 17, 18, 16, 18, 19, // right
         20, 21, 22, 20, 22, 23, // left
@@ -334,9 +365,7 @@ fn generate_sphere(stacks: u32, slices: u32) -> Geometry {
 type Geometry = (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<u32>);
 
 /// Read geometry from an existing GLB/glTF file.
-fn read_glb_geometry(
-    path: &Path,
-) -> Result<Geometry, String> {
+fn read_glb_geometry(path: &Path) -> Result<Geometry, String> {
     let (document, buffers, _) =
         gltf::import(path).map_err(|e| format!("Failed to import GLB: {}", e))?;
 
@@ -503,7 +532,9 @@ fn send_to_gateway(
     output_path: &Path,
 ) -> Result<BeautifyResult, String> {
     if gateway_url.is_empty() {
-        return Err("GATEWAY_URL not set. Configure it in .env for local GPU beautification.".to_string());
+        return Err(
+            "GATEWAY_URL not set. Configure it in .env for local GPU beautification.".to_string(),
+        );
     }
 
     let url = format!("{}/beautify", gateway_url.trim_end_matches('/'));
@@ -546,8 +577,7 @@ fn send_to_gateway(
         .decode(ply_b64)
         .map_err(|e| format!("Failed to decode PLY base64: {}", e))?;
 
-    std::fs::write(output_path, &ply_bytes)
-        .map_err(|e| format!("Failed to write PLY: {}", e))?;
+    std::fs::write(output_path, &ply_bytes).map_err(|e| format!("Failed to write PLY: {}", e))?;
 
     let splat_count = response_body["splat_count"].as_u64().map(|c| c as u32);
 
@@ -621,8 +651,7 @@ fn send_to_cloud_api(
         return Err("Cloud API response missing 'ply_data' or 'download_url'".to_string());
     };
 
-    std::fs::write(output_path, &ply_data)
-        .map_err(|e| format!("Failed to write PLY: {}", e))?;
+    std::fs::write(output_path, &ply_data).map_err(|e| format!("Failed to write PLY: {}", e))?;
 
     let splat_count = response_body["splat_count"].as_u64().map(|c| c as u32);
 

@@ -1,6 +1,6 @@
 # nAIVE
 
-**The AI-native game engine.** Create worlds with YAML, Lua, and natural language.
+**An experimental AI-native game engine.** Create worlds with YAML, Lua, and natural language.
 
 Built from the ground up in Rust. Worlds are created by AI, rendering happens on your GPU, and everything — scenes, materials, shaders, game logic — is a human-readable file that AI can generate, inspect, and modify.
 
@@ -17,9 +17,19 @@ Built from the ground up in Rust. Worlds are created by AI, rendering happens on
 | Render pipeline hardcoded in C++ | YAML-defined render pipeline DAG |
 | Entity counts limited by CPU | GPU compute swarms: 50,000 goblins in a fight at over 1,000 fps on an M4 Max |
 
-**Sub-second hot-reload.** Shaders in <200ms. Scenes in <100ms. Scripts in <50ms. 100x faster than Unity or Unreal.
+**Hot-reload for scenes, shaders, materials and scripts.** Reload times depend on scene complexity, assets, hardware and the shader toolchain.
 
-**No royalties. No restrictions.** The engine is MIT licensed. Build anything. Ship it. Sell it. Keep everything.
+**No engine royalties.** The core, client, runtime and web crates are MIT licensed. The separate, currently stubbed server crate uses BSL 1.1 with a restriction on commercial managed hosting services; see [License](#license).
+
+### Implementation status
+
+| Status | Capabilities |
+|---|---|
+| Implemented, experimental | Native renderer with forward fallback and optional deferred render DAG; physics, Lua scripting, hot reload, MCP scene control, GPU swarms, local game bundling |
+| Prototype | Browser WebGPU clear-canvas demo; it does not yet run native engine scenes or Lua games |
+| Stub / planned | Multiplayer hosting, matchmaking, AI Director and `naive publish`; animation/UI expansion and production hardening |
+
+macOS is the primary development platform. Linux is checked in CI and exercised with software Vulkan by the release smoke test; Windows is not supported. Benchmark figures below describe individual demo runs, not a cross-engine comparison or a general performance guarantee.
 
 ---
 
@@ -36,8 +46,11 @@ brew install poro/tap/naive
 ```bash
 git clone https://github.com/poro/nAIVE.git
 cd nAIVE
+git lfs install --local
+git lfs pull
 
-# Download SLANG SDK (required for shader compilation)
+# Download SLANG SDK (required for runtime compilation of Slang shaders)
+mkdir -p vendor
 # macOS ARM:
 curl -L https://github.com/shader-slang/slang/releases/download/v2026.2.2/slang-2026.2.2-macos-aarch64.tar.gz | tar xz -C vendor/
 # macOS Intel:
@@ -47,6 +60,8 @@ export SLANG_DIR=$(pwd)/vendor
 cargo build --release
 ```
 
+Git LFS is required for the GLB and audio assets, including meshes embedded by `include_bytes!`. Install it before building from a clone. For core development without the Slang SDK, use `cargo test --workspace --exclude naive-web --no-default-features --locked`; native rendering uses built-in WGSL shaders, while Slang hot reload and Slang-defined pipeline passes require the SDK. See [development and release checks](docs/DEVELOPMENT.md) and [asset storage](docs/ASSETS.md).
+
 The build produces three binaries in `target/release/`:
 - **`naive`** — Main CLI for running games
 - **`naive-runtime`** — Full engine runtime (same as `naive`)
@@ -54,7 +69,7 @@ The build produces three binaries in `target/release/`:
 
 ### Requirements
 
-- Rust 1.85+ (for building from source)
+- Rust 1.88+ (for building from source; CI uses Rust 1.100)
 - macOS 12+ (Metal). Linux (Vulkan) compiles but is untested. Windows is not supported yet.
 - GPU with WebGPU support
 
@@ -124,7 +139,7 @@ my-game/
 - Hot-reload with state migration via `on_reload()`
 - Lifecycle hooks: `init()`, `update(dt)`, `on_collision()`, `on_damage()`, `on_death()`
 
-### Production Systems (Tier 2)
+### Runtime Foundations (Tier 2, experimental)
 - Dynamic GPU instance buffer — no more 256-entity ceiling
 - Safe entity lifecycle — destroy-before-spawn ordering
 - Runtime entity queries by tag — `scene.find_by_tag()`, `entity.has_tag()`
@@ -214,7 +229,7 @@ naive-runtime     (MIT)    Thin CLI binary (naive, naive-runtime, naive_mcp)
     │
 naive-server      (BSL)    Multiplayer hosting, matchmaking, AI Director (stub)
     │
-naive-web         (MIT)    WASM + WebGPU build for browser playground
+naive-web         (MIT)    Minimal WASM + WebGPU clear-canvas prototype
 ```
 
 ### Tech stack

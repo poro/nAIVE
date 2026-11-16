@@ -7,13 +7,16 @@
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 
+use naive_core::command::{Command, CommandRequest, CommandResponse};
 use serde_json::{json, Value};
 
 const DEFAULT_SOCKET: &str = "/tmp/naive-runtime.sock";
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
 fn main() {
-    let socket_path = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_SOCKET.into());
+    let socket_path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| DEFAULT_SOCKET.into());
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -77,104 +80,24 @@ fn handle_tools_call(id: Option<Value>, request: &Value, socket_path: &str) -> V
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = &params["arguments"];
 
-    let cmd_request = match tool_name {
-        "naive_list_entities" => json!({"cmd": "list_entities"}),
-        "naive_query_entity" => {
-            let mut c = json!({"cmd": "query_entity"});
-            copy_field(args, &mut c, "entity_id");
-            copy_field(args, &mut c, "component");
-            c
-        }
-        "naive_modify_entity" => {
-            let mut c = json!({"cmd": "modify_entity"});
-            copy_field(args, &mut c, "entity_id");
-            copy_field(args, &mut c, "components");
-            c
-        }
-        "naive_spawn_entity" => {
-            let mut c = json!({"cmd": "spawn_entity"});
-            copy_field(args, &mut c, "entity_id");
-            copy_field(args, &mut c, "components");
-            copy_field(args, &mut c, "tags");
-            c
-        }
-        "naive_destroy_entity" => {
-            let mut c = json!({"cmd": "destroy_entity"});
-            copy_field(args, &mut c, "entity_id");
-            c
-        }
-        "naive_emit_event" => {
-            let mut c = json!({"cmd": "emit_event"});
-            copy_field(args, &mut c, "event_type");
-            copy_field(args, &mut c, "data");
-            c
-        }
-        "naive_query_events" => {
-            let mut c = json!({"cmd": "query_events"});
-            copy_field(args, &mut c, "filter");
-            copy_field(args, &mut c, "limit");
-            c
-        }
-        "naive_inject_input" => {
-            let mut c = json!({"cmd": "inject_input"});
-            copy_field(args, &mut c, "action");
-            copy_field(args, &mut c, "key");
-            copy_field(args, &mut c, "button");
-            copy_field(args, &mut c, "dx");
-            copy_field(args, &mut c, "dy");
-            c
-        }
-        "naive_runtime_control" => {
-            let mut c = json!({"cmd": "runtime_control"});
-            copy_field(args, &mut c, "action");
-            c
-        }
-        "naive_save_scene" => {
-            let mut c = json!({"cmd": "save_scene"});
-            copy_field(args, &mut c, "path");
-            c
-        }
-        "naive_get_scene_yaml" => json!({"cmd": "get_scene_yaml"}),
-        "naive_set_camera" => {
-            let mut c = json!({"cmd": "set_camera"});
-            copy_field(args, &mut c, "position");
-            copy_field(args, &mut c, "yaw");
-            copy_field(args, &mut c, "pitch");
-            copy_field(args, &mut c, "look_at");
-            c
-        }
-        "naive_editor_status" => json!({"cmd": "editor_status"}),
-        "naive_capture_frame" => {
-            let mut c = json!({"cmd": "capture_frame"});
-            copy_field(args, &mut c, "path");
-            c
-        }
-        "naive_benchmark" => {
-            let mut c = json!({"cmd": "benchmark"});
-            copy_field(args, &mut c, "frames");
-            c
-        }
-        "naive_gpu_timings" => json!({"cmd": "gpu_timings"}),
-        "naive_run_lua" => {
-            let mut c = json!({"cmd": "run_lua"});
-            copy_field(args, &mut c, "code");
-            c
-        }
-        "naive_beautify_scene" => {
-            // Special: beautify runs locally, not via engine socket
-            return handle_beautify(id, args, socket_path);
-        }
-        _ => return json_rpc_error(id, -32602, &format!("Unknown tool: {}", tool_name)),
+    if tool_name == "naive_beautify_scene" {
+        return handle_beautify(id, args, socket_path);
+    }
+    let cmd_request = match CommandRequest::from_tool(tool_name, args) {
+        Ok(request) => request,
+        Err(error) => return json_rpc_error(id, -32602, &error),
     };
 
     match send_command(socket_path, &cmd_request) {
         Ok(response) => {
+            let is_error = response.status != "ok";
             let text = serde_json::to_string_pretty(&response).unwrap_or_default();
             json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "result": {
-                    "content": [{"type": "text", "text": text}]
+                    "content": [{"type": "text", "text": text}],
+                    "isError": is_error
                 }
             })
         }
@@ -189,30 +112,35 @@ fn handle_tools_call(id: Option<Value>, request: &Value, socket_path: &str) -> V
     }
 }
 
-fn send_command(socket_path: &str, command: &Value) -> Result<Value, String> {
+fn send_command(socket_path: &str, command: &CommandRequest) -> Result<CommandResponse, String> {
+    command.validate()?;
     let mut stream = UnixStream::connect(socket_path)
         .map_err(|e| format!("Cannot connect to {}: {}", socket_path, e))?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
         .map_err(|e| format!("set_read_timeout: {}", e))?;
 
-    let cmd_json = serde_json::to_string(command)
-        .map_err(|e| format!("serialize: {}", e))?;
+    stream
+        .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+        .map_err(|e| format!("set_write_timeout: {}", e))?;
 
-    stream.write_all(cmd_json.as_bytes()).map_err(|e| format!("write: {}", e))?;
-    stream.write_all(b"\n").map_err(|e| format!("write newline: {}", e))?;
+    let cmd_json = serde_json::to_string(command).map_err(|e| format!("serialize: {}", e))?;
+
+    stream
+        .write_all(cmd_json.as_bytes())
+        .map_err(|e| format!("write: {}", e))?;
+    stream
+        .write_all(b"\n")
+        .map_err(|e| format!("write newline: {}", e))?;
     stream.flush().map_err(|e| format!("flush: {}", e))?;
 
     let mut reader = BufReader::new(&stream);
     let mut line = String::new();
-    reader.read_line(&mut line).map_err(|e| format!("read: {}", e))?;
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("read: {}", e))?;
 
     serde_json::from_str(&line).map_err(|e| format!("parse response: {}", e))
-}
-
-fn copy_field(src: &Value, dst: &mut Value, key: &str) {
-    if let Some(v) = src.get(key) {
-        dst[key] = v.clone();
-    }
 }
 
 fn json_rpc_error(id: Option<Value>, code: i32, message: &str) -> Value {
@@ -225,9 +153,13 @@ fn json_rpc_error(id: Option<Value>, code: i32, message: &str) -> Value {
 
 fn handle_beautify(id: Option<Value>, args: &Value, socket_path: &str) -> Value {
     // Step 1: Get scene YAML from the running engine
-    let scene_yaml = match send_command(socket_path, &json!({"cmd": "get_scene_yaml"})) {
+    let scene_yaml = match send_command(socket_path, &Command::GetSceneYaml {}.into()) {
         Ok(response) => {
-            if let Some(yaml) = response["yaml"].as_str() {
+            if let Some(yaml) = response
+                .data
+                .as_ref()
+                .and_then(|data| data["yaml"].as_str())
+            {
                 yaml.to_string()
             } else {
                 return json!({
@@ -253,7 +185,8 @@ fn handle_beautify(id: Option<Value>, args: &Value, socket_path: &str) -> Value 
     };
 
     // Step 2: Parse the scene
-    let scene: naive_client::scene::SceneFile = match naive_client::scene::parse_scene(&scene_yaml) {
+    let scene: naive_client::scene::SceneFile = match naive_client::scene::parse_scene(&scene_yaml)
+    {
         Ok(s) => s,
         Err(e) => {
             return json!({
@@ -277,17 +210,35 @@ fn handle_beautify(id: Option<Value>, args: &Value, socket_path: &str) -> Value 
         config.output_ply = output.to_string();
     }
 
-    let export_only = args.get("export_only").and_then(|v| v.as_bool()).unwrap_or(false);
+    let export_only = args
+        .get("export_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     if export_only {
         // Just export the GLB
         match naive_client::beautify::export_scene_to_glb(&project_root, &scene) {
             Ok(glb_data) => {
-                let glb_path = project_root.join("assets/splats/beautify_export.glb");
-                if let Some(parent) = glb_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(&glb_path, &glb_data);
+                let exported = (|| -> Result<std::path::PathBuf, String> {
+                    let glb_path = naive_client::project_path::resolve(
+                        &project_root,
+                        "assets/splats/beautify_export.glb",
+                    )?;
+                    if let Some(parent) = glb_path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+                    std::fs::write(&glb_path, &glb_data).map_err(|e| e.to_string())?;
+                    Ok(glb_path)
+                })();
+                let glb_path = match exported {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return json!({"jsonrpc": "2.0", "id": id, "result": {
+                            "content": [{"type":"text", "text":format!("Export failed: {error}")}],
+                            "isError":true
+                        }})
+                    }
+                };
                 return json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -319,7 +270,10 @@ fn handle_beautify(id: Option<Value>, args: &Value, socket_path: &str) -> Value 
                 "Beautification complete!\nPLY saved to: {}\nBackend: {}\nSplat count: {}",
                 result.ply_path.display(),
                 result.backend_name,
-                result.splat_count.map(|c| c.to_string()).unwrap_or("unknown".to_string())
+                result
+                    .splat_count
+                    .map(|c| c.to_string())
+                    .unwrap_or("unknown".to_string())
             );
             json!({
                 "jsonrpc": "2.0",
@@ -343,195 +297,8 @@ fn handle_beautify(id: Option<Value>, args: &Value, socket_path: &str) -> Value 
 }
 
 fn tool_definitions() -> Vec<Value> {
-    vec![
-        json!({
-            "name": "naive_list_entities",
-            "description": "List all entities in the current scene with their IDs and tags",
-            "inputSchema": { "type": "object", "properties": {}, "required": [] }
-        }),
-        json!({
-            "name": "naive_query_entity",
-            "description": "Query component data for a specific entity by ID",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "entity_id": {"type": "string", "description": "The entity ID to query"},
-                    "component": {"type": "string", "description": "Specific component to query (transform, camera, point_light, player, mesh_renderer)"}
-                },
-                "required": ["entity_id"]
-            }
-        }),
-        json!({
-            "name": "naive_modify_entity",
-            "description": "Modify components on an existing entity",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "entity_id": {"type": "string", "description": "The entity ID to modify"},
-                    "components": {"type": "object", "description": "Component data to modify, e.g. {\"transform\": {\"position\": [1,2,3]}}"}
-                },
-                "required": ["entity_id", "components"]
-            }
-        }),
-        json!({
-            "name": "naive_spawn_entity",
-            "description": "Spawn a new entity with given components. Supports mesh_renderer for 3D objects (meshes: 'procedural:cube', 'procedural:sphere', or path like 'assets/meshes/model.glb'; materials: 'procedural:default' or path like 'assets/materials/red.yaml'). Supports physics via rigid_body and collider components — spawned objects will fall, bounce, and collide. Also supports transform, point_light, directional_light, and camera components.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "entity_id": {"type": "string", "description": "Unique ID for the new entity"},
-                    "components": {"type": "object", "description": "Components: transform {position, rotation, scale}, mesh_renderer {mesh, material}, rigid_body {type: 'dynamic'|'static', mass, ccd}, collider {shape: 'box'|'sphere'|'capsule', radius, half_extents: [x,y,z], half_height, restitution, friction, is_trigger}, point_light {color, intensity, range}, camera {fov, near, far, role}"},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for the entity"}
-                },
-                "required": ["entity_id"]
-            }
-        }),
-        json!({
-            "name": "naive_destroy_entity",
-            "description": "Destroy an entity by ID",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "entity_id": {"type": "string", "description": "The entity ID to destroy"}
-                },
-                "required": ["entity_id"]
-            }
-        }),
-        json!({
-            "name": "naive_emit_event",
-            "description": "Emit a game event",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "event_type": {"type": "string", "description": "Event type (e.g. 'player.damaged')"},
-                    "data": {"type": "object", "description": "Event data payload"}
-                },
-                "required": ["event_type"]
-            }
-        }),
-        json!({
-            "name": "naive_query_events",
-            "description": "Query recent game events from the event log",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "filter": {"type": "string", "description": "Filter string to match event types"},
-                    "limit": {"type": "integer", "description": "Max events to return (default 100)"}
-                },
-                "required": []
-            }
-        }),
-        json!({
-            "name": "naive_inject_input",
-            "description": "Inject synthetic input (keyboard/mouse) into the running game",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "description": "key_press, key_release, mouse_press, mouse_release, mouse_motion"},
-                    "key": {"type": "string", "description": "Key name (W, Space, E, etc.)"},
-                    "button": {"type": "string", "description": "Mouse button (Left, Right, Middle)"},
-                    "dx": {"type": "number", "description": "Mouse X delta"},
-                    "dy": {"type": "number", "description": "Mouse Y delta"}
-                },
-                "required": ["action"]
-            }
-        }),
-        json!({
-            "name": "naive_runtime_control",
-            "description": "Control game runtime: pause, resume, or get status",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "description": "pause, resume, or status"}
-                },
-                "required": ["action"]
-            }
-        }),
-        json!({
-            "name": "naive_save_scene",
-            "description": "Save the current scene state to a YAML file. Serializes all entities with their transforms, meshes, lights, and cameras.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Output path relative to project root (default: 'scenes/editor_scene.yaml')"}
-                },
-                "required": []
-            }
-        }),
-        json!({
-            "name": "naive_get_scene_yaml",
-            "description": "Get the current scene state as a YAML string. Use this to understand what entities exist and their properties before making changes.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }),
-        json!({
-            "name": "naive_set_camera",
-            "description": "Set the editor camera position and orientation. Use look_at to point the camera at a specific world position.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "position": {"type": "array", "items": {"type": "number"}, "description": "Camera position [x, y, z]"},
-                    "yaw": {"type": "number", "description": "Camera yaw in degrees"},
-                    "pitch": {"type": "number", "description": "Camera pitch in degrees"},
-                    "look_at": {"type": "array", "items": {"type": "number"}, "description": "Point camera at this world position [x, y, z]"}
-                },
-                "required": []
-            }
-        }),
-        json!({
-            "name": "naive_editor_status",
-            "description": "Get editor status: mode, entity count, camera position, scene path.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }),
-        json!({
-            "name": "naive_capture_frame",
-            "description": "Render the current frame to a PNG file inside the project and return its path, so you can look at what the scene actually shows. The image is the 3D scene without the UI overlay.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Where to write the PNG, relative to the project root. Default: captures/frame.png"
-                    }
-                },
-                "required": []
-            }
-        }),
-        json!({
-            "name": "naive_benchmark",
-            "description": "Measure what the engine sustains: run whole frames back to back (simulation at a fixed 1/60 s step, swarms, every render pass) into an offscreen target without presenting, then report frames per second, milliseconds per frame and GPU time per pass. Free of vsync and of the window being in front, which both cap or throttle the on-screen frame rate. The simulation really advances.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "frames": {"type": "integer", "description": "Frames to run. Default: 240"}
-                },
-                "required": []
-            }
-        }),
-        json!({
-            "name": "naive_gpu_timings",
-            "description": "GPU milliseconds per frame over the last 60 frames, for the whole frame and per render pass (the swarm step is \"swarms\"), from timestamp queries. On screen with vsync the GPU slows down to just fit the display's refresh, so use naive_benchmark to measure headroom.",
-            "inputSchema": {"type": "object", "properties": {}, "required": []}
-        }),
-        json!({
-            "name": "naive_run_lua",
-            "description": "Execute Lua code in the running engine with full API access. Available APIs: entity.spawn_dynamic(), entity.get_position(), entity.set_position(), physics.apply_impulse(), physics.set_velocity(), physics.set_gravity(), particles.spawn_burst(), camera.shake(), scene.find_by_tag(), events.emit(), audio.play(). Use for batch operations, physics manipulation, particle effects, and anything not covered by other tools.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "code": {"type": "string", "description": "Lua code to execute. Has access to all engine APIs (entity, physics, particles, camera, scene, events, audio). Return values and print() output are captured and returned."}
-                },
-                "required": ["code"]
-            }
-        }),
-        json!({
+    let mut definitions = naive_core::command::tool_definitions();
+    definitions.push(        json!({
             "name": "naive_beautify_scene",
             "description": "Beautify the current scene: export geometry to GLB, send to World Labs/Marble/local GPU for Gaussian Splat generation, and import the result. The original meshes remain for physics; the splat provides photorealistic visuals.",
             "inputSchema": {
@@ -543,6 +310,6 @@ fn tool_definitions() -> Vec<Value> {
                 },
                 "required": []
             }
-        }),
-    ]
+        }));
+    definitions
 }

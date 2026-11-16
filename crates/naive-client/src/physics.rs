@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use glam::{Quat, Vec3};
+use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::prelude::*;
-use rapier3d::control::{KinematicCharacterController, CharacterAutostep, CharacterLength};
 
 use crate::components::Transform;
 
@@ -67,9 +67,16 @@ pub enum PhysicsBodyType {
 
 #[derive(Debug, Clone)]
 pub enum PhysicsShape {
-    Box { half_extents: Vec3 },
-    Sphere { radius: f32 },
-    Capsule { half_height: f32, radius: f32 },
+    Box {
+        half_extents: Vec3,
+    },
+    Sphere {
+        radius: f32,
+    },
+    Capsule {
+        half_height: f32,
+        radius: f32,
+    },
     /// Triangle mesh collider built from GLB vertex/index data.
     Trimesh {
         vertices: Vec<rapier3d::na::Point3<f32>>,
@@ -288,8 +295,7 @@ impl PhysicsWorld {
             .build();
         let rb_handle = self.rigid_body_set.insert(rb);
 
-        let collider = ColliderBuilder::capsule_y(half_height, radius)
-            .build();
+        let collider = ColliderBuilder::capsule_y(half_height, radius).build();
         let col_handle =
             self.collider_set
                 .insert_with_parent(collider, rb_handle, &mut self.rigid_body_set);
@@ -486,7 +492,8 @@ impl PhysicsWorld {
         // Use cast_ray_and_get_normal with a filter
         let filter = if let Some(excl) = exclude_entity {
             // Find the rigid body handle for the excluded entity
-            let excl_rb: Option<RigidBodyHandle> = self.body_to_entity
+            let excl_rb: Option<RigidBodyHandle> = self
+                .body_to_entity
                 .iter()
                 .find(|(_, &e)| e == excl)
                 .map(|(&h, _)| h);
@@ -830,6 +837,9 @@ mod tests {
         pw.step_fixed();
 
         let x = pw.rigid_body_set[rb].translation().x;
-        assert!((x - 0.5).abs() < 1e-4, "expected both moves to apply, got x = {x}");
+        assert!(
+            (x - 0.5).abs() < 1e-4,
+            "expected both moves to apply, got x = {x}"
+        );
     }
 }

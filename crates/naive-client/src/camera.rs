@@ -6,15 +6,15 @@ use crate::components::{Camera, Transform};
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CameraUniform {
-    pub view: [[f32; 4]; 4],           // offset 0
-    pub projection: [[f32; 4]; 4],      // offset 64
-    pub view_projection: [[f32; 4]; 4], // offset 128
-    pub position: [f32; 3],             // offset 192
-    pub near_plane: f32,                // offset 204
-    pub far_plane: f32,                 // offset 208
-    pub _pad1: f32,                     // offset 212 (align viewport_size to WGSL vec2 alignment 8)
-    pub viewport_size: [f32; 2],        // offset 216
-    pub _pad2: [f32; 4],               // offset 224 → 240 (align mat4 to 16)
+    pub view: [[f32; 4]; 4],                // offset 0
+    pub projection: [[f32; 4]; 4],          // offset 64
+    pub view_projection: [[f32; 4]; 4],     // offset 128
+    pub position: [f32; 3],                 // offset 192
+    pub near_plane: f32,                    // offset 204
+    pub far_plane: f32,                     // offset 208
+    pub _pad1: f32, // offset 212 (align viewport_size to WGSL vec2 alignment 8)
+    pub viewport_size: [f32; 2], // offset 216
+    pub _pad2: [f32; 4], // offset 224 → 240 (align mat4 to 16)
     pub inv_view_projection: [[f32; 4]; 4], // offset 240, 64 bytes → total 304
 }
 
@@ -45,20 +45,19 @@ pub struct CameraState {
 
 impl CameraState {
     pub fn new(device: &wgpu::Device) -> Self {
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Camera Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Camera Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
 
         let uniform = CameraUniform::default();
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

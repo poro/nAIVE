@@ -68,10 +68,7 @@ impl EventBus {
             match std::fs::read_to_string(&schema_path) {
                 Ok(contents) => match serde_yaml::from_str::<EventSchema>(&contents) {
                     Ok(schema) => {
-                        tracing::info!(
-                            "Loaded event schema: {} event types",
-                            schema.events.len()
-                        );
+                        tracing::info!("Loaded event schema: {} event types", schema.events.len());
                         self.schema = Some(schema);
                     }
                     Err(e) => tracing::warn!("Failed to parse event schema: {}", e),

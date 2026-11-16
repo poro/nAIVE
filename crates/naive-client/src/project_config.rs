@@ -35,15 +35,13 @@ pub struct BuildConfig {
     pub targets: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Deserialize, Default)]
 pub struct DevLogConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub submit_on_complete: bool,
 }
-
 
 fn default_engine() -> String {
     "naive-runtime".to_string()
@@ -113,13 +111,7 @@ pub fn discover_test_files(config: &NaiveConfig, project_root: &Path) -> Vec<Pat
     }
 
     // Scan directory (default: "tests")
-    let test_dir = project_root.join(
-        config
-            .test
-            .directory
-            .as_deref()
-            .unwrap_or("tests"),
-    );
+    let test_dir = project_root.join(config.test.directory.as_deref().unwrap_or("tests"));
 
     if !test_dir.is_dir() {
         return Vec::new();

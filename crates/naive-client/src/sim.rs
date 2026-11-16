@@ -54,14 +54,25 @@ pub fn update_fps_controller(
         let new_yaw = player.yaw - mouse_delta.x * sensitivity;
 
         // Get pitch limits from CameraMode if available
-        let (pitch_min, pitch_max) = if let Ok(camera_mode) = scene_world.world.get::<&CameraMode>(entity) {
-            match &*camera_mode {
-                CameraMode::ThirdPerson { pitch_min, pitch_max, .. } => (*pitch_min, *pitch_max),
-                CameraMode::FirstPerson => (-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01),
-            }
-        } else {
-            (-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01)
-        };
+        let (pitch_min, pitch_max) =
+            if let Ok(camera_mode) = scene_world.world.get::<&CameraMode>(entity) {
+                match &*camera_mode {
+                    CameraMode::ThirdPerson {
+                        pitch_min,
+                        pitch_max,
+                        ..
+                    } => (*pitch_min, *pitch_max),
+                    CameraMode::FirstPerson => (
+                        -std::f32::consts::FRAC_PI_2 + 0.01,
+                        std::f32::consts::FRAC_PI_2 - 0.01,
+                    ),
+                }
+            } else {
+                (
+                    -std::f32::consts::FRAC_PI_2 + 0.01,
+                    std::f32::consts::FRAC_PI_2 - 0.01,
+                )
+            };
         let new_pitch = (player.pitch - mouse_delta.y * sensitivity).clamp(pitch_min, pitch_max);
 
         // Movement
@@ -101,8 +112,18 @@ pub fn update_fps_controller(
     }
 
     // Apply updates
-    for PlayerMove { entity, desired, yaw: new_yaw, pitch: new_pitch, body: rb_handle, collider: col_handle, vel_y } in player_updates {
-        let (_effective, grounded) = physics_world.move_character(rb_handle, col_handle, desired, dt);
+    for PlayerMove {
+        entity,
+        desired,
+        yaw: new_yaw,
+        pitch: new_pitch,
+        body: rb_handle,
+        collider: col_handle,
+        vel_y,
+    } in player_updates
+    {
+        let (_effective, grounded) =
+            physics_world.move_character(rb_handle, col_handle, desired, dt);
 
         // Update ECS components
         if let Ok(mut player) = scene_world.world.get::<&mut Player>(entity) {
@@ -192,11 +213,22 @@ pub fn dispatch_collision_events(
             .map(|(id, &e)| (e, id.as_str()))
             .collect();
         let id_of = |entity: &hecs::Entity| {
-            entity_to_id.get(entity).copied().unwrap_or("unknown").to_string()
+            entity_to_id
+                .get(entity)
+                .copied()
+                .unwrap_or("unknown")
+                .to_string()
         };
         pw.collision_events
             .iter()
-            .map(|event| (event.entity_a, event.entity_b, id_of(&event.entity_a), id_of(&event.entity_b)))
+            .map(|event| {
+                (
+                    event.entity_a,
+                    event.entity_b,
+                    id_of(&event.entity_a),
+                    id_of(&event.entity_b),
+                )
+            })
             .collect()
     };
 
@@ -279,7 +311,10 @@ fn apply_collision_damage(
 
     // Owner skip: a projectile does not hurt the entity that fired it.
     if let Ok(proj) = world.get::<&Projectile>(dmg_entity) {
-        let target_id = entity_to_id.get(&target_entity).map(|s| s.as_str()).unwrap_or("");
+        let target_id = entity_to_id
+            .get(&target_entity)
+            .map(|s| s.as_str())
+            .unwrap_or("");
         if target_id == proj.owner_id {
             return None;
         }
@@ -363,16 +398,24 @@ pub fn process_swarm_reports(
             }
             let data = HashMap::from([
                 ("swarm".to_string(), swarm.clone()),
-                ("target".to_string(), report.target.clone().map(Value::String).unwrap_or(Value::Null)),
+                (
+                    "target".to_string(),
+                    report
+                        .target
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                ),
                 ("hits".to_string(), Value::from(report.hits)),
                 ("damage".to_string(), Value::from(f64::from(report.damage))),
             ]);
             event_bus.borrow_mut().emit("swarm.hit", data);
         }
         if report.cleared {
-            event_bus
-                .borrow_mut()
-                .emit("swarm.cleared", HashMap::from([("swarm".to_string(), swarm)]));
+            event_bus.borrow_mut().emit(
+                "swarm.cleared",
+                HashMap::from([("swarm".to_string(), swarm)]),
+            );
         }
     }
 }
@@ -416,7 +459,11 @@ pub fn process_destroys(
             // Clean up physics body if entity has one
             let body = {
                 let sw = scene_world.borrow();
-                let handle = sw.world.get::<&RigidBodyComp>(entity).ok().map(|rb| rb.handle);
+                let handle = sw
+                    .world
+                    .get::<&RigidBodyComp>(entity)
+                    .ok()
+                    .map(|rb| rb.handle);
                 handle
             };
             if let (Some(handle), Some(physics_world)) = (body, physics_world) {
@@ -451,9 +498,14 @@ pub fn dispatch_lua_events(
     let flushed_events = event_bus.borrow_mut().flush();
     if let Some(script_runtime) = script_runtime {
         for event in &flushed_events {
-            let listener_keys: Vec<_> = listeners.borrow()
+            let listener_keys: Vec<_> = listeners
+                .borrow()
                 .get(&event.event_type)
-                .map(|keys| keys.iter().map(|k| script_runtime.lua.registry_value::<mlua::Function>(k)).collect())
+                .map(|keys| {
+                    keys.iter()
+                        .map(|k| script_runtime.lua.registry_value::<mlua::Function>(k))
+                        .collect()
+                })
                 .unwrap_or_default();
             for (index, func_result) in listener_keys.into_iter().enumerate() {
                 if let Ok(func) = func_result {
@@ -530,7 +582,10 @@ fn disable_listener(
         .and_then(|f| lua.create_registry_value(f));
     if let Ok(do_nothing) = do_nothing {
         let mut listeners = listeners.borrow_mut();
-        if let Some(slot) = listeners.get_mut(event_type).and_then(|keys| keys.get_mut(index)) {
+        if let Some(slot) = listeners
+            .get_mut(event_type)
+            .and_then(|keys| keys.get_mut(index))
+        {
             *slot = do_nothing;
         }
     }
@@ -657,7 +712,9 @@ mod tests {
         runtime
             .register_physics_api(physics_world.clone(), scene_world.clone())
             .unwrap();
-        runtime.load_script(ball, &dir, Path::new("ball.lua")).unwrap();
+        runtime
+            .load_script(ball, &dir, Path::new("ball.lua"))
+            .unwrap();
         runtime.set_entity_string_id(ball, "ball").unwrap();
         let _ = std::fs::remove_dir_all(&dir);
 

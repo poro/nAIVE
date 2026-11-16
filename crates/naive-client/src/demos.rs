@@ -21,72 +21,255 @@ const INPUT_BINDINGS: &str = include_str!("../../../project/input/bindings.yaml"
 // ---------------------------------------------------------------------------
 
 static MATERIALS: &[(&str, &str)] = &[
-    ("default.yaml", include_str!("../../../project/assets/materials/default.yaml")),
-    ("blue.yaml", include_str!("../../../project/assets/materials/blue.yaml")),
-    ("red.yaml", include_str!("../../../project/assets/materials/red.yaml")),
-    ("gold.yaml", include_str!("../../../project/assets/materials/gold.yaml")),
-    ("stone.yaml", include_str!("../../../project/assets/materials/stone.yaml")),
-    ("wood.yaml", include_str!("../../../project/assets/materials/wood.yaml")),
-    ("chrome.yaml", include_str!("../../../project/assets/materials/chrome.yaml")),
-    ("obsidian.yaml", include_str!("../../../project/assets/materials/obsidian.yaml")),
-    ("dark_floor.yaml", include_str!("../../../project/assets/materials/dark_floor.yaml")),
-    ("dark_mirror.yaml", include_str!("../../../project/assets/materials/dark_mirror.yaml")),
-    ("enemy.yaml", include_str!("../../../project/assets/materials/enemy.yaml")),
-    ("spike.yaml", include_str!("../../../project/assets/materials/spike.yaml")),
-    ("goblin.yaml", include_str!("../../../project/assets/materials/goblin.yaml")),
-    ("bullet.yaml", include_str!("../../../project/assets/materials/bullet.yaml")),
-    ("copper_ring.yaml", include_str!("../../../project/assets/materials/copper_ring.yaml")),
-    ("steel_ring.yaml", include_str!("../../../project/assets/materials/steel_ring.yaml")),
-    ("genesis_core.yaml", include_str!("../../../project/assets/materials/genesis_core.yaml")),
+    (
+        "default.yaml",
+        include_str!("../../../project/assets/materials/default.yaml"),
+    ),
+    (
+        "blue.yaml",
+        include_str!("../../../project/assets/materials/blue.yaml"),
+    ),
+    (
+        "red.yaml",
+        include_str!("../../../project/assets/materials/red.yaml"),
+    ),
+    (
+        "gold.yaml",
+        include_str!("../../../project/assets/materials/gold.yaml"),
+    ),
+    (
+        "stone.yaml",
+        include_str!("../../../project/assets/materials/stone.yaml"),
+    ),
+    (
+        "wood.yaml",
+        include_str!("../../../project/assets/materials/wood.yaml"),
+    ),
+    (
+        "chrome.yaml",
+        include_str!("../../../project/assets/materials/chrome.yaml"),
+    ),
+    (
+        "obsidian.yaml",
+        include_str!("../../../project/assets/materials/obsidian.yaml"),
+    ),
+    (
+        "dark_floor.yaml",
+        include_str!("../../../project/assets/materials/dark_floor.yaml"),
+    ),
+    (
+        "dark_mirror.yaml",
+        include_str!("../../../project/assets/materials/dark_mirror.yaml"),
+    ),
+    (
+        "enemy.yaml",
+        include_str!("../../../project/assets/materials/enemy.yaml"),
+    ),
+    (
+        "spike.yaml",
+        include_str!("../../../project/assets/materials/spike.yaml"),
+    ),
+    (
+        "goblin.yaml",
+        include_str!("../../../project/assets/materials/goblin.yaml"),
+    ),
+    (
+        "bullet.yaml",
+        include_str!("../../../project/assets/materials/bullet.yaml"),
+    ),
+    (
+        "copper_ring.yaml",
+        include_str!("../../../project/assets/materials/copper_ring.yaml"),
+    ),
+    (
+        "steel_ring.yaml",
+        include_str!("../../../project/assets/materials/steel_ring.yaml"),
+    ),
+    (
+        "genesis_core.yaml",
+        include_str!("../../../project/assets/materials/genesis_core.yaml"),
+    ),
     // Neon
-    ("neon_amber.yaml", include_str!("../../../project/assets/materials/neon_amber.yaml")),
-    ("neon_blue.yaml", include_str!("../../../project/assets/materials/neon_blue.yaml")),
-    ("neon_cyan.yaml", include_str!("../../../project/assets/materials/neon_cyan.yaml")),
-    ("neon_gold.yaml", include_str!("../../../project/assets/materials/neon_gold.yaml")),
-    ("neon_green.yaml", include_str!("../../../project/assets/materials/neon_green.yaml")),
-    ("neon_pink.yaml", include_str!("../../../project/assets/materials/neon_pink.yaml")),
-    ("neon_purple.yaml", include_str!("../../../project/assets/materials/neon_purple.yaml")),
-    ("neon_white.yaml", include_str!("../../../project/assets/materials/neon_white.yaml")),
+    (
+        "neon_amber.yaml",
+        include_str!("../../../project/assets/materials/neon_amber.yaml"),
+    ),
+    (
+        "neon_blue.yaml",
+        include_str!("../../../project/assets/materials/neon_blue.yaml"),
+    ),
+    (
+        "neon_cyan.yaml",
+        include_str!("../../../project/assets/materials/neon_cyan.yaml"),
+    ),
+    (
+        "neon_gold.yaml",
+        include_str!("../../../project/assets/materials/neon_gold.yaml"),
+    ),
+    (
+        "neon_green.yaml",
+        include_str!("../../../project/assets/materials/neon_green.yaml"),
+    ),
+    (
+        "neon_pink.yaml",
+        include_str!("../../../project/assets/materials/neon_pink.yaml"),
+    ),
+    (
+        "neon_purple.yaml",
+        include_str!("../../../project/assets/materials/neon_purple.yaml"),
+    ),
+    (
+        "neon_white.yaml",
+        include_str!("../../../project/assets/materials/neon_white.yaml"),
+    ),
     // Inferno
-    ("inferno_floor.yaml", include_str!("../../../project/assets/materials/inferno_floor.yaml")),
-    ("inferno_wall.yaml", include_str!("../../../project/assets/materials/inferno_wall.yaml")),
-    ("inferno_lava.yaml", include_str!("../../../project/assets/materials/inferno_lava.yaml")),
-    ("inferno_iron.yaml", include_str!("../../../project/assets/materials/inferno_iron.yaml")),
-    ("inferno_demon.yaml", include_str!("../../../project/assets/materials/inferno_demon.yaml")),
-    ("inferno_health.yaml", include_str!("../../../project/assets/materials/inferno_health.yaml")),
+    (
+        "inferno_floor.yaml",
+        include_str!("../../../project/assets/materials/inferno_floor.yaml"),
+    ),
+    (
+        "inferno_wall.yaml",
+        include_str!("../../../project/assets/materials/inferno_wall.yaml"),
+    ),
+    (
+        "inferno_lava.yaml",
+        include_str!("../../../project/assets/materials/inferno_lava.yaml"),
+    ),
+    (
+        "inferno_iron.yaml",
+        include_str!("../../../project/assets/materials/inferno_iron.yaml"),
+    ),
+    (
+        "inferno_demon.yaml",
+        include_str!("../../../project/assets/materials/inferno_demon.yaml"),
+    ),
+    (
+        "inferno_health.yaml",
+        include_str!("../../../project/assets/materials/inferno_health.yaml"),
+    ),
     // Titan
-    ("titan_floor.yaml", include_str!("../../../project/assets/materials/titan_floor.yaml")),
-    ("titan_gold.yaml", include_str!("../../../project/assets/materials/titan_gold.yaml")),
-    ("titan_pillar.yaml", include_str!("../../../project/assets/materials/titan_pillar.yaml")),
-    ("titan_platinum.yaml", include_str!("../../../project/assets/materials/titan_platinum.yaml")),
-    ("titan_ruby.yaml", include_str!("../../../project/assets/materials/titan_ruby.yaml")),
-    ("titan_sapphire.yaml", include_str!("../../../project/assets/materials/titan_sapphire.yaml")),
-    ("titan_emerald.yaml", include_str!("../../../project/assets/materials/titan_emerald.yaml")),
-    ("titan_ice.yaml", include_str!("../../../project/assets/materials/titan_ice.yaml")),
-    ("titan_ember.yaml", include_str!("../../../project/assets/materials/titan_ember.yaml")),
-    ("titan_void.yaml", include_str!("../../../project/assets/materials/titan_void.yaml")),
+    (
+        "titan_floor.yaml",
+        include_str!("../../../project/assets/materials/titan_floor.yaml"),
+    ),
+    (
+        "titan_gold.yaml",
+        include_str!("../../../project/assets/materials/titan_gold.yaml"),
+    ),
+    (
+        "titan_pillar.yaml",
+        include_str!("../../../project/assets/materials/titan_pillar.yaml"),
+    ),
+    (
+        "titan_platinum.yaml",
+        include_str!("../../../project/assets/materials/titan_platinum.yaml"),
+    ),
+    (
+        "titan_ruby.yaml",
+        include_str!("../../../project/assets/materials/titan_ruby.yaml"),
+    ),
+    (
+        "titan_sapphire.yaml",
+        include_str!("../../../project/assets/materials/titan_sapphire.yaml"),
+    ),
+    (
+        "titan_emerald.yaml",
+        include_str!("../../../project/assets/materials/titan_emerald.yaml"),
+    ),
+    (
+        "titan_ice.yaml",
+        include_str!("../../../project/assets/materials/titan_ice.yaml"),
+    ),
+    (
+        "titan_ember.yaml",
+        include_str!("../../../project/assets/materials/titan_ember.yaml"),
+    ),
+    (
+        "titan_void.yaml",
+        include_str!("../../../project/assets/materials/titan_void.yaml"),
+    ),
     // PBR gallery
-    ("pbr_M0_R0.yaml", include_str!("../../../project/assets/materials/pbr_M0_R0.yaml")),
-    ("pbr_M0_R2.yaml", include_str!("../../../project/assets/materials/pbr_M0_R2.yaml")),
-    ("pbr_M0_R4.yaml", include_str!("../../../project/assets/materials/pbr_M0_R4.yaml")),
-    ("pbr_M1_R1.yaml", include_str!("../../../project/assets/materials/pbr_M1_R1.yaml")),
-    ("pbr_M1_R3.yaml", include_str!("../../../project/assets/materials/pbr_M1_R3.yaml")),
-    ("pbr_M1_R4.yaml", include_str!("../../../project/assets/materials/pbr_M1_R4.yaml")),
-    ("pbr_M2_R0.yaml", include_str!("../../../project/assets/materials/pbr_M2_R0.yaml")),
-    ("pbr_M2_R2.yaml", include_str!("../../../project/assets/materials/pbr_M2_R2.yaml")),
-    ("pbr_M2_R4.yaml", include_str!("../../../project/assets/materials/pbr_M2_R4.yaml")),
-    ("pbr_M3_R1.yaml", include_str!("../../../project/assets/materials/pbr_M3_R1.yaml")),
-    ("pbr_M3_R2.yaml", include_str!("../../../project/assets/materials/pbr_M3_R2.yaml")),
-    ("pbr_M3_R3.yaml", include_str!("../../../project/assets/materials/pbr_M3_R3.yaml")),
-    ("pbr_M4_R0.yaml", include_str!("../../../project/assets/materials/pbr_M4_R0.yaml")),
-    ("pbr_M4_R2.yaml", include_str!("../../../project/assets/materials/pbr_M4_R2.yaml")),
-    ("pbr_M4_R4.yaml", include_str!("../../../project/assets/materials/pbr_M4_R4.yaml")),
+    (
+        "pbr_M0_R0.yaml",
+        include_str!("../../../project/assets/materials/pbr_M0_R0.yaml"),
+    ),
+    (
+        "pbr_M0_R2.yaml",
+        include_str!("../../../project/assets/materials/pbr_M0_R2.yaml"),
+    ),
+    (
+        "pbr_M0_R4.yaml",
+        include_str!("../../../project/assets/materials/pbr_M0_R4.yaml"),
+    ),
+    (
+        "pbr_M1_R1.yaml",
+        include_str!("../../../project/assets/materials/pbr_M1_R1.yaml"),
+    ),
+    (
+        "pbr_M1_R3.yaml",
+        include_str!("../../../project/assets/materials/pbr_M1_R3.yaml"),
+    ),
+    (
+        "pbr_M1_R4.yaml",
+        include_str!("../../../project/assets/materials/pbr_M1_R4.yaml"),
+    ),
+    (
+        "pbr_M2_R0.yaml",
+        include_str!("../../../project/assets/materials/pbr_M2_R0.yaml"),
+    ),
+    (
+        "pbr_M2_R2.yaml",
+        include_str!("../../../project/assets/materials/pbr_M2_R2.yaml"),
+    ),
+    (
+        "pbr_M2_R4.yaml",
+        include_str!("../../../project/assets/materials/pbr_M2_R4.yaml"),
+    ),
+    (
+        "pbr_M3_R1.yaml",
+        include_str!("../../../project/assets/materials/pbr_M3_R1.yaml"),
+    ),
+    (
+        "pbr_M3_R2.yaml",
+        include_str!("../../../project/assets/materials/pbr_M3_R2.yaml"),
+    ),
+    (
+        "pbr_M3_R3.yaml",
+        include_str!("../../../project/assets/materials/pbr_M3_R3.yaml"),
+    ),
+    (
+        "pbr_M4_R0.yaml",
+        include_str!("../../../project/assets/materials/pbr_M4_R0.yaml"),
+    ),
+    (
+        "pbr_M4_R2.yaml",
+        include_str!("../../../project/assets/materials/pbr_M4_R2.yaml"),
+    ),
+    (
+        "pbr_M4_R4.yaml",
+        include_str!("../../../project/assets/materials/pbr_M4_R4.yaml"),
+    ),
     // Textured materials
-    ("grass_tex.yaml", include_str!("../../../project/assets/materials/grass_tex.yaml")),
-    ("stone_tex.yaml", include_str!("../../../project/assets/materials/stone_tex.yaml")),
-    ("wood_tex.yaml", include_str!("../../../project/assets/materials/wood_tex.yaml")),
-    ("water_tex.yaml", include_str!("../../../project/assets/materials/water_tex.yaml")),
-    ("snow_tex.yaml", include_str!("../../../project/assets/materials/snow_tex.yaml")),
+    (
+        "grass_tex.yaml",
+        include_str!("../../../project/assets/materials/grass_tex.yaml"),
+    ),
+    (
+        "stone_tex.yaml",
+        include_str!("../../../project/assets/materials/stone_tex.yaml"),
+    ),
+    (
+        "wood_tex.yaml",
+        include_str!("../../../project/assets/materials/wood_tex.yaml"),
+    ),
+    (
+        "water_tex.yaml",
+        include_str!("../../../project/assets/materials/water_tex.yaml"),
+    ),
+    (
+        "snow_tex.yaml",
+        include_str!("../../../project/assets/materials/snow_tex.yaml"),
+    ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -118,9 +301,10 @@ static DEMOS: &[DemoEntry] = &[
         category: "Physics",
         scene_filename: "tier25_impulse_demo.yaml",
         scene_content: include_str!("../../../project/scenes/tier25_impulse_demo.yaml"),
-        scripts: &[
-            ("tier25_impulse_demo.lua", include_str!("../../../project/logic/tier25_impulse_demo.lua")),
-        ],
+        scripts: &[(
+            "tier25_impulse_demo.lua",
+            include_str!("../../../project/logic/tier25_impulse_demo.lua"),
+        )],
         mesh_assets: &[],
         texture_assets: &[],
     },
@@ -132,9 +316,10 @@ static DEMOS: &[DemoEntry] = &[
         category: "Physics",
         scene_filename: "tier25_ccd_demo.yaml",
         scene_content: include_str!("../../../project/scenes/tier25_ccd_demo.yaml"),
-        scripts: &[
-            ("tier25_ccd_demo.lua", include_str!("../../../project/logic/tier25_ccd_demo.lua")),
-        ],
+        scripts: &[(
+            "tier25_ccd_demo.lua",
+            include_str!("../../../project/logic/tier25_ccd_demo.lua"),
+        )],
         mesh_assets: &[],
         texture_assets: &[],
     },
@@ -146,9 +331,10 @@ static DEMOS: &[DemoEntry] = &[
         category: "Physics",
         scene_filename: "tier25_materials_demo.yaml",
         scene_content: include_str!("../../../project/scenes/tier25_materials_demo.yaml"),
-        scripts: &[
-            ("tier25_materials_demo.lua", include_str!("../../../project/logic/tier25_materials_demo.lua")),
-        ],
+        scripts: &[(
+            "tier25_materials_demo.lua",
+            include_str!("../../../project/logic/tier25_materials_demo.lua"),
+        )],
         mesh_assets: &[],
         texture_assets: &[],
     },
@@ -162,8 +348,14 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "combat_demo.yaml",
         scene_content: include_str!("../../../project/scenes/combat_demo.yaml"),
         scripts: &[
-            ("combat_demo.lua", include_str!("../../../project/logic/combat_demo.lua")),
-            ("combat_enemy.lua", include_str!("../../../project/logic/combat_enemy.lua")),
+            (
+                "combat_demo.lua",
+                include_str!("../../../project/logic/combat_demo.lua"),
+            ),
+            (
+                "combat_enemy.lua",
+                include_str!("../../../project/logic/combat_enemy.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[],
@@ -177,8 +369,14 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "third_person_demo.yaml",
         scene_content: include_str!("../../../project/scenes/third_person_demo.yaml"),
         scripts: &[
-            ("third_person_demo.lua", include_str!("../../../project/logic/third_person_demo.lua")),
-            ("combat_enemy.lua", include_str!("../../../project/logic/combat_enemy.lua")),
+            (
+                "third_person_demo.lua",
+                include_str!("../../../project/logic/third_person_demo.lua"),
+            ),
+            (
+                "combat_enemy.lua",
+                include_str!("../../../project/logic/combat_enemy.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[],
@@ -192,9 +390,10 @@ static DEMOS: &[DemoEntry] = &[
         category: "Visual",
         scene_filename: "tier2_particle_demo.yaml",
         scene_content: include_str!("../../../project/scenes/tier2_particle_demo.yaml"),
-        scripts: &[
-            ("tier2_particle_camera.lua", include_str!("../../../project/logic/tier2_particle_camera.lua")),
-        ],
+        scripts: &[(
+            "tier2_particle_camera.lua",
+            include_str!("../../../project/logic/tier2_particle_camera.lua"),
+        )],
         mesh_assets: &[],
         texture_assets: &[],
     },
@@ -206,9 +405,10 @@ static DEMOS: &[DemoEntry] = &[
         category: "Visual",
         scene_filename: "pbr_gallery.yaml",
         scene_content: include_str!("../../../project/scenes/pbr_gallery.yaml"),
-        scripts: &[
-            ("ball_collision.lua", include_str!("../../../project/logic/ball_collision.lua")),
-        ],
+        scripts: &[(
+            "ball_collision.lua",
+            include_str!("../../../project/logic/ball_collision.lua"),
+        )],
         mesh_assets: &[],
         texture_assets: &[],
     },
@@ -220,9 +420,10 @@ static DEMOS: &[DemoEntry] = &[
         category: "Visual",
         scene_filename: "tier25_shake_demo.yaml",
         scene_content: include_str!("../../../project/scenes/tier25_shake_demo.yaml"),
-        scripts: &[
-            ("tier25_shake_demo.lua", include_str!("../../../project/logic/tier25_shake_demo.lua")),
-        ],
+        scripts: &[(
+            "tier25_shake_demo.lua",
+            include_str!("../../../project/logic/tier25_shake_demo.lua"),
+        )],
         mesh_assets: &[],
         texture_assets: &[],
     },
@@ -236,8 +437,14 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "ui_demo.yaml",
         scene_content: include_str!("../../../project/scenes/ui_demo.yaml"),
         scripts: &[
-            ("ui_demo.lua", include_str!("../../../project/logic/ui_demo.lua")),
-            ("ui_demo_camera.lua", include_str!("../../../project/logic/ui_demo_camera.lua")),
+            (
+                "ui_demo.lua",
+                include_str!("../../../project/logic/ui_demo.lua"),
+            ),
+            (
+                "ui_demo_camera.lua",
+                include_str!("../../../project/logic/ui_demo_camera.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[],
@@ -252,14 +459,38 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "genesis.yaml",
         scene_content: include_str!("../../../project/scenes/genesis.yaml"),
         scripts: &[
-            ("genesis_camera.lua", include_str!("../../../project/logic/genesis_camera.lua")),
-            ("genesis_spark.lua", include_str!("../../../project/logic/genesis_spark.lua")),
-            ("genesis_orbit.lua", include_str!("../../../project/logic/genesis_orbit.lua")),
-            ("genesis_pillar_rise.lua", include_str!("../../../project/logic/genesis_pillar_rise.lua")),
-            ("genesis_roughness_sweep.lua", include_str!("../../../project/logic/genesis_roughness_sweep.lua")),
-            ("genesis_emissive_cycle.lua", include_str!("../../../project/logic/genesis_emissive_cycle.lua")),
-            ("neon_pulse.lua", include_str!("../../../project/logic/neon_pulse.lua")),
-            ("genesis_sunrise.lua", include_str!("../../../project/logic/genesis_sunrise.lua")),
+            (
+                "genesis_camera.lua",
+                include_str!("../../../project/logic/genesis_camera.lua"),
+            ),
+            (
+                "genesis_spark.lua",
+                include_str!("../../../project/logic/genesis_spark.lua"),
+            ),
+            (
+                "genesis_orbit.lua",
+                include_str!("../../../project/logic/genesis_orbit.lua"),
+            ),
+            (
+                "genesis_pillar_rise.lua",
+                include_str!("../../../project/logic/genesis_pillar_rise.lua"),
+            ),
+            (
+                "genesis_roughness_sweep.lua",
+                include_str!("../../../project/logic/genesis_roughness_sweep.lua"),
+            ),
+            (
+                "genesis_emissive_cycle.lua",
+                include_str!("../../../project/logic/genesis_emissive_cycle.lua"),
+            ),
+            (
+                "neon_pulse.lua",
+                include_str!("../../../project/logic/neon_pulse.lua"),
+            ),
+            (
+                "genesis_sunrise.lua",
+                include_str!("../../../project/logic/genesis_sunrise.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[],
@@ -273,12 +504,30 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "inferno.yaml",
         scene_content: include_str!("../../../project/scenes/inferno.yaml"),
         scripts: &[
-            ("inferno_player.lua", include_str!("../../../project/logic/inferno_player.lua")),
-            ("inferno_lava_glow.lua", include_str!("../../../project/logic/inferno_lava_glow.lua")),
-            ("inferno_enemy.lua", include_str!("../../../project/logic/inferno_enemy.lua")),
-            ("float_bob.lua", include_str!("../../../project/logic/float_bob.lua")),
-            ("torch_flicker.lua", include_str!("../../../project/logic/torch_flicker.lua")),
-            ("neon_pulse.lua", include_str!("../../../project/logic/neon_pulse.lua")),
+            (
+                "inferno_player.lua",
+                include_str!("../../../project/logic/inferno_player.lua"),
+            ),
+            (
+                "inferno_lava_glow.lua",
+                include_str!("../../../project/logic/inferno_lava_glow.lua"),
+            ),
+            (
+                "inferno_enemy.lua",
+                include_str!("../../../project/logic/inferno_enemy.lua"),
+            ),
+            (
+                "float_bob.lua",
+                include_str!("../../../project/logic/float_bob.lua"),
+            ),
+            (
+                "torch_flicker.lua",
+                include_str!("../../../project/logic/torch_flicker.lua"),
+            ),
+            (
+                "neon_pulse.lua",
+                include_str!("../../../project/logic/neon_pulse.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[],
@@ -292,13 +541,34 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "titan.yaml",
         scene_content: include_str!("../../../project/scenes/titan.yaml"),
         scripts: &[
-            ("titan_camera.lua", include_str!("../../../project/logic/titan_camera.lua")),
-            ("titan_levitate.lua", include_str!("../../../project/logic/titan_levitate.lua")),
-            ("titan_ring_orbit.lua", include_str!("../../../project/logic/titan_ring_orbit.lua")),
-            ("titan_emission_wave.lua", include_str!("../../../project/logic/titan_emission_wave.lua")),
-            ("titan_pulse_light.lua", include_str!("../../../project/logic/titan_pulse_light.lua")),
-            ("genesis_orbit.lua", include_str!("../../../project/logic/genesis_orbit.lua")),
-            ("neon_pulse.lua", include_str!("../../../project/logic/neon_pulse.lua")),
+            (
+                "titan_camera.lua",
+                include_str!("../../../project/logic/titan_camera.lua"),
+            ),
+            (
+                "titan_levitate.lua",
+                include_str!("../../../project/logic/titan_levitate.lua"),
+            ),
+            (
+                "titan_ring_orbit.lua",
+                include_str!("../../../project/logic/titan_ring_orbit.lua"),
+            ),
+            (
+                "titan_emission_wave.lua",
+                include_str!("../../../project/logic/titan_emission_wave.lua"),
+            ),
+            (
+                "titan_pulse_light.lua",
+                include_str!("../../../project/logic/titan_pulse_light.lua"),
+            ),
+            (
+                "genesis_orbit.lua",
+                include_str!("../../../project/logic/genesis_orbit.lua"),
+            ),
+            (
+                "neon_pulse.lua",
+                include_str!("../../../project/logic/neon_pulse.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[],
@@ -313,8 +583,14 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "tier2_stress_test.yaml",
         scene_content: include_str!("../../../project/scenes/tier2_stress_test.yaml"),
         scripts: &[
-            ("tier2_stress_camera.lua", include_str!("../../../project/logic/tier2_stress_camera.lua")),
-            ("tier2_stress_spawner.lua", include_str!("../../../project/logic/tier2_stress_spawner.lua")),
+            (
+                "tier2_stress_camera.lua",
+                include_str!("../../../project/logic/tier2_stress_camera.lua"),
+            ),
+            (
+                "tier2_stress_spawner.lua",
+                include_str!("../../../project/logic/tier2_stress_spawner.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[],
@@ -328,8 +604,14 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "tier2_lifecycle_demo.yaml",
         scene_content: include_str!("../../../project/scenes/tier2_lifecycle_demo.yaml"),
         scripts: &[
-            ("tier2_lifecycle_player.lua", include_str!("../../../project/logic/tier2_lifecycle_player.lua")),
-            ("tier2_pickup_bob.lua", include_str!("../../../project/logic/tier2_pickup_bob.lua")),
+            (
+                "tier2_lifecycle_player.lua",
+                include_str!("../../../project/logic/tier2_lifecycle_player.lua"),
+            ),
+            (
+                "tier2_pickup_bob.lua",
+                include_str!("../../../project/logic/tier2_pickup_bob.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[],
@@ -344,8 +626,14 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "cosmic_splats.yaml",
         scene_content: include_str!("../../../project/scenes/cosmic_splats.yaml"),
         scripts: &[
-            ("cosmic_camera.lua", include_str!("../../../project/logic/cosmic_camera.lua")),
-            ("float_bob.lua", include_str!("../../../project/logic/float_bob.lua")),
+            (
+                "cosmic_camera.lua",
+                include_str!("../../../project/logic/cosmic_camera.lua"),
+            ),
+            (
+                "float_bob.lua",
+                include_str!("../../../project/logic/float_bob.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[],
@@ -359,12 +647,14 @@ static DEMOS: &[DemoEntry] = &[
         category: "AI",
         scene_filename: "meshy_ai_demo.yaml",
         scene_content: include_str!("../../../project/scenes/meshy_ai_demo.yaml"),
-        scripts: &[
-            ("ai_asset_turntable.lua", include_str!("../../../project/logic/ai_asset_turntable.lua")),
-        ],
-        mesh_assets: &[
-            ("meshy_car.glb", include_bytes!("../../../project/assets/meshes/meshy_car.glb")),
-        ],
+        scripts: &[(
+            "ai_asset_turntable.lua",
+            include_str!("../../../project/logic/ai_asset_turntable.lua"),
+        )],
+        mesh_assets: &[(
+            "meshy_car.glb",
+            include_bytes!("../../../project/assets/meshes/meshy_car.glb"),
+        )],
         texture_assets: &[],
     },
     DemoEntry {
@@ -375,12 +665,14 @@ static DEMOS: &[DemoEntry] = &[
         category: "AI",
         scene_filename: "submarine_demo.yaml",
         scene_content: include_str!("../../../project/scenes/submarine_demo.yaml"),
-        scripts: &[
-            ("submarine_demo.lua", include_str!("../../../project/logic/submarine_demo.lua")),
-        ],
-        mesh_assets: &[
-            ("submarine.glb", include_bytes!("../../../project/assets/meshes/submarine.glb")),
-        ],
+        scripts: &[(
+            "submarine_demo.lua",
+            include_str!("../../../project/logic/submarine_demo.lua"),
+        )],
+        mesh_assets: &[(
+            "submarine.glb",
+            include_bytes!("../../../project/assets/meshes/submarine.glb"),
+        )],
         texture_assets: &[],
     },
     // -- Tier 3: Visual & Interaction --
@@ -392,9 +684,10 @@ static DEMOS: &[DemoEntry] = &[
         category: "Visual",
         scene_filename: "tier3_showcase.yaml",
         scene_content: include_str!("../../../project/scenes/tier3_showcase.yaml"),
-        scripts: &[
-            ("tier3_showcase.lua", include_str!("../../../project/logic/tier3_showcase.lua")),
-        ],
+        scripts: &[(
+            "tier3_showcase.lua",
+            include_str!("../../../project/logic/tier3_showcase.lua"),
+        )],
         mesh_assets: &[],
         texture_assets: &[],
     },
@@ -407,16 +700,37 @@ static DEMOS: &[DemoEntry] = &[
         scene_filename: "procedural_world.yaml",
         scene_content: include_str!("../../../project/scenes/procedural_world.yaml"),
         scripts: &[
-            ("procedural_world.lua", include_str!("../../../project/logic/procedural_world.lua")),
-            ("fly_camera.lua", include_str!("../../../project/logic/fly_camera.lua")),
+            (
+                "procedural_world.lua",
+                include_str!("../../../project/logic/procedural_world.lua"),
+            ),
+            (
+                "fly_camera.lua",
+                include_str!("../../../project/logic/fly_camera.lua"),
+            ),
         ],
         mesh_assets: &[],
         texture_assets: &[
-            ("grass.png", include_bytes!("../../../project/assets/textures/grass.png")),
-            ("stone.png", include_bytes!("../../../project/assets/textures/stone.png")),
-            ("wood.png", include_bytes!("../../../project/assets/textures/wood.png")),
-            ("water.png", include_bytes!("../../../project/assets/textures/water.png")),
-            ("snow.png", include_bytes!("../../../project/assets/textures/snow.png")),
+            (
+                "grass.png",
+                include_bytes!("../../../project/assets/textures/grass.png"),
+            ),
+            (
+                "stone.png",
+                include_bytes!("../../../project/assets/textures/stone.png"),
+            ),
+            (
+                "wood.png",
+                include_bytes!("../../../project/assets/textures/wood.png"),
+            ),
+            (
+                "water.png",
+                include_bytes!("../../../project/assets/textures/water.png"),
+            ),
+            (
+                "snow.png",
+                include_bytes!("../../../project/assets/textures/snow.png"),
+            ),
         ],
     },
 ];
@@ -433,7 +747,13 @@ pub fn run_demo(selector: Option<&str>) -> Option<CliArgs> {
         None => show_interactive_menu()?,
     };
 
-    let project_root = extract_demo(demo);
+    let project_root = match extract_demo(demo) {
+        Ok(root) => root,
+        Err(error) => {
+            eprintln!("Cannot extract demo: {error}");
+            return None;
+        }
+    };
 
     println!("  Launching: {} — {}", demo.name, demo.description);
     println!();
@@ -527,7 +847,10 @@ fn show_interactive_menu() -> Option<&'static DemoEntry> {
     }
 
     let trimmed = input.trim();
-    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("quit") {
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("q")
+        || trimmed.eq_ignore_ascii_case("quit")
+    {
         return None;
     }
 
@@ -538,11 +861,10 @@ fn show_interactive_menu() -> Option<&'static DemoEntry> {
 // Extract demo to temp directory
 // ---------------------------------------------------------------------------
 
-fn extract_demo(demo: &DemoEntry) -> PathBuf {
-    let temp_root = std::env::temp_dir().join("naive-demo");
-
-    // Clean and recreate
-    let _ = std::fs::remove_dir_all(&temp_root);
+fn extract_demo(demo: &DemoEntry) -> Result<PathBuf, String> {
+    // Every run gets a fresh owner-only directory. Never remove or reuse a
+    // predictable shared temp tree that another process could prepopulate.
+    let temp_root = create_demo_root()?;
     create_dirs(&temp_root);
 
     // naive.yaml
@@ -584,10 +906,55 @@ fn extract_demo(demo: &DemoEntry) -> PathBuf {
 
     // Texture image assets
     for (filename, data) in demo.texture_assets {
-        write_binary(&temp_root.join(format!("assets/textures/{}", filename)), data);
+        write_binary(
+            &temp_root.join(format!("assets/textures/{}", filename)),
+            data,
+        );
     }
 
-    temp_root
+    Ok(temp_root)
+}
+
+fn create_demo_root() -> Result<PathBuf, String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    for attempt in 0..16 {
+        let root = std::env::temp_dir().join(format!(
+            "naive-demo-{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        match builder.create(&root) {
+            Ok(()) => return Ok(root),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("Could not create a unique demo directory".into())
+}
+
+#[cfg(all(test, unix))]
+mod extraction_tests {
+    #[test]
+    fn demo_roots_are_unique_private_directories() {
+        use std::os::unix::fs::PermissionsExt;
+        let first = super::create_demo_root().unwrap();
+        let second = super::create_demo_root().unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            std::fs::metadata(&first).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        std::fs::remove_dir(first).unwrap();
+        std::fs::remove_dir(second).unwrap();
+    }
 }
 
 fn create_dirs(root: &Path) {

@@ -42,8 +42,10 @@ impl EditorCamera {
         let delta = input.mouse_delta();
         if delta.x.abs() > 0.01 || delta.y.abs() > 0.01 {
             self.yaw -= delta.x * self.sensitivity;
-            self.pitch = (self.pitch - delta.y * self.sensitivity)
-                .clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
+            self.pitch = (self.pitch - delta.y * self.sensitivity).clamp(
+                -std::f32::consts::FRAC_PI_2 + 0.01,
+                std::f32::consts::FRAC_PI_2 - 0.01,
+            );
         }
 
         // Speed adjustment via scroll wheel

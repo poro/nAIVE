@@ -295,7 +295,12 @@ impl InputState {
     }
 
     /// Whether any trigger bound to `action` is in `keys` or `buttons`.
-    fn action_in(&self, action: &str, keys: &HashSet<KeyCode>, buttons: &HashSet<MouseButton>) -> bool {
+    fn action_in(
+        &self,
+        action: &str,
+        keys: &HashSet<KeyCode>,
+        buttons: &HashSet<MouseButton>,
+    ) -> bool {
         self.bindings.actions.get(action).is_some_and(|triggers| {
             triggers.iter().any(|trigger| match trigger.resolve() {
                 Some(Resolved::Key(code)) => keys.contains(&code),
@@ -312,12 +317,20 @@ impl InputState {
 
     /// Check if a semantic action was just pressed this frame.
     pub fn just_pressed(&self, action: &str) -> bool {
-        self.action_in(action, &self.keys_just_pressed, &self.mouse_buttons_just_pressed)
+        self.action_in(
+            action,
+            &self.keys_just_pressed,
+            &self.mouse_buttons_just_pressed,
+        )
     }
 
     /// Check if a semantic action was just released this frame.
     pub fn just_released(&self, action: &str) -> bool {
-        self.action_in(action, &self.keys_just_released, &self.mouse_buttons_just_released)
+        self.action_in(
+            action,
+            &self.keys_just_released,
+            &self.mouse_buttons_just_released,
+        )
     }
 
     /// Check if any mapped action was just pressed this frame.
@@ -454,8 +467,11 @@ mod tests {
     #[test]
     fn mouse_buttons_in_bindings_yaml_are_mouse_buttons() {
         // A plain string in bindings.yaml always loads as a Key trigger.
-        let bindings: InputBindings = serde_yaml::from_str("actions:\n  attack:\n    - Left\n  aim:\n    - Right\n").unwrap();
-        assert!(matches!(&bindings.actions["attack"][0], InputTrigger::Key(name) if name == "Left"));
+        let bindings: InputBindings =
+            serde_yaml::from_str("actions:\n  attack:\n    - Left\n  aim:\n    - Right\n").unwrap();
+        assert!(
+            matches!(&bindings.actions["attack"][0], InputTrigger::Key(name) if name == "Left")
+        );
 
         let mut state = InputState::new(bindings);
         state.inject_mouse_press(MouseButton::Left);
