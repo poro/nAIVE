@@ -226,7 +226,7 @@ entities:
 | `camera` | Camera with FOV, near/far planes, role |
 | `mesh_renderer` | 3D mesh with material reference |
 | `point_light` | Point light source with color, intensity, range |
-| `directional_light` | Sun-like directional light with shadow extent |
+| `directional_light` | Sun-like directional light. Shadows reach `2 × shadow_extent` (default 20) from the camera, in four cascades that are sharpest near the camera |
 | `rigid_body` | Physics rigid body (dynamic, fixed, kinematic) |
 | `collider` | Physics collision shape (cuboid, sphere, capsule) |
 | `character_controller` | FPS-style character movement (speed, jump) |

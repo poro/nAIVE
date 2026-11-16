@@ -697,7 +697,11 @@ struct LightingUniforms {
     dir_light_intensity: f32,
     dir_light_color: vec3<f32>,
     _pad_c: f32,
-    light_vp: mat4x4<f32>,
+    // Shadow cascades: each one's light view-projection, the view depth where
+    // each one ends and its depth bias. Cascade i uses tile (i % 2, i / 2).
+    cascade_vp: array<mat4x4<f32>, 4>,
+    cascade_splits: vec4<f32>,
+    cascade_bias: vec4<f32>,
     lights: array<PointLight, 32>,
 };
 
@@ -734,26 +738,43 @@ fn reconstruct_world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
 }
 
 fn sample_shadow_pcf(world_pos: vec3<f32>) -> f32 {
-    let light_clip = lighting.light_vp * vec4<f32>(world_pos, 1.0);
+    // The nearest cascade that reaches this point's distance from the camera.
+    let view_depth = -(camera.view * vec4<f32>(world_pos, 1.0)).z;
+    var cascade = 4u;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        if view_depth <= lighting.cascade_splits[i] {
+            cascade = i;
+            break;
+        }
+    }
+    // Beyond the last cascade shadows end.
+    if cascade >= 4u {
+        return 1.0;
+    }
+
+    let light_clip = lighting.cascade_vp[cascade] * vec4<f32>(world_pos, 1.0);
     let light_ndc = light_clip.xyz / light_clip.w;
-    let shadow_uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, -light_ndc.y * 0.5 + 0.5);
+    let local_uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, -light_ndc.y * 0.5 + 0.5);
     let shadow_depth = light_ndc.z;
 
-    // Nothing outside the shadow map, beside it or past its far plane, was
+    // Nothing outside the cascade, beside it or past its far plane, was
     // drawn into it, so such points are lit.
-    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0
+    if local_uv.x < 0.0 || local_uv.x > 1.0 || local_uv.y < 0.0 || local_uv.y > 1.0
         || shadow_depth > 1.0 {
         return 1.0;
     }
 
-    let shadow_dim = vec2<f32>(textureDimensions(shadow_map));
-    let texel_size = 1.0 / shadow_dim;
+    let texel_size = 1.0 / vec2<f32>(textureDimensions(shadow_map));
+    let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u)) * 0.5;
+    // Keep the 5x5 filter inside this cascade's tile.
+    let shadow_uv = clamp(tile + local_uv * 0.5, tile + texel_size * 2.5,
+        tile + vec2<f32>(0.5) - texel_size * 2.5);
 
     var shadow = 0.0;
     for (var y = -2i; y <= 2i; y = y + 1i) {
         for (var x = -2i; x <= 2i; x = x + 1i) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            shadow = shadow + textureSampleCompare(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - 0.005);
+            shadow = shadow + textureSampleCompareLevel(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - lighting.cascade_bias[cascade]);
         }
     }
     return shadow / 25.0;
@@ -1038,7 +1059,11 @@ struct LightingUniforms {
     dir_light_intensity: f32,
     dir_light_color: vec3<f32>,
     _pad_c: f32,
-    light_vp: mat4x4<f32>,
+    // Shadow cascades: each one's light view-projection, the view depth where
+    // each one ends and its depth bias. Cascade i uses tile (i % 2, i / 2).
+    cascade_vp: array<mat4x4<f32>, 4>,
+    cascade_splits: vec4<f32>,
+    cascade_bias: vec4<f32>,
     lights: array<PointLight, 32>,
 };
 
@@ -1078,26 +1103,43 @@ fn reconstruct_world_pos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
 }
 
 fn sample_shadow_pcf(world_pos: vec3<f32>) -> f32 {
-    let light_clip = lighting.light_vp * vec4<f32>(world_pos, 1.0);
+    // The nearest cascade that reaches this point's distance from the camera.
+    let view_depth = -(camera.view * vec4<f32>(world_pos, 1.0)).z;
+    var cascade = 4u;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        if view_depth <= lighting.cascade_splits[i] {
+            cascade = i;
+            break;
+        }
+    }
+    // Beyond the last cascade shadows end.
+    if cascade >= 4u {
+        return 1.0;
+    }
+
+    let light_clip = lighting.cascade_vp[cascade] * vec4<f32>(world_pos, 1.0);
     let light_ndc = light_clip.xyz / light_clip.w;
-    let shadow_uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, -light_ndc.y * 0.5 + 0.5);
+    let local_uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, -light_ndc.y * 0.5 + 0.5);
     let shadow_depth = light_ndc.z;
 
-    // Nothing outside the shadow map, beside it or past its far plane, was
+    // Nothing outside the cascade, beside it or past its far plane, was
     // drawn into it, so such points are lit.
-    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0
+    if local_uv.x < 0.0 || local_uv.x > 1.0 || local_uv.y < 0.0 || local_uv.y > 1.0
         || shadow_depth > 1.0 {
         return 1.0;
     }
 
-    let shadow_dim = vec2<f32>(textureDimensions(shadow_map));
-    let texel_size = 1.0 / shadow_dim;
+    let texel_size = 1.0 / vec2<f32>(textureDimensions(shadow_map));
+    let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u)) * 0.5;
+    // Keep the 5x5 filter inside this cascade's tile.
+    let shadow_uv = clamp(tile + local_uv * 0.5, tile + texel_size * 2.5,
+        tile + vec2<f32>(0.5) - texel_size * 2.5);
 
     var shadow = 0.0;
     for (var y = -2i; y <= 2i; y = y + 1i) {
         for (var x = -2i; x <= 2i; x = x + 1i) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            shadow = shadow + textureSampleCompare(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - 0.005);
+            shadow = shadow + textureSampleCompareLevel(shadow_map, shadow_sampler, shadow_uv + offset, shadow_depth - lighting.cascade_bias[cascade]);
         }
     }
     return shadow / 25.0;

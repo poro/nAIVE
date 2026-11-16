@@ -43,7 +43,8 @@ resources:
   - name: shadow_map
     type: texture_2d
     format: depth32f
-    size: "[2048, 2048]"
+    # Four shadow cascades, each a 2048 x 2048 quarter.
+    size: "[4096, 4096]"
 
 passes:
   - name: shadow_pass

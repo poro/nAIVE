@@ -225,6 +225,8 @@ pub struct DirectionalLightDef {
     pub color: [f32; 3],
     #[serde(default = "default_intensity")]
     pub intensity: f32,
+    /// Shadows reach twice this far from the camera, and objects up to
+    /// twice this far toward the light still cast them. Default 20.
     #[serde(default = "default_shadow_extent")]
     pub shadow_extent: f32,
 }

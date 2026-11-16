@@ -14,7 +14,10 @@ use crate::swarm::SwarmDraw;
 use crate::texture_cache::TextureHandle;
 use crate::world::SceneWorld;
 
-use super::resource::{LightingUniforms, PassType, PointLightUniform, ShadowUniforms, MAX_LIGHTS};
+use super::resource::{
+    LightingUniforms, PassType, PointLightUniform, ShadowUniforms, MAX_LIGHTS,
+    SHADOW_UNIFORM_STRIDE,
+};
 use super::{CompiledPass, CompiledPipeline, RenderDebugState};
 
 // ---------------------------------------------------------------------------
@@ -141,8 +144,8 @@ pub fn execute_pipeline_to_view(
         }
     }
 
-    // Query directional light and compute shadow VP matrix
-    let mut light_vp = glam::Mat4::IDENTITY;
+    // The directional light and its shadow cascades, fitted to this camera.
+    let mut cascades = None;
     // Only one directional light is supported, so take the first.
     if let Some((_entity, dir_light)) = scene_world
         .world
@@ -155,8 +158,25 @@ pub fn execute_pipeline_to_view(
         light_data.dir_light_intensity = dir_light.intensity;
         light_data.dir_light_color = dir_light.color.to_array();
 
-        light_vp = directional_shadow_view_projection(dir_light.direction, dir_light.shadow_extent);
-        light_data.light_vp = light_vp.to_cols_array_2d();
+        let camera = &camera_state.uniform;
+        let fitted = crate::shadows::fit_cascades(
+            glam::Mat4::from_cols_array_2d(&camera.inv_view_projection),
+            camera.near_plane,
+            camera.far_plane,
+            dir_light.direction,
+            dir_light.shadow_extent,
+            shadow_tile_resolution(compiled),
+        );
+        for (slot, vp) in light_data
+            .cascade_vp
+            .iter_mut()
+            .zip(fitted.view_projections)
+        {
+            *slot = vp.to_cols_array_2d();
+        }
+        light_data.cascade_splits = fitted.splits;
+        light_data.cascade_bias = fitted.depth_biases;
+        cascades = Some(fitted);
     }
 
     // Debug: inject a directional light for ambient override
@@ -173,13 +193,18 @@ pub fn execute_pipeline_to_view(
         bytemuck::cast_slice(&[light_data]),
     );
 
-    // Upload shadow uniform buffer (light VP matrix for shadow pass)
-    if let Some(shadow_buf) = &compiled.shadow_uniform_buffer {
-        let shadow_data = ShadowUniforms {
-            light_view_projection: light_vp.to_cols_array_2d(),
-        };
-        gpu.queue
-            .write_buffer(shadow_buf, 0, bytemuck::cast_slice(&[shadow_data]));
+    // Each cascade's shadow camera, in its own slot of the shadow uniforms.
+    if let (Some(shadow_buf), Some(cascades)) = (&compiled.shadow_uniform_buffer, &cascades) {
+        for (i, vp) in cascades.view_projections.iter().enumerate() {
+            let shadow_data = ShadowUniforms {
+                light_view_projection: vp.to_cols_array_2d(),
+            };
+            gpu.queue.write_buffer(
+                shadow_buf,
+                i as u64 * SHADOW_UNIFORM_STRIDE,
+                bytemuck::cast_slice(&[shadow_data]),
+            );
+        }
     }
 
     // Create command encoder
@@ -276,30 +301,21 @@ pub fn execute_pipeline_to_view(
     encoder
 }
 
-/// The directional light's shadow camera: an orthographic box around the world
-/// origin that reaches `extent` from it in every direction, sideways and along
-/// the light. The light sits `extent` back from the origin and the far plane
-/// is `2 * extent` away, so the depth range grows with the scene instead of
-/// cutting it off at a fixed distance.
-fn directional_shadow_view_projection(direction: glam::Vec3, extent: f32) -> glam::Mat4 {
-    let dir = direction.try_normalize().unwrap_or(glam::Vec3::NEG_Y);
-    let extent = extent.max(0.01);
-    // look_at needs an up vector that is not parallel to the view direction.
-    let up = if dir.y.abs() > 0.99 {
-        glam::Vec3::Z
-    } else {
-        glam::Vec3::Y
-    };
-    let light_view = glam::camera::rh::view::look_at_mat4(-dir * extent, glam::Vec3::ZERO, up);
-    let light_proj = glam::camera::rh::proj::directx::orthographic(
-        -extent,
-        extent,
-        -extent,
-        extent,
-        0.0,
-        2.0 * extent,
-    );
-    light_proj * light_view
+/// The shadow map as a 2 by 2 grid of cascade tiles: (width, height) of the
+/// whole map.
+fn shadow_map_size(compiled: &CompiledPipeline) -> Option<(u32, u32)> {
+    compiled
+        .passes
+        .iter()
+        .filter(|pass| pass.pass_type == PassType::Shadow)
+        .find_map(|pass| pass.depth_target.as_ref())
+        .and_then(|name| compiled.resources.get(name))
+        .map(|resource| (resource.texture.width(), resource.texture.height()))
+}
+
+/// Width in texels of one cascade's tile of the shadow map.
+fn shadow_tile_resolution(compiled: &CompiledPipeline) -> u32 {
+    shadow_map_size(compiled).map_or(1024, |(width, _)| (width / 2).max(1))
 }
 
 /// Entities that share a mesh and an albedo texture. Their draw data is
@@ -539,34 +555,45 @@ fn execute_shadow_pass(
         });
 
         render_pass.set_pipeline(&pass.pipeline);
-
-        // Group 0: shadow uniforms (light VP matrix)
-        if let Some(bg) = &compiled.shadow_bind_group {
-            render_pass.set_bind_group(0, bg, &[]);
-        }
-
-        // Group 1: every entity's draw data; group 2: bone matrices.
-        render_pass.set_bind_group(1, &draw_pool.storage_bind_group, &[]);
+        // Group 2: bone matrices.
         if let Some(skin_bg) = &compiled.skin_bind_group {
             render_pass.set_bind_group(2, skin_bg, &[]);
         }
+        let Some(shadow_bg) = &compiled.shadow_bind_group else {
+            return;
+        };
+        let (width, height) = shadow_map_size(compiled).unwrap_or((1, 1));
+        let (tile_w, tile_h) = ((width / 2).max(1), (height / 2).max(1));
 
-        for batch in &draws.batches {
-            let gpu_mesh = mesh_cache.get(batch.mesh());
-            render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
-            render_pass
-                .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.instances());
-        }
+        // Each cascade into its own quarter of the map, with its own camera.
+        for cascade in 0..crate::shadows::CASCADES as u32 {
+            let (x, y) = ((cascade % 2) * tile_w, (cascade / 2) * tile_h);
+            render_pass.set_viewport(x as f32, y as f32, tile_w as f32, tile_h as f32, 0.0, 1.0);
+            render_pass.set_scissor_rect(x, y, tile_w, tile_h);
+            // Group 0: this cascade's light view-projection.
+            let offset = (cascade as u64 * SHADOW_UNIFORM_STRIDE) as u32;
+            render_pass.set_bind_group(0, shadow_bg, &[offset]);
 
-        // Swarms: the same shader, reading each swarm's own draw data.
-        for swarm in swarms {
-            let gpu_mesh = mesh_cache.get(swarm.mesh);
-            render_pass.set_bind_group(1, swarm.draws, &[]);
-            render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
-            render_pass
-                .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..swarm.count);
+            // Group 1: every entity's draw data. Out-of-view entities are
+            // drawn too: they can cast shadows into the view.
+            render_pass.set_bind_group(1, &draw_pool.storage_bind_group, &[]);
+            for batch in &draws.batches {
+                let gpu_mesh = mesh_cache.get(batch.mesh());
+                render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.instances());
+            }
+
+            // Swarms: the same shader, reading each swarm's own draw data.
+            for swarm in swarms {
+                let gpu_mesh = mesh_cache.get(swarm.mesh);
+                render_pass.set_bind_group(1, swarm.draws, &[]);
+                render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..swarm.count);
+            }
         }
     }
 }
@@ -1124,47 +1151,5 @@ pub fn rebuild_bind_groups(device: &wgpu::Device, compiled: &mut CompiledPipelin
                 },
             ],
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use glam::{Vec3, Vec3Swizzles, Vec4Swizzles};
-
-    /// Where a world point lands in the shadow map: xy in [-1, 1], depth in [0, 1].
-    fn to_shadow_ndc(vp: glam::Mat4, p: Vec3) -> Vec3 {
-        let clip = vp * p.extend(1.0);
-        clip.xyz() / clip.w
-    }
-
-    #[test]
-    fn shadow_depth_range_covers_the_extent_along_the_light() {
-        let dir = Vec3::new(0.35, -1.0, 0.25);
-        let extent = 140.0;
-        let vp = directional_shadow_view_projection(dir, extent);
-        let n = dir.normalize();
-
-        let origin = to_shadow_ndc(vp, Vec3::ZERO);
-        assert!(origin.xy().length() < 1e-4);
-        assert!((origin.z - 0.5).abs() < 1e-4);
-
-        // Points `extent` toward and away from the light sit on the near and
-        // far planes, so nothing inside the box is cut off.
-        assert!(to_shadow_ndc(vp, -n * extent).z.abs() < 1e-4);
-        assert!((to_shadow_ndc(vp, n * extent).z - 1.0).abs() < 1e-4);
-
-        // A floor corner well inside the box: inside the map on every axis.
-        let corner = to_shadow_ndc(vp, Vec3::new(90.0, 0.0, 90.0));
-        assert!(corner.x.abs() < 1.0 && corner.y.abs() < 1.0);
-        assert!(corner.z > 0.0 && corner.z < 1.0);
-    }
-
-    #[test]
-    fn shadow_camera_handles_a_light_pointing_straight_down() {
-        let vp = directional_shadow_view_projection(Vec3::NEG_Y, 20.0);
-        assert!(vp.is_finite());
-        let below = to_shadow_ndc(vp, Vec3::new(0.0, -10.0, 0.0));
-        assert!((below.z - 0.75).abs() < 1e-4);
     }
 }
