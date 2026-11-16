@@ -1,6 +1,6 @@
 # Tier 4 plan: GPU-scale entities
 
-**Status:** proposed on 2026-11-16, not yet approved.
+**Status:** approved on 2026-11-16. Milestone 0 is in pull request #11; milestones 1 to 5 are not started.
 **Goal:** 50,000 horde entities on screen at 60 fps, as the roadmap and the HAVOC proof game call for.
 **Source spec:** section 8 of [the engine PRD](nAIVE_Engine_PRD_v5.0.md), which this plan narrows into steps.
 
@@ -94,7 +94,7 @@ Each one ends with a number or a scene to look at.
 
 | | Milestone | Done when | Size |
 |---|---|---|---|
-| 0 | Stop the per-entity bone upload | Measured above. On branch `perf/skin-palette-writes`, ready to ship | Done |
+| 0 | Stop the per-entity bone upload | Measured above. Pull request #11 | Done |
 | 1 | Instanced drawing for ECS entities that share a mesh and material | Benchmark table re-run; three demos look unchanged | Medium |
 | 2 | Compute pass plumbing and the `gpu_swarm` component: members move toward a target, drawn instanced | 50,000 moving cubes at 60 fps in a new `tier4_swarm` scene | Large |
 | 3 | Neighbour grid and flow field | Members spread out instead of stacking and path around obstacles | Large |
@@ -118,8 +118,10 @@ Milestone 1 comes before any compute work because swarms need instancing anyway,
 - **Projectiles no longer "hit" horde members physically.** They become rays or small damage volumes. Anything that relied on a Rapier contact with a goblin has to be expressed that way.
 - **The 50,000 figure is a target, not a measurement.** The grid pass is the likely bottleneck, and its cost is unknown until milestone 3.
 
-## Decisions needed
+## Decisions
+
+Confirmed with the plan's approval on 2026-11-16:
 
 1. **Swarm members are not individually scriptable.** Scripts get the swarm-level API above. Anything that needs its own script (a boss, an elite with special behaviour) stays an ECS entity.
 2. **No animation in Tier 4.** Rigid meshes until Tier 5.
-3. **Ship milestone 0 now.** It is a self-contained fix with a measured gain.
+3. **Milestone 0 ships on its own**, ahead of the rest.
