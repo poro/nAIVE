@@ -88,6 +88,8 @@ pub struct GpuMesh {
     pub physics_vertices: Option<Vec<[f32; 3]>>,
     /// CPU-side triangle indices for physics trimesh colliders.
     pub physics_indices: Option<Vec<[u32; 3]>>,
+    /// Sphere around the vertices, for frustum culling.
+    pub bounds: crate::culling::BoundingSphere,
 }
 
 /// Shared texture resources: bind group layout and 1x1 white fallback.
@@ -665,6 +667,7 @@ fn load_gltf(
         .map(|c| [c[0], c[1], c[2]])
         .collect();
 
+    let bounds = crate::culling::BoundingSphere::from_positions(physics_vertices.iter().copied());
     Ok(GpuMesh {
         vertex_buffer,
         index_buffer,
@@ -673,6 +676,7 @@ fn load_gltf(
         skin_data,
         physics_vertices: Some(physics_vertices),
         physics_indices: Some(physics_indices),
+        bounds,
     })
 }
 
@@ -1467,6 +1471,7 @@ fn build_procedural_gpu_mesh(
         skin_data: None,
         physics_vertices: None,
         physics_indices: None,
+        bounds: crate::culling::BoundingSphere::from_positions(vertices.iter().map(|v| v.position)),
     }
 }
 
