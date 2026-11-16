@@ -93,7 +93,9 @@ pub fn save_texture_png(
     slice.map_async(wgpu::MapMode::Read, move |result| {
         let _ = sender.send(result);
     });
-    gpu.device.poll(wgpu::Maintain::Wait);
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|e| format!("the GPU did not finish the frame: {}", e))?;
     receiver
         .recv()
         .map_err(|e| format!("the GPU never answered: {}", e))?
@@ -103,7 +105,9 @@ pub fn save_texture_png(
     // leaves behind is meaningless, and would make the PNG see-through.
     let mut rgb = Vec::with_capacity((width * height * 3) as usize);
     {
-        let data = slice.get_mapped_range();
+        let data = slice
+            .get_mapped_range()
+            .map_err(|e| format!("could not read the frame back: {}", e))?;
         for row in data.chunks_exact(padded_row_bytes as usize) {
             for pixel in row[..row_bytes as usize].as_chunks::<4>().0 {
                 if bgra {

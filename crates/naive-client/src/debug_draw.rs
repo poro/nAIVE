@@ -89,8 +89,8 @@ impl DebugDrawRenderer {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Debug Wireframe Pipeline Layout"),
-            bind_group_layouts: &[camera_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(camera_bind_group_layout)],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -99,7 +99,7 @@ impl DebugDrawRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs"),
-                buffers: &[VERTEX_LAYOUT],
+                buffers: &[Some(VERTEX_LAYOUT)],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -118,13 +118,13 @@ impl DebugDrawRenderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -176,6 +176,7 @@ impl DebugDrawRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Debug Wireframe Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    depth_slice: None,
                     view,
                     resolve_target: None,
                     ops: wgpu::Operations {

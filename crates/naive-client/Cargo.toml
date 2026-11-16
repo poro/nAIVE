@@ -77,4 +77,4 @@ base64 = { workspace = true }
 
 [dev-dependencies]
 # Validates the engine's built-in WGSL without a GPU. Same version wgpu uses.
-naga = { version = "24.0.0", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in"] }

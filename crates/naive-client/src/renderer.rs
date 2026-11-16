@@ -253,9 +253,9 @@ pub fn create_depth_texture(
 
 /// Initialize the wgpu device, surface, and create the initial render pipeline.
 pub async fn init_gpu(window: Arc<Window>, initial_wgsl: &str) -> GpuState {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
-        ..Default::default()
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
 
     let surface = instance
@@ -267,6 +267,7 @@ pub async fn init_gpu(window: Arc<Window>, initial_wgsl: &str) -> GpuState {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         })
         .await
         .expect("Failed to find suitable GPU adapter");
@@ -279,16 +280,15 @@ pub async fn init_gpu(window: Arc<Window>, initial_wgsl: &str) -> GpuState {
     );
 
     let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("nAIVE Device"),
-                // Timestamps for the GPU timer, where the adapter has them.
-                required_features: adapter.features() & crate::gpu_timer::FEATURES,
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::default(),
-            },
-            None,
-        )
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("nAIVE Device"),
+            // Timestamps for the GPU timer, where the adapter has them.
+            required_features: adapter.features() & crate::gpu_timer::FEATURES,
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            trace: wgpu::Trace::Off,
+        })
         .await
         .expect("Failed to create device");
 
@@ -312,6 +312,7 @@ pub async fn init_gpu(window: Arc<Window>, initial_wgsl: &str) -> GpuState {
         alpha_mode: surface_caps.alpha_modes[0],
         view_formats: vec![],
         desired_maximum_frame_latency: 2,
+        color_space: wgpu::SurfaceColorSpace::Auto,
     };
     surface.configure(&device, &config);
 
@@ -352,7 +353,7 @@ pub fn create_render_pipeline(
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Triangle Pipeline Layout"),
         bind_group_layouts: &[],
-        push_constant_ranges: &[],
+        immediate_size: 0,
     });
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -361,7 +362,7 @@ pub fn create_render_pipeline(
         vertex: wgpu::VertexState {
             module: &shader_module,
             entry_point: Some("vs_main"),
-            buffers: &[Vertex::desc()],
+            buffers: &[Some(Vertex::desc())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -385,7 +386,7 @@ pub fn create_render_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -412,8 +413,8 @@ pub fn create_forward_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Forward Pipeline Layout"),
-        bind_group_layouts: &layouts,
-        push_constant_ranges: &[],
+        bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+        immediate_size: 0,
     });
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -422,7 +423,7 @@ pub fn create_forward_pipeline(
         vertex: wgpu::VertexState {
             module: &shader_module,
             entry_point: Some("vs_main"),
-            buffers: &[Vertex3D::desc()],
+            buffers: &[Some(Vertex3D::desc())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -446,13 +447,13 @@ pub fn create_forward_pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -460,13 +461,15 @@ pub fn create_forward_pipeline(
 /// Render one frame with the Phase 1 triangle (fallback when no scene loaded).
 pub fn render(gpu: &GpuState) {
     let output = match gpu.surface.get_current_texture() {
-        Ok(t) => t,
-        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+        wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+        wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
             gpu.surface.configure(&gpu.device, &gpu.config);
             return;
         }
-        Err(e) => {
-            tracing::error!("Surface error: {:?}", e);
+        // Minimized, hidden or slow to present: skip this frame.
+        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
+        wgpu::CurrentSurfaceTexture::Validation => {
+            tracing::error!("Surface validation error while acquiring a frame");
             return;
         }
     };
@@ -486,6 +489,7 @@ pub fn render(gpu: &GpuState) {
             label: Some("Triangle Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -500,6 +504,7 @@ pub fn render(gpu: &GpuState) {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         if let Some(pipeline) = &gpu.render_pipeline {
@@ -510,7 +515,7 @@ pub fn render(gpu: &GpuState) {
     }
 
     gpu.queue.submit(std::iter::once(encoder.finish()));
-    output.present();
+    gpu.queue.present(output);
 }
 
 /// Render one frame with 3D scene content.
@@ -572,6 +577,7 @@ pub fn render_scene_to_view(
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Forward Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -594,6 +600,7 @@ pub fn render_scene_to_view(
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         render_pass.set_pipeline(forward_pipeline);

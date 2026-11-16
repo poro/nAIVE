@@ -152,7 +152,7 @@ impl GpuTimer {
     /// After the frame's timed passes: record what has come back, then copy
     /// this frame's timestamps out to be read once the GPU is done.
     pub fn finish_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let _ = device.poll(wgpu::Maintain::Poll);
+        let _ = device.poll(wgpu::PollType::Poll);
         self.collect();
 
         let names = std::mem::take(&mut *self.frame.borrow_mut());
@@ -189,8 +189,12 @@ impl GpuTimer {
             if slot.state.load(Ordering::Acquire) != READY {
                 continue;
             }
-            let ticks: Vec<u64> =
-                bytemuck::cast_slice(&slot.buffer.slice(..).get_mapped_range()).to_vec();
+            let Ok(view) = slot.buffer.slice(..).get_mapped_range() else {
+                tracing::error!("GPU timer readback buffer was not mapped");
+                continue;
+            };
+            let ticks: Vec<u64> = bytemuck::cast_slice(&view).to_vec();
+            drop(view);
             slot.buffer.unmap();
             slot.state.store(FREE, Ordering::Release);
             let to_ms = |ticks: u64| ticks as f32 * self.period_ns / 1_000_000.0;

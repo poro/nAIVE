@@ -518,8 +518,8 @@ fn create_rasterize_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("GBuffer Pipeline Layout"),
-        bind_group_layouts: &layouts,
-        push_constant_ranges: &[],
+        bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+        immediate_size: 0,
     });
 
     // Build color targets from resource formats
@@ -548,7 +548,7 @@ fn create_rasterize_pipeline(
         vertex: wgpu::VertexState {
             module: &shader_module,
             entry_point: Some("vs_main"),
-            buffers: &[Vertex3D::desc()],
+            buffers: &[Some(Vertex3D::desc())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -568,13 +568,13 @@ fn create_rasterize_pipeline(
         },
         depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
             format,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -623,8 +623,8 @@ fn create_splat_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Splat Pipeline Layout"),
-        bind_group_layouts: &[camera_bind_group_layout, &splat_data_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(camera_bind_group_layout), Some(&splat_data_layout)],
+        immediate_size: 0,
     });
 
     // Color targets
@@ -685,13 +685,13 @@ fn create_splat_pipeline(
         },
         depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
             format,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
 
@@ -814,11 +814,11 @@ fn create_lighting_pipeline(
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Deferred Lighting Pipeline Layout"),
         bind_group_layouts: &[
-            camera_bind_group_layout,
-            &gbuffer_layout,
-            light_bind_group_layout,
+            Some(camera_bind_group_layout),
+            Some(&gbuffer_layout),
+            Some(light_bind_group_layout),
         ],
-        push_constant_ranges: &[],
+        immediate_size: 0,
     });
 
     let output_format = color_targets
@@ -852,7 +852,7 @@ fn create_lighting_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
 
@@ -1033,12 +1033,12 @@ fn create_lighting_pipeline_with_splats(
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Deferred Lighting + Splat Pipeline Layout"),
         bind_group_layouts: &[
-            camera_bind_group_layout,
-            &gbuffer_layout,
-            light_bind_group_layout,
-            &splat_composite_layout,
+            Some(camera_bind_group_layout),
+            Some(&gbuffer_layout),
+            Some(light_bind_group_layout),
+            Some(&splat_composite_layout),
         ],
-        push_constant_ranges: &[],
+        immediate_size: 0,
     });
 
     let output_format = color_targets
@@ -1072,7 +1072,7 @@ fn create_lighting_pipeline_with_splats(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
 
@@ -1156,8 +1156,8 @@ fn create_bloom_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Bloom Pipeline Layout"),
-        bind_group_layouts: &[&bloom_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&bloom_layout)],
+        immediate_size: 0,
     });
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1185,7 +1185,7 @@ fn create_bloom_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
 
@@ -1278,8 +1278,8 @@ fn create_tonemap_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Tonemap Pipeline Layout"),
-        bind_group_layouts: &[&tonemap_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&tonemap_layout)],
+        immediate_size: 0,
     });
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1307,7 +1307,7 @@ fn create_tonemap_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
 
@@ -1377,8 +1377,8 @@ fn create_fxaa_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("FXAA Pipeline Layout"),
-        bind_group_layouts: &[&fxaa_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&fxaa_layout)],
+        immediate_size: 0,
     });
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1406,7 +1406,7 @@ fn create_fxaa_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
 
@@ -1431,11 +1431,11 @@ fn create_shadow_pipeline(
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Shadow Pipeline Layout"),
         bind_group_layouts: &[
-            shadow_bind_group_layout,
-            draw_bind_group_layout,
-            skin_bind_group_layout,
+            Some(shadow_bind_group_layout),
+            Some(draw_bind_group_layout),
+            Some(skin_bind_group_layout),
         ],
-        push_constant_ranges: &[],
+        immediate_size: 0,
     });
 
     let depth_format = depth_target
@@ -1449,7 +1449,7 @@ fn create_shadow_pipeline(
         vertex: wgpu::VertexState {
             module: &shader_module,
             entry_point: Some("vs_main"),
-            buffers: &[Vertex3D::desc()],
+            buffers: &[Some(Vertex3D::desc())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -1466,8 +1466,8 @@ fn create_shadow_pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: depth_format,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState {
                 constant: 2,
@@ -1476,7 +1476,7 @@ fn create_shadow_pipeline(
             },
         }),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }

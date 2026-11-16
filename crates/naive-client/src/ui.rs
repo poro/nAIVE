@@ -178,8 +178,8 @@ impl UiRenderer {
             });
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("UI Colored PL"),
-                bind_group_layouts: &[&proj_bgl],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&proj_bgl)],
+                immediate_size: 0,
             });
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("UI Colored Pipeline"),
@@ -187,7 +187,7 @@ impl UiRenderer {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs"),
-                    buffers: &[VERTEX_LAYOUT],
+                    buffers: &[Some(VERTEX_LAYOUT)],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -206,7 +206,7 @@ impl UiRenderer {
                 },
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -219,8 +219,8 @@ impl UiRenderer {
             });
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("UI Textured PL"),
-                bind_group_layouts: &[&proj_bgl, &font.bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&proj_bgl), Some(&font.bind_group_layout)],
+                immediate_size: 0,
             });
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("UI Textured Pipeline"),
@@ -228,7 +228,7 @@ impl UiRenderer {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs"),
-                    buffers: &[VERTEX_LAYOUT],
+                    buffers: &[Some(VERTEX_LAYOUT)],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -247,7 +247,7 @@ impl UiRenderer {
                 },
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -432,6 +432,7 @@ impl UiRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("UI Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    depth_slice: None,
                     view,
                     resolve_target: None,
                     ops: wgpu::Operations {
