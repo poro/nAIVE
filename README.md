@@ -21,6 +21,10 @@ Built from the ground up in Rust. Worlds are created by AI, rendering happens on
 
 **No engine royalties.** The core, client, runtime and web crates are MIT licensed. The separate, currently stubbed server crate uses BSL 1.1 with a restriction on commercial managed hosting services; see [License](#license).
 
+### Measured: an agent builds a game
+
+From a one-paragraph prompt, headless Claude Code (Opus 5.5) built a small original arcade game in nAIVE (scene, Lua gameplay, HUD, game over and six passing Lua tests) in **3.0 minutes for $1.26** at API prices. That's one run, with tests the agent wrote itself. [Details, caveats and the script to reproduce it](docs/agent-benchmark.md).
+
 ### Implementation status
 
 | Status | Capabilities |
