@@ -21,7 +21,7 @@ use crate::components::{
 use crate::editor_camera::EditorCamera;
 use crate::events::EventBus;
 use crate::font::BitmapFont;
-use crate::input::InputState;
+use crate::input::{InputState, Key};
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
 use crate::physics::{CharacterController, PhysicsWorld};
@@ -34,9 +34,8 @@ use crate::ui::UiRenderer;
 use crate::watcher::WatchEvent;
 use crate::world::SceneWorld;
 
-use winit::keyboard::KeyCode;
-
 mod commands;
+mod winit_input;
 
 /// Main engine struct implementing winit's ApplicationHandler.
 pub struct Engine {
@@ -2691,7 +2690,7 @@ impl Engine {
         if !self.args.editor_mode {
             if let Some(input_rc) = &self.input_state {
                 let mut input = input_rc.borrow_mut();
-                if input.key_held(KeyCode::Escape) {
+                if input.key_held(Key::Escape) {
                     if let Some(gpu) = &self.gpu {
                         let _ = gpu
                             .window
@@ -2734,10 +2733,10 @@ impl Engine {
         // Render debug toggles: 0 always toggles HUD, 1-6 only when HUD is visible
         if let Some(input) = &self.input_state {
             let input = input.borrow_mut();
-            if input.just_pressed_key(KeyCode::Digit0) {
+            if input.just_pressed_key(Key::Digit0) {
                 self.render_debug.show_hud = !self.render_debug.show_hud;
             }
-            if input.just_pressed_key(KeyCode::KeyH) {
+            if input.just_pressed_key(Key::H) {
                 self.render_debug.show_colliders = !self.render_debug.show_colliders;
                 tracing::info!(
                     "Collider wireframes: {}",
@@ -2749,7 +2748,7 @@ impl Engine {
                 );
             }
             if self.render_debug.show_hud {
-                if input.just_pressed_key(KeyCode::Digit1) {
+                if input.just_pressed_key(Key::Digit1) {
                     self.render_debug.bloom_enabled = !self.render_debug.bloom_enabled;
                     tracing::info!(
                         "Bloom: {}",
@@ -2760,7 +2759,7 @@ impl Engine {
                         }
                     );
                 }
-                if input.just_pressed_key(KeyCode::Digit2) {
+                if input.just_pressed_key(Key::Digit2) {
                     // Cycle light intensity: 1x → 5x → 10x → 20x → 1x
                     self.render_debug.light_intensity_mult =
                         match self.render_debug.light_intensity_mult as u32 {
@@ -2774,7 +2773,7 @@ impl Engine {
                         self.render_debug.light_intensity_mult
                     );
                 }
-                if input.just_pressed_key(KeyCode::Digit3) {
+                if input.just_pressed_key(Key::Digit3) {
                     self.render_debug.point_lights_enabled =
                         !self.render_debug.point_lights_enabled;
                     tracing::info!(
@@ -2786,7 +2785,7 @@ impl Engine {
                         }
                     );
                 }
-                if input.just_pressed_key(KeyCode::Digit4) {
+                if input.just_pressed_key(Key::Digit4) {
                     self.render_debug.emission_enabled = !self.render_debug.emission_enabled;
                     tracing::info!(
                         "Emission: {}",
@@ -2797,7 +2796,7 @@ impl Engine {
                         }
                     );
                 }
-                if input.just_pressed_key(KeyCode::Digit5) {
+                if input.just_pressed_key(Key::Digit5) {
                     self.render_debug.torch_flicker_enabled =
                         !self.render_debug.torch_flicker_enabled;
                     tracing::info!(
@@ -2809,7 +2808,7 @@ impl Engine {
                         }
                     );
                 }
-                if input.just_pressed_key(KeyCode::Digit6) {
+                if input.just_pressed_key(Key::Digit6) {
                     // Cycle ambient override: 0 → 0.3 → 1.0 → 3.0 → 0
                     self.render_debug.ambient_override = match self.render_debug.ambient_override {
                         x if x < 0.1 => 0.3,
@@ -3435,9 +3434,10 @@ impl ApplicationHandler for Engine {
         event: WindowEvent,
     ) {
         // Feed all events to input system
-        if let Some(input) = &self.input_state {
-            let mut input = input.borrow_mut();
-            input.handle_window_event(&event);
+        if let (Some(input), Some(input_event)) =
+            (&self.input_state, winit_input::window_input_event(&event))
+        {
+            input.borrow_mut().handle_event(input_event);
         }
 
         match event {
@@ -3485,9 +3485,10 @@ impl ApplicationHandler for Engine {
         _device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
-        if let Some(input) = &self.input_state {
-            let mut input = input.borrow_mut();
-            input.handle_device_event(&event);
+        if let (Some(input), Some(input_event)) =
+            (&self.input_state, winit_input::device_input_event(&event))
+        {
+            input.borrow_mut().handle_event(input_event);
         }
     }
 

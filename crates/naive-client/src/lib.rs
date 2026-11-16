@@ -24,7 +24,7 @@ pub mod engine;
 pub mod font;
 pub mod gpu_timer;
 pub mod init;
-pub mod input;
+pub use naive_sim::input;
 pub mod material;
 pub mod mesh;
 pub mod particles;

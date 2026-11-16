@@ -2204,7 +2204,9 @@ dependencies = [
  "hecs",
  "naive-core",
  "rapier3d",
+ "serde",
  "serde_json",
+ "serde_norway",
  "tracing",
 ]
 

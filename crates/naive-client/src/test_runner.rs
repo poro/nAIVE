@@ -825,14 +825,14 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
                 match kind.as_str() {
                     "press" => {
                         let key = action_to_key(&action);
-                        match crate::input::mouse_button_named(&key) {
+                        match crate::input::MouseButton::from_name(&key) {
                             Some(button) => input.inject_mouse_press(button),
                             None => input.inject_key_press(&key),
                         }
                     }
                     "release" => {
                         let key = action_to_key(&action);
-                        match crate::input::mouse_button_named(&key) {
+                        match crate::input::MouseButton::from_name(&key) {
                             Some(button) => input.inject_mouse_release(button),
                             None => input.inject_key_release(&key),
                         }

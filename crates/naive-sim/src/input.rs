@@ -1,10 +1,117 @@
+//! Input state: held and just-pressed keys and mouse buttons, mouse motion,
+//! scroll and cursor position, the action bindings from `input/bindings.yaml`
+//! and synthetic input for tests and the `inject_input` command.
+//!
+//! Keys and mouse buttons are nAIVE's own types, not the window system's: the
+//! engine turns window events into [`InputEvent`]s at the edge, so headless
+//! runs and a server can use the same state without a window.
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
-use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
-use winit::keyboard::{KeyCode, PhysicalKey};
+
+/// Declares [`Key`] from one table of variant, name and aliases, so the enum,
+/// [`Key::ALL`] and the name lookups cannot drift apart.
+macro_rules! keys {
+    ($($variant:ident = $name:literal $(| $alias:literal)*;)*) => {
+        /// A keyboard key by its position on a US layout, whatever the
+        /// keyboard's language (`W` is the key above `S`).
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Key {
+            $($variant,)*
+        }
+
+        impl Key {
+            /// Every key, in declaration order.
+            pub const ALL: &'static [Key] = &[$(Key::$variant,)*];
+
+            /// The key called `name` in bindings files, Lua and the
+            /// `inject_input` command.
+            pub fn from_name(name: &str) -> Option<Key> {
+                match name {
+                    $($name $(| $alias)* => Some(Key::$variant),)*
+                    _ => None,
+                }
+            }
+
+            /// The key's name in bindings files.
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Key::$variant => $name,)*
+                }
+            }
+        }
+    };
+}
+
+keys! {
+    A = "A"; B = "B"; C = "C"; D = "D"; E = "E"; F = "F"; G = "G";
+    H = "H"; I = "I"; J = "J"; K = "K"; L = "L"; M = "M"; N = "N";
+    O = "O"; P = "P"; Q = "Q"; R = "R"; S = "S"; T = "T"; U = "U";
+    V = "V"; W = "W"; X = "X"; Y = "Y"; Z = "Z";
+    Digit0 = "Digit0" | "0";
+    Digit1 = "Digit1" | "1";
+    Digit2 = "Digit2" | "2";
+    Digit3 = "Digit3" | "3";
+    Digit4 = "Digit4" | "4";
+    Digit5 = "Digit5" | "5";
+    Digit6 = "Digit6" | "6";
+    Digit7 = "Digit7" | "7";
+    Digit8 = "Digit8" | "8";
+    Digit9 = "Digit9" | "9";
+    Space = "Space";
+    ShiftLeft = "ShiftLeft";
+    ShiftRight = "ShiftRight";
+    ControlLeft = "ControlLeft";
+    ControlRight = "ControlRight";
+    Escape = "Escape";
+    Enter = "Enter";
+    Tab = "Tab";
+    ArrowUp = "ArrowUp";
+    ArrowDown = "ArrowDown";
+    ArrowLeft = "ArrowLeft";
+    ArrowRight = "ArrowRight";
+}
+
+/// A mouse button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl MouseButton {
+    /// The mouse button called `name` in bindings, Lua and the
+    /// `inject_input` command: "Left", "Right" or "Middle".
+    pub fn from_name(name: &str) -> Option<MouseButton> {
+        match name {
+            "Left" => Some(MouseButton::Left),
+            "Right" => Some(MouseButton::Right),
+            "Middle" => Some(MouseButton::Middle),
+            _ => None,
+        }
+    }
+}
+
+/// One change in input, as the engine reports it from window events.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InputEvent {
+    /// A key went down (`pressed`) or up. Key repeat while held is ignored.
+    Key { key: Key, pressed: bool },
+    /// A mouse button went down (`pressed`) or up.
+    MouseButton { button: MouseButton, pressed: bool },
+    /// The cursor moved to this position in window pixels.
+    CursorMoved(Vec2),
+    /// The scroll wheel moved by this many lines (y > 0 = up).
+    Scroll(Vec2),
+    /// Raw mouse motion from the device. Counts only while the cursor is
+    /// captured; otherwise motion comes from cursor positions
+    /// ([`InputState::compute_cursor_delta`]).
+    RawMouseMotion(Vec2),
+}
 
 /// Semantic action names mapped from physical inputs via bindings.yaml.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -24,18 +131,8 @@ pub enum InputTrigger {
 
 /// The physical input a trigger names.
 enum Resolved {
-    Key(KeyCode),
+    Key(Key),
     Mouse(MouseButton),
-}
-
-/// The mouse button called `name` in bindings: "Left", "Right" or "Middle".
-pub fn mouse_button_named(name: &str) -> Option<MouseButton> {
-    match name {
-        "Left" => Some(MouseButton::Left),
-        "Right" => Some(MouseButton::Right),
-        "Middle" => Some(MouseButton::Middle),
-        _ => None,
-    }
 }
 
 impl InputTrigger {
@@ -45,11 +142,11 @@ impl InputTrigger {
     /// and so on).
     fn resolve(&self) -> Option<Resolved> {
         let (InputTrigger::Key(name) | InputTrigger::Mouse(name)) = self;
-        if let Some(button) = mouse_button_named(name) {
+        if let Some(button) = MouseButton::from_name(name) {
             return Some(Resolved::Mouse(button));
         }
         match self {
-            InputTrigger::Key(name) => key_name_to_code(name).map(Resolved::Key),
+            InputTrigger::Key(name) => Key::from_name(name).map(Resolved::Key),
             InputTrigger::Mouse(_) => None,
         }
     }
@@ -103,62 +200,13 @@ pub fn load_bindings(project_root: &Path) -> InputBindings {
     InputBindings::default()
 }
 
-/// Maps key name strings to winit KeyCode.
-fn key_name_to_code(name: &str) -> Option<KeyCode> {
-    match name {
-        "A" => Some(KeyCode::KeyA),
-        "B" => Some(KeyCode::KeyB),
-        "C" => Some(KeyCode::KeyC),
-        "D" => Some(KeyCode::KeyD),
-        "E" => Some(KeyCode::KeyE),
-        "F" => Some(KeyCode::KeyF),
-        "G" => Some(KeyCode::KeyG),
-        "H" => Some(KeyCode::KeyH),
-        "I" => Some(KeyCode::KeyI),
-        "J" => Some(KeyCode::KeyJ),
-        "K" => Some(KeyCode::KeyK),
-        "L" => Some(KeyCode::KeyL),
-        "M" => Some(KeyCode::KeyM),
-        "N" => Some(KeyCode::KeyN),
-        "O" => Some(KeyCode::KeyO),
-        "P" => Some(KeyCode::KeyP),
-        "Q" => Some(KeyCode::KeyQ),
-        "R" => Some(KeyCode::KeyR),
-        "S" => Some(KeyCode::KeyS),
-        "T" => Some(KeyCode::KeyT),
-        "U" => Some(KeyCode::KeyU),
-        "V" => Some(KeyCode::KeyV),
-        "W" => Some(KeyCode::KeyW),
-        "X" => Some(KeyCode::KeyX),
-        "Y" => Some(KeyCode::KeyY),
-        "Z" => Some(KeyCode::KeyZ),
-        "Digit0" | "0" => Some(KeyCode::Digit0),
-        "Digit1" | "1" => Some(KeyCode::Digit1),
-        "Digit2" | "2" => Some(KeyCode::Digit2),
-        "Digit3" | "3" => Some(KeyCode::Digit3),
-        "Space" => Some(KeyCode::Space),
-        "ShiftLeft" => Some(KeyCode::ShiftLeft),
-        "ShiftRight" => Some(KeyCode::ShiftRight),
-        "ControlLeft" => Some(KeyCode::ControlLeft),
-        "ControlRight" => Some(KeyCode::ControlRight),
-        "Escape" => Some(KeyCode::Escape),
-        "Enter" => Some(KeyCode::Enter),
-        "Tab" => Some(KeyCode::Tab),
-        "ArrowUp" => Some(KeyCode::ArrowUp),
-        "ArrowDown" => Some(KeyCode::ArrowDown),
-        "ArrowLeft" => Some(KeyCode::ArrowLeft),
-        "ArrowRight" => Some(KeyCode::ArrowRight),
-        _ => None,
-    }
-}
-
 /// Central input state, updated each frame.
 pub struct InputState {
     bindings: InputBindings,
     // Raw key state
-    keys_held: HashSet<KeyCode>,
-    keys_just_pressed: HashSet<KeyCode>,
-    keys_just_released: HashSet<KeyCode>,
+    keys_held: HashSet<Key>,
+    keys_just_pressed: HashSet<Key>,
+    keys_just_released: HashSet<Key>,
     // Raw mouse state
     mouse_buttons_held: HashSet<MouseButton>,
     mouse_buttons_just_pressed: HashSet<MouseButton>,
@@ -174,8 +222,8 @@ pub struct InputState {
     // Whether the cursor is captured (for FPS camera)
     pub cursor_captured: bool,
     // Synthetic input queue (for MCP/testing)
-    synthetic_keys_pressed: HashSet<KeyCode>,
-    synthetic_keys_released: HashSet<KeyCode>,
+    synthetic_keys_pressed: HashSet<Key>,
+    synthetic_keys_released: HashSet<Key>,
     synthetic_mouse_pressed: HashSet<MouseButton>,
     synthetic_mouse_released: HashSet<MouseButton>,
 }
@@ -230,77 +278,51 @@ impl InputState {
         }
     }
 
-    /// Process a winit WindowEvent.
-    pub fn handle_window_event(&mut self, event: &WindowEvent) {
+    /// Apply one input event from the window.
+    pub fn handle_event(&mut self, event: InputEvent) {
         match event {
-            WindowEvent::KeyboardInput { event, .. } => {
-                if let PhysicalKey::Code(key_code) = event.physical_key {
-                    match event.state {
-                        ElementState::Pressed => {
-                            if !self.keys_held.contains(&key_code) {
-                                self.keys_just_pressed.insert(key_code);
-                            }
-                            self.keys_held.insert(key_code);
-                        }
-                        ElementState::Released => {
-                            self.keys_held.remove(&key_code);
-                            self.keys_just_released.insert(key_code);
-                        }
-                    }
+            InputEvent::Key { key, pressed: true } => {
+                if self.keys_held.insert(key) {
+                    self.keys_just_pressed.insert(key);
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => match state {
-                ElementState::Pressed => {
-                    if !self.mouse_buttons_held.contains(button) {
-                        self.mouse_buttons_just_pressed.insert(*button);
-                    }
-                    self.mouse_buttons_held.insert(*button);
-                }
-                ElementState::Released => {
-                    self.mouse_buttons_held.remove(button);
-                    self.mouse_buttons_just_released.insert(*button);
-                }
-            },
-            WindowEvent::CursorMoved { position, .. } => {
-                self.cursor_position = Vec2::new(position.x as f32, position.y as f32);
+            InputEvent::Key {
+                key,
+                pressed: false,
+            } => {
+                self.keys_held.remove(&key);
+                self.keys_just_released.insert(key);
             }
-            WindowEvent::MouseWheel { delta, .. } => {
-                match delta {
-                    winit::event::MouseScrollDelta::LineDelta(x, y) => {
-                        self.scroll_delta.x += x;
-                        self.scroll_delta.y += y;
-                    }
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => {
-                        // Normalize pixel deltas to ~line units
-                        self.scroll_delta.x += pos.x as f32 / 120.0;
-                        self.scroll_delta.y += pos.y as f32 / 120.0;
-                    }
+            InputEvent::MouseButton {
+                button,
+                pressed: true,
+            } => {
+                if self.mouse_buttons_held.insert(button) {
+                    self.mouse_buttons_just_pressed.insert(button);
                 }
             }
-            _ => {}
-        }
-    }
-
-    /// Process a winit DeviceEvent (for raw mouse motion).
-    /// Only uses DeviceEvent delta when cursor is captured (locked mode),
-    /// since CursorMoved won't fire when locked. When cursor is free,
-    /// delta is computed from CursorMoved instead (reliable on macOS).
-    pub fn handle_device_event(&mut self, event: &DeviceEvent) {
-        if let DeviceEvent::MouseMotion { delta } = event {
-            if self.cursor_captured {
-                self.mouse_delta.x += delta.0 as f32;
-                self.mouse_delta.y += delta.1 as f32;
+            InputEvent::MouseButton {
+                button,
+                pressed: false,
+            } => {
+                self.mouse_buttons_held.remove(&button);
+                self.mouse_buttons_just_released.insert(button);
+            }
+            InputEvent::CursorMoved(position) => self.cursor_position = position,
+            InputEvent::Scroll(lines) => self.scroll_delta += lines,
+            // Only while the cursor is captured (locked), since CursorMoved
+            // does not fire then. When the cursor is free, motion comes from
+            // cursor positions instead (reliable on macOS).
+            InputEvent::RawMouseMotion(delta) => {
+                if self.cursor_captured {
+                    self.mouse_delta += delta;
+                }
             }
         }
     }
 
     /// Whether any trigger bound to `action` is in `keys` or `buttons`.
-    fn action_in(
-        &self,
-        action: &str,
-        keys: &HashSet<KeyCode>,
-        buttons: &HashSet<MouseButton>,
-    ) -> bool {
+    fn action_in(&self, action: &str, keys: &HashSet<Key>, buttons: &HashSet<MouseButton>) -> bool {
         self.bindings.actions.get(action).is_some_and(|triggers| {
             triggers.iter().any(|trigger| match trigger.resolve() {
                 Some(Resolved::Key(code)) => keys.contains(&code),
@@ -399,30 +421,30 @@ impl InputState {
     }
 
     /// Check if a raw key is held.
-    pub fn key_held(&self, code: KeyCode) -> bool {
-        self.keys_held.contains(&code)
+    pub fn key_held(&self, key: Key) -> bool {
+        self.keys_held.contains(&key)
     }
 
-    /// Check if a raw key was just pressed this frame (by KeyCode, not action name).
-    pub fn just_pressed_key(&self, code: KeyCode) -> bool {
-        self.keys_just_pressed.contains(&code)
+    /// Check if a raw key was just pressed this frame (by key, not action name).
+    pub fn just_pressed_key(&self, key: Key) -> bool {
+        self.keys_just_pressed.contains(&key)
     }
 
     /// Inject synthetic key press (for MCP/testing).
     /// Cancels any pending release for the same key so last-write wins.
     pub fn inject_key_press(&mut self, key_name: &str) {
-        if let Some(code) = key_name_to_code(key_name) {
-            self.synthetic_keys_pressed.insert(code);
-            self.synthetic_keys_released.remove(&code);
+        if let Some(key) = Key::from_name(key_name) {
+            self.synthetic_keys_pressed.insert(key);
+            self.synthetic_keys_released.remove(&key);
         }
     }
 
     /// Inject synthetic key release (for MCP/testing).
     /// Cancels any pending press for the same key so last-write wins.
     pub fn inject_key_release(&mut self, key_name: &str) {
-        if let Some(code) = key_name_to_code(key_name) {
-            self.synthetic_keys_released.insert(code);
-            self.synthetic_keys_pressed.remove(&code);
+        if let Some(key) = Key::from_name(key_name) {
+            self.synthetic_keys_released.insert(key);
+            self.synthetic_keys_pressed.remove(&key);
         }
     }
 
@@ -458,10 +480,128 @@ mod tests {
 
     #[test]
     fn test_key_name_mapping() {
-        assert_eq!(key_name_to_code("W"), Some(KeyCode::KeyW));
-        assert_eq!(key_name_to_code("Space"), Some(KeyCode::Space));
-        assert_eq!(key_name_to_code("ShiftLeft"), Some(KeyCode::ShiftLeft));
-        assert_eq!(key_name_to_code("Invalid"), None);
+        assert_eq!(Key::from_name("W"), Some(Key::W));
+        assert_eq!(Key::from_name("Space"), Some(Key::Space));
+        assert_eq!(Key::from_name("ShiftLeft"), Some(Key::ShiftLeft));
+        assert_eq!(Key::from_name("Digit1"), Some(Key::Digit1));
+        assert_eq!(Key::from_name("1"), Some(Key::Digit1));
+        assert_eq!(Key::from_name("Invalid"), None);
+        // Names are case-sensitive, as before.
+        assert_eq!(Key::from_name("w"), None);
+    }
+
+    #[test]
+    fn every_key_is_found_by_its_name() {
+        for &key in Key::ALL {
+            assert_eq!(Key::from_name(key.name()), Some(key), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn key_names_used_before_the_move_still_resolve() {
+        // The names bindings files, Lua and inject_input accepted when keys
+        // were winit's KeyCode.
+        let names = [
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F",
+            "G",
+            "H",
+            "I",
+            "J",
+            "K",
+            "L",
+            "M",
+            "N",
+            "O",
+            "P",
+            "Q",
+            "R",
+            "S",
+            "T",
+            "U",
+            "V",
+            "W",
+            "X",
+            "Y",
+            "Z",
+            "Digit0",
+            "0",
+            "Digit1",
+            "1",
+            "Digit2",
+            "2",
+            "Digit3",
+            "3",
+            "Space",
+            "ShiftLeft",
+            "ShiftRight",
+            "ControlLeft",
+            "ControlRight",
+            "Escape",
+            "Enter",
+            "Tab",
+            "ArrowUp",
+            "ArrowDown",
+            "ArrowLeft",
+            "ArrowRight",
+        ];
+        for name in names {
+            assert!(Key::from_name(name).is_some(), "{name}");
+        }
+        for name in ["Left", "Right", "Middle"] {
+            assert!(MouseButton::from_name(name).is_some(), "{name}");
+            assert_eq!(Key::from_name(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn window_events_update_held_and_just_pressed() {
+        let mut state = InputState::new(InputBindings::default());
+        let w_down = InputEvent::Key {
+            key: Key::W,
+            pressed: true,
+        };
+        state.handle_event(w_down);
+        assert!(state.pressed("move_forward") && state.just_pressed("move_forward"));
+
+        // Key repeat while held is not a new press.
+        state.begin_frame();
+        state.handle_event(w_down);
+        assert!(state.pressed("move_forward") && !state.just_pressed("move_forward"));
+
+        state.handle_event(InputEvent::Key {
+            key: Key::W,
+            pressed: false,
+        });
+        assert!(!state.pressed("move_forward") && state.just_released("move_forward"));
+
+        state.handle_event(InputEvent::MouseButton {
+            button: MouseButton::Left,
+            pressed: true,
+        });
+        assert!(state.just_pressed("attack") && state.mouse_button_held(MouseButton::Left));
+
+        state.handle_event(InputEvent::CursorMoved(Vec2::new(10.0, 20.0)));
+        state.handle_event(InputEvent::Scroll(Vec2::new(0.0, 1.0)));
+        state.handle_event(InputEvent::Scroll(Vec2::new(0.0, 0.5)));
+        assert_eq!(state.cursor_position(), Vec2::new(10.0, 20.0));
+        assert_eq!(state.scroll_delta(), Vec2::new(0.0, 1.5));
+    }
+
+    #[test]
+    fn raw_mouse_motion_counts_only_while_captured() {
+        let mut state = InputState::new(InputBindings::default());
+        state.handle_event(InputEvent::RawMouseMotion(Vec2::new(3.0, 4.0)));
+        assert_eq!(state.mouse_delta(), Vec2::ZERO);
+
+        state.cursor_captured = true;
+        state.handle_event(InputEvent::RawMouseMotion(Vec2::new(3.0, 4.0)));
+        state.handle_event(InputEvent::RawMouseMotion(Vec2::new(1.0, 1.0)));
+        assert_eq!(state.mouse_delta(), Vec2::new(4.0, 5.0));
     }
 
     #[test]
@@ -494,7 +634,7 @@ mod tests {
         assert!(!state.pressed("move_forward"));
 
         // Simulate W key press
-        state.keys_held.insert(KeyCode::KeyW);
+        state.keys_held.insert(Key::W);
         assert!(state.pressed("move_forward"));
     }
 
@@ -503,8 +643,8 @@ mod tests {
         let bindings = InputBindings::default();
         let mut state = InputState::new(bindings);
 
-        state.keys_held.insert(KeyCode::KeyW);
-        state.keys_held.insert(KeyCode::KeyD);
+        state.keys_held.insert(Key::W);
+        state.keys_held.insert(Key::D);
 
         let axis = state.axis_2d("move_forward", "move_backward", "move_left", "move_right");
         assert!(axis.y > 0.0);
