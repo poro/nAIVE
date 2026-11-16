@@ -2135,6 +2135,7 @@ dependencies = [
  "mlua",
  "naga",
  "naive-core",
+ "naive-sim",
  "notify",
  "ply-rs",
  "pollster",
@@ -2192,6 +2193,19 @@ dependencies = [
  "serde_json",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "naive-sim"
+version = "0.1.21"
+dependencies = [
+ "glam 0.34.3",
+ "gltf",
+ "hecs",
+ "naive-core",
+ "rapier3d",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

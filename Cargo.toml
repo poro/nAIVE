@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/naive-core",
+    "crates/naive-sim",
     "crates/naive-client",
     "crates/naive-runtime",
     "crates/naive-server",
@@ -13,6 +14,7 @@ members = [
 # Cargo.toml).
 default-members = [
     "crates/naive-core",
+    "crates/naive-sim",
     "crates/naive-client",
     "crates/naive-runtime",
     "crates/naive-server",
@@ -91,6 +93,7 @@ tokio = { version = "1", features = ["net", "io-util", "rt", "sync", "macros", "
 
 # Internal crates
 naive-core = { path = "crates/naive-core" }
+naive-sim = { path = "crates/naive-sim" }
 naive-client = { path = "crates/naive-client", default-features = false }
 
 [profile.dev]
