@@ -428,7 +428,7 @@ Development follows a tiered system, each tier validated by proof-of-concept gam
 
 **Proof game: HAVOC** — A 3D Vampire Survivors-style horde survival game. If nAIVE can render 50,000 physics-driven goblins while you drive a truck through them, it can handle anything. Waves 1 to 3 are playable now: `naive run --scene scenes/tier4_havoc.yaml` in `project/`.
 
-See the full roadmap in [docs/nAIVE_Engine_PRD_v5.0.md](docs/nAIVE_Engine_PRD_v5.0.md).
+The original tier roadmap is in the archived [engine PRD v5.0](docs/archive/nAIVE_Engine_PRD_v5.0.md); much of what it plans beyond Tier 4 is not built.
 
 ---
 
@@ -436,14 +436,14 @@ See the full roadmap in [docs/nAIVE_Engine_PRD_v5.0.md](docs/nAIVE_Engine_PRD_v5
 
 | Document | Description |
 |----------|------------|
-| [Engine PRD v5.0](docs/nAIVE_Engine_PRD_v5.0.md) | Full engine specification and tiered roadmap |
-| [Platform PRD v5.0](docs/nAIVE_Platform_PRD_v5.0.md) | Server infrastructure: multiplayer, matchmaking, AI Director |
 | [Game Development Guide](docs/GAME_DEVELOPMENT_GUIDE.md) | How to build games with nAIVE |
+| [Architecture](docs/ARCHITECTURE.md) | How the engine is put together |
+| [Development and release checks](docs/DEVELOPMENT.md) | Tests, CI, releases and shipping a macOS app |
 | [Snake Sweeper Dev Log](docs/SNAKE_SWEEPER_DEV_LOG.md) | Building Snake Sweeper in nAIVE |
 | [HAVOC Dev Log](docs/havoc.dev.log) | Building a Vampire Survivors prototype in nAIVE |
-| [Whitepaper](docs/whitepaper.md) | Technical whitepaper and benchmarks |
+| [Archive](docs/archive/README.md) | Earlier PRDs, the GDC white paper, plans and engine comparisons: history, not a description of the current engine |
 
-### PRD version history
+### PRD version history (archived)
 
 | Version | Date | Key additions |
 |---------|------|--------------|

@@ -205,20 +205,44 @@ Claude Code triggers 3D generation via `game-asset-mcp` (configured in `.mcp.jso
 ## Building
 
 ```sh
-# Requires SLANG SDK in vendor/ (see homebrew formula or download from shader-slang/slang releases)
-export SLANG_DIR=vendor
+# Requires the SLANG SDK unpacked in vendor/ (see the README). .cargo/config.toml
+# already sets SLANG_DIR; do not export SLANG_DIR=vendor yourself (a relative
+# value breaks the shader-slang-sys build).
 cargo build
-cargo test
+cargo test --workspace --exclude naive-web
 ```
 
 CI fails on any clippy warning. Before pushing, run what it runs:
 
 ```sh
+cargo fmt --all -- --check
 cargo test --workspace --exclude naive-web --locked
 cargo clippy --workspace --exclude naive-web --all-targets --locked -- -D warnings
 cd project && cargo run --locked -p naive-runtime --bin naive -- test   # Lua scene tests
 ```
 
-## Homebrew
+For rendering changes, also compare `capture_frame` PNGs from master and the
+branch (byte-identical for a static scene, or look at them) and say which in
+the pull request.
 
-Formula lives at `../homebrew-tap/Formula/naive.rb`. Update URL, SHA256, and version on each release.
+## Pull requests
+
+- Every change goes through a pull request; nothing is pushed straight to
+  `master`, version bumps included.
+- A pull request that changes more than about 500 lines of code (not counting
+  the lockfile, formatting or moved files) gets a review before it merges: a
+  person, or at least `/code-review` with its findings answered in the PR.
+- The description says how the change was verified (tests, captures,
+  benchmarks) and what was not checked.
+
+## Releases
+
+1. `scripts/bump-version.sh X.Y.Z`, then a pull request with the result.
+2. After it merges, tag the merge commit on master: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. `.github/workflows/release.yml` builds `naive` and `naive-player`, bundles the
+   demo project as an app (notarized when the Developer ID secrets are set),
+   checks that GitHub's source archive includes the LFS meshes, publishes the
+   release and prints the Homebrew `url` and `sha256`.
+4. Update `../homebrew-tap/Formula/naive.rb` with them. The formula must also
+   build `crates/naive-player` (`cargo install` it alongside
+   `crates/naive-runtime`) so `naive build` can bundle it.
