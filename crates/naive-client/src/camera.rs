@@ -92,12 +92,12 @@ impl CameraState {
         viewport_width: u32,
         viewport_height: u32,
     ) {
-        let view = Mat4::look_to_rh(
+        let view = glam::camera::rh::view::look_to_mat4(
             transform.position,
             transform.rotation * Vec3::NEG_Z,
             Vec3::Y,
         );
-        let projection = Mat4::perspective_rh(
+        let projection = glam::camera::rh::proj::directx::perspective(
             camera.fov_degrees.to_radians(),
             viewport_width as f32 / viewport_height.max(1) as f32,
             camera.near,

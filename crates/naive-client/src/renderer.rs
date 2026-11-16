@@ -532,7 +532,7 @@ pub fn render_scene_to_view(
     let mut draw_index = 0u32;
     for (entity, (transform, mesh_renderer)) in scene_world
         .world
-        .query::<(&Transform, &MeshRenderer)>()
+        .query::<(hecs::Entity, (&Transform, &MeshRenderer))>()
         .iter()
     {
         if scene_world.world.get::<&Hidden>(entity).is_ok() {
@@ -602,7 +602,7 @@ pub fn render_scene_to_view(
         let mut draw_index = 0u32;
         for (entity, (_, mesh_renderer)) in scene_world
             .world
-            .query::<(&Transform, &MeshRenderer)>()
+            .query::<(hecs::Entity, (&Transform, &MeshRenderer))>()
             .iter()
         {
             if scene_world.world.get::<&Hidden>(entity).is_ok() {

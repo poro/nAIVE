@@ -130,7 +130,7 @@ struct CallBudget {
 
 /// Install the VM hook that enforces the CPU limit, checking every
 /// `interval` instructions.
-fn install_cpu_hook(lua: &Lua, budget: Rc<CallBudget>, interval: u32) {
+fn install_cpu_hook(lua: &Lua, budget: Rc<CallBudget>, interval: u32) -> LuaResult<()> {
     lua.set_hook(
         HookTriggers::new().every_nth_instruction(interval),
         move |lua, _debug| {
@@ -148,14 +148,14 @@ fn install_cpu_hook(lua: &Lua, budget: Rc<CallBudget>, interval: u32) {
                 // Check before every instruction from here on. With a wider
                 // interval, a script that catches the error with `pcall`
                 // inside a loop would keep running between checks.
-                install_cpu_hook(lua, budget.clone(), 1);
+                install_cpu_hook(lua, budget.clone(), 1)?;
             }
             Err(LuaError::RuntimeError(format!(
                 "script exceeded its CPU limit of {} instructions in one call",
                 budget.limit
             )))
         },
-    );
+    )
 }
 
 /// Whether `error` is, or wraps, a Lua out-of-memory error.
@@ -203,7 +203,7 @@ fn copy_state_table(
         };
         target.raw_set(key, value)?;
     }
-    target.set_metatable(source.metatable());
+    target.set_metatable(source.metatable())?;
     Ok(target)
 }
 
@@ -259,7 +259,10 @@ impl ScriptRuntime {
             exhausted: Cell::new(false),
             depth: Cell::new(0),
         });
-        install_cpu_hook(&lua, budget.clone(), HOOK_INTERVAL);
+        // Without the hook scripts would run with no CPU limit, so this is
+        // not recoverable. It cannot fail on a fresh state.
+        install_cpu_hook(&lua, budget.clone(), HOOK_INTERVAL)
+            .expect("installing the Lua CPU-limit hook on a new state");
 
         Self {
             lua,
@@ -303,7 +306,10 @@ impl ScriptRuntime {
         if budget.depth.get() == 0 && budget.exhausted.get() {
             // The hook was checking every instruction; go back to the normal
             // interval for the next call.
-            install_cpu_hook(&self.lua, budget.clone(), HOOK_INTERVAL);
+            if let Err(e) = install_cpu_hook(&self.lua, budget.clone(), HOOK_INTERVAL) {
+                // The per-instruction hook stays installed: still limited, slower.
+                tracing::warn!("Could not restore the Lua CPU hook interval: {}", e);
+            }
         }
         result
     }
@@ -468,7 +474,7 @@ impl ScriptRuntime {
         let meta = self.lua.create_table().map_err(|e| e.to_string())?;
         meta.set("__index", self.lua.globals())
             .map_err(|e| e.to_string())?;
-        env.set_metatable(Some(meta));
+        env.set_metatable(Some(meta)).map_err(|e| e.to_string())?;
         env.set("_entity_id", entity.id() as u64)
             .map_err(|e| e.to_string())?;
         env.set("self", self.lua.create_table().map_err(|e| e.to_string())?)

@@ -8,6 +8,7 @@ pub enum SceneError {
     ParseError(serde_yaml::Error),
     InheritanceCycle(String),
     MissingParent(String),
+    UnsupportedVersion(u32),
 }
 
 impl std::fmt::Display for SceneError {
@@ -19,6 +20,12 @@ impl std::fmt::Display for SceneError {
                 write!(f, "Inheritance cycle detected at entity '{}'", id)
             }
             Self::MissingParent(id) => write!(f, "Entity extends missing parent '{}'", id),
+            Self::UnsupportedVersion(version) => write!(
+                f,
+                "Scene format version {} is not supported: this engine reads versions 1 to {}. \
+                 Upgrade nAIVE to open it.",
+                version, SCENE_FORMAT_VERSION
+            ),
         }
     }
 }
@@ -27,6 +34,10 @@ impl std::fmt::Display for SceneError {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SceneFile {
+    /// Scene format version, written first in every saved scene. Files
+    /// without one are version 1. See [`SCENE_FORMAT_VERSION`].
+    #[serde(default = "default_scene_version")]
+    pub version: u32,
     pub name: String,
     #[serde(default)]
     pub settings: SceneSettings,
@@ -42,6 +53,22 @@ pub struct SceneSettings {
     pub fog: Option<FogSettings>,
     #[serde(default = "default_gravity")]
     pub gravity: [f32; 3],
+}
+
+/// The scene format this engine reads and writes. Bump it, and teach the
+/// loader to read the previous version, whenever a change to the schema would
+/// make an older engine misread a newer file.
+pub const SCENE_FORMAT_VERSION: u32 = 1;
+
+fn default_scene_version() -> u32 {
+    1
+}
+
+fn check_version(scene: &SceneFile) -> Result<(), SceneError> {
+    if scene.version == 0 || scene.version > SCENE_FORMAT_VERSION {
+        return Err(SceneError::UnsupportedVersion(scene.version));
+    }
+    Ok(())
 }
 
 fn default_ambient() -> [f32; 3] {
@@ -510,6 +537,7 @@ fn default_range() -> f32 {
 pub fn parse_scene(yaml: &str) -> Result<SceneFile, String> {
     let mut scene: SceneFile =
         serde_yaml::from_str(yaml).map_err(|e| format!("YAML parse error: {}", e))?;
+    check_version(&scene).map_err(|e| e.to_string())?;
     scene.entities = resolve_inheritance(&scene.entities).map_err(|e| format!("{}", e))?;
     Ok(scene)
 }
@@ -517,6 +545,7 @@ pub fn parse_scene(yaml: &str) -> Result<SceneFile, String> {
 pub fn load_scene(path: &Path) -> Result<SceneFile, SceneError> {
     let contents = std::fs::read_to_string(path).map_err(SceneError::IoError)?;
     let mut scene: SceneFile = serde_yaml::from_str(&contents).map_err(SceneError::ParseError)?;
+    check_version(&scene)?;
     scene.entities = resolve_inheritance(&scene.entities)?;
     Ok(scene)
 }
@@ -619,6 +648,18 @@ fn merge_entity(parent: &EntityDef, child: &EntityDef) -> EntityDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scene_files_carry_a_format_version() {
+        let unversioned = parse_scene("name: old\n").unwrap();
+        assert_eq!(unversioned.version, 1);
+        let saved = serde_yaml::to_string(&unversioned).unwrap();
+        assert!(saved.starts_with("version: 1\n"), "{saved}");
+        let newer = format!("version: {}\nname: future\n", SCENE_FORMAT_VERSION + 1);
+        let error = parse_scene(&newer).unwrap_err();
+        assert!(error.contains("not supported"), "{error}");
+        assert!(parse_scene("version: 0\nname: bad\n").is_err());
+    }
 
     #[test]
     fn test_parse_scene() {

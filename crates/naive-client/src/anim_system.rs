@@ -137,7 +137,7 @@ impl AnimationSystem {
     pub fn attach_animators(&self, scene_world: &mut crate::world::SceneWorld) {
         let pending: Vec<_> = scene_world
             .world
-            .query::<&crate::components::MeshRenderer>()
+            .query::<(hecs::Entity, &crate::components::MeshRenderer)>()
             .iter()
             .filter_map(|(entity, mesh)| {
                 self.mesh_skeletons

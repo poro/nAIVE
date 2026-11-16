@@ -45,7 +45,10 @@ pub fn update_fps_controller(
 
     for (entity, (player, cc, rb, col)) in scene_world
         .world
-        .query::<(&Player, &CharacterController, &RigidBodyComp, &ColliderComp)>()
+        .query::<(
+            hecs::Entity,
+            (&Player, &CharacterController, &RigidBodyComp, &ColliderComp),
+        )>()
         .iter()
     {
         // Mouse look
@@ -166,7 +169,7 @@ pub fn run_fixed_steps(
 
     let scripted: Vec<hecs::Entity> = if steps > 0 && script_runtime.is_some() {
         let sw = scene_world.borrow();
-        let mut query = sw.world.query::<&Script>();
+        let mut query = sw.world.query::<(hecs::Entity, &Script)>();
         query.iter().map(|(e, _)| e).collect()
     } else {
         Vec::new()
@@ -335,7 +338,11 @@ pub fn update_projectiles(
     let scene_world = scene_world.borrow();
 
     let mut expired = Vec::new();
-    for (entity, projectile) in scene_world.world.query::<&mut Projectile>().iter() {
+    for (entity, projectile) in scene_world
+        .world
+        .query::<(hecs::Entity, &mut Projectile)>()
+        .iter()
+    {
         projectile.age += dt;
         if projectile.age >= projectile.lifetime {
             expired.push(entity);
@@ -426,7 +433,7 @@ pub fn process_health(scene_world: &SharedSceneWorld, script_runtime: &ScriptRun
     let newly_dead: Vec<hecs::Entity> = {
         let sw = scene_world.borrow();
         let mut newly_dead = Vec::new();
-        for (entity, health) in sw.world.query::<&mut Health>().iter() {
+        for (entity, health) in sw.world.query::<(hecs::Entity, &mut Health)>().iter() {
             if health.current <= 0.0 && !health.dead {
                 health.dead = true;
                 newly_dead.push(entity);
@@ -496,7 +503,7 @@ pub fn initialize_pending_scripts(
         let world = scene_world.borrow();
         let pending = world
             .world
-            .query::<&Script>()
+            .query::<(hecs::Entity, &Script)>()
             .iter()
             .filter(|(_, script)| !script.initialized)
             .map(|(entity, script)| {
@@ -590,7 +597,7 @@ pub fn finish_pool_spawn(
 pub fn update_scripts(scene_world: &SharedSceneWorld, script_runtime: &ScriptRuntime, dt: f32) {
     let scripted: Vec<hecs::Entity> = {
         let sw = scene_world.borrow();
-        let mut query = sw.world.query::<&Script>();
+        let mut query = sw.world.query::<(hecs::Entity, &Script)>();
         query.iter().map(|(e, _)| e).collect()
     };
     for entity in scripted {

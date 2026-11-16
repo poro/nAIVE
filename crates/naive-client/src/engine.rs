@@ -953,8 +953,10 @@ impl Engine {
             .as_ref()
             .and_then(|sw| {
                 let sw = sw.borrow();
-                for (_entity, (transform, camera)) in
-                    sw.world.query::<(&Transform, &Camera)>().iter()
+                for (_entity, (transform, camera)) in sw
+                    .world
+                    .query::<(hecs::Entity, (&Transform, &Camera))>()
+                    .iter()
                 {
                     if camera.role == CameraRole::Main {
                         return Some(transform.position);
@@ -990,6 +992,7 @@ impl Engine {
     fn default_editor_scene() -> crate::scene::SceneFile {
         use crate::scene::*;
         SceneFile {
+            version: SCENE_FORMAT_VERSION,
             name: "Editor Scene".to_string(),
             settings: SceneSettings {
                 ambient_light: [0.15, 0.15, 0.2],
@@ -1687,7 +1690,7 @@ impl Engine {
                 let scene_world_guard = scene_world.borrow();
                 let reload_candidates: Vec<(hecs::Entity, std::path::PathBuf)> = scene_world_guard
                     .world
-                    .query::<&Script>()
+                    .query::<(hecs::Entity, &Script)>()
                     .iter()
                     .filter_map(|(entity, script)| {
                         let script_source_str = script.source.to_string_lossy();
@@ -1773,7 +1776,7 @@ impl Engine {
         // Collect entities with animators
         let animated: Vec<hecs::Entity> = scene_world
             .world
-            .query::<&crate::components::Animator>()
+            .query::<(hecs::Entity, &crate::components::Animator)>()
             .iter()
             .map(|(e, _)| e)
             .collect();
@@ -2377,7 +2380,7 @@ impl Engine {
         let mut player_camera_applied = false;
         for (entity, (transform, player, camera)) in scene_world
             .world
-            .query::<(&Transform, &Player, &Camera)>()
+            .query::<(hecs::Entity, (&Transform, &Player, &Camera))>()
             .iter()
         {
             if camera.role == CameraRole::Main {
@@ -2472,8 +2475,10 @@ impl Engine {
 
         if !player_camera_applied {
             // Find the main camera entity (non-player)
-            for (_entity, (transform, camera)) in
-                scene_world.world.query::<(&Transform, &Camera)>().iter()
+            for (_entity, (transform, camera)) in scene_world
+                .world
+                .query::<(hecs::Entity, (&Transform, &Camera))>()
+                .iter()
             {
                 if camera.role == CameraRole::Main {
                     let cam_transform = Transform {
@@ -2895,7 +2900,7 @@ impl Engine {
             // Only the first player entity drives the listener.
             let listener_pos = scene_world
                 .world
-                .query::<(&Transform, &Player)>()
+                .query::<(hecs::Entity, (&Transform, &Player))>()
                 .iter()
                 .next()
                 .map(|(_entity, (transform, _player))| transform.position);
@@ -2951,7 +2956,11 @@ impl Engine {
         {
             let sw = scene_world.borrow();
             let mut visible_count = 0u32;
-            for (entity, _) in sw.world.query::<&crate::components::MeshRenderer>().iter() {
+            for (entity, _) in sw
+                .world
+                .query::<(hecs::Entity, &crate::components::MeshRenderer)>()
+                .iter()
+            {
                 if sw.world.get::<&crate::components::Hidden>(entity).is_ok() {
                     continue;
                 }
@@ -2987,7 +2996,7 @@ impl Engine {
             let cs = camera_state.borrow();
             let view_matrix = cs.view_matrix();
             let sw = scene_world.borrow();
-            for (_entity, splat) in sw.world.query::<&GaussianSplat>().iter() {
+            for (_entity, splat) in sw.world.query::<(hecs::Entity, &GaussianSplat)>().iter() {
                 self.splat_cache
                     .sort_splats(splat.splat_handle, &view_matrix, &gpu.queue);
             }
