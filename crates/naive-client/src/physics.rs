@@ -6,6 +6,34 @@ use rapier3d::prelude::*;
 
 use crate::components::Transform;
 
+// rapier does its math with its own copy of glam (`rapier3d::math`), a
+// different version from the engine's, so values cross over through these.
+
+/// Engine vector to rapier vector.
+pub fn to_rapier_vec(v: Vec3) -> rapier3d::math::Vector {
+    rapier3d::math::Vector::new(v.x, v.y, v.z)
+}
+
+/// Rapier vector to engine vector.
+pub fn from_rapier_vec(v: rapier3d::math::Vector) -> Vec3 {
+    Vec3::new(v.x, v.y, v.z)
+}
+
+/// Engine rotation to rapier rotation.
+pub fn to_rapier_rot(q: Quat) -> rapier3d::math::Rotation {
+    rapier3d::math::Rotation::from_xyzw(q.x, q.y, q.z, q.w)
+}
+
+/// Rapier rotation to engine rotation.
+pub fn from_rapier_rot(q: rapier3d::math::Rotation) -> Quat {
+    Quat::from_xyzw(q.x, q.y, q.z, q.w)
+}
+
+/// A rapier pose (position and rotation).
+pub fn rapier_pose(position: Vec3, rotation: Quat) -> rapier3d::math::Pose {
+    rapier3d::math::Pose::from_parts(to_rapier_vec(position), to_rapier_rot(rotation))
+}
+
 /// Length of one physics step, in seconds. The simulation only ever advances
 /// in steps of exactly this size, so its results do not depend on the frame
 /// rate. 120 Hz gives one step per frame on a 120 Hz display and two on a
@@ -79,7 +107,7 @@ pub enum PhysicsShape {
     },
     /// Triangle mesh collider built from GLB vertex/index data.
     Trimesh {
-        vertices: Vec<rapier3d::na::Point3<f32>>,
+        vertices: Vec<rapier3d::math::Vector>,
         indices: Vec<[u32; 3]>,
     },
 }
@@ -113,7 +141,7 @@ pub struct PhysicsWorld {
     pub impulse_joint_set: ImpulseJointSet,
     pub multibody_joint_set: MultibodyJointSet,
     pub ccd_solver: CCDSolver,
-    pub query_pipeline: QueryPipeline,
+    pub soft_body_set: SoftBodySet,
 
     // Mapping from Rapier handles to ECS entities
     pub body_to_entity: HashMap<RigidBodyHandle, hecs::Entity>,
@@ -159,7 +187,7 @@ impl PhysicsWorld {
             impulse_joint_set: ImpulseJointSet::new(),
             multibody_joint_set: MultibodyJointSet::new(),
             ccd_solver: CCDSolver::new(),
-            query_pipeline: QueryPipeline::new(),
+            soft_body_set: SoftBodySet::new(),
             body_to_entity: HashMap::new(),
             collider_to_entity: HashMap::new(),
             collision_events: Vec::new(),
@@ -186,7 +214,7 @@ impl PhysicsWorld {
         friction: f32,
     ) -> (RigidBodyHandle, ColliderHandle) {
         let rb = RigidBodyBuilder::fixed()
-            .translation(vector![position.x, position.y, position.z])
+            .translation(to_rapier_vec(position))
             .rotation(quat_to_angvector(rotation))
             .build();
         let rb_handle = self.rigid_body_set.insert(rb);
@@ -222,7 +250,7 @@ impl PhysicsWorld {
         friction: f32,
     ) -> (RigidBodyHandle, ColliderHandle) {
         let rb = RigidBodyBuilder::kinematic_position_based()
-            .translation(vector![position.x, position.y, position.z])
+            .translation(to_rapier_vec(position))
             .rotation(quat_to_angvector(rotation))
             .build();
         let rb_handle = self.rigid_body_set.insert(rb);
@@ -259,7 +287,7 @@ impl PhysicsWorld {
         ccd: bool,
     ) -> (RigidBodyHandle, ColliderHandle) {
         let mut rb_builder = RigidBodyBuilder::dynamic()
-            .translation(vector![position.x, position.y, position.z])
+            .translation(to_rapier_vec(position))
             .rotation(quat_to_angvector(rotation));
         if ccd {
             rb_builder = rb_builder.ccd_enabled(true);
@@ -291,7 +319,7 @@ impl PhysicsWorld {
         radius: f32,
     ) -> (RigidBodyHandle, ColliderHandle) {
         let rb = RigidBodyBuilder::kinematic_position_based()
-            .translation(vector![position.x, position.y, position.z])
+            .translation(to_rapier_vec(position))
             .build();
         let rb_handle = self.rigid_body_set.insert(rb);
 
@@ -328,10 +356,8 @@ impl PhysicsWorld {
     /// frame runs several steps.
     pub fn step_fixed(&mut self) {
         self.integration_params.dt = FIXED_TIMESTEP;
-        let gravity = vector![self.gravity.x, self.gravity.y, self.gravity.z];
-
         self.physics_pipeline.step(
-            &gravity,
+            to_rapier_vec(self.gravity),
             &self.integration_params,
             &mut self.island_manager,
             &mut self.broad_phase,
@@ -340,8 +366,8 @@ impl PhysicsWorld {
             &mut self.collider_set,
             &mut self.impulse_joint_set,
             &mut self.multibody_joint_set,
+            &mut self.soft_body_set,
             &mut self.ccd_solver,
-            Some(&mut self.query_pipeline),
             &(),
             &(),
         );
@@ -349,7 +375,7 @@ impl PhysicsWorld {
         // Collect collision events from narrow phase — only newly started contacts
         let mut current_pairs = HashSet::new();
         for pair in self.narrow_phase.contact_pairs() {
-            if pair.has_any_active_contact {
+            if pair.has_any_active_contact() {
                 let key = [pair.collider1, pair.collider2];
                 current_pairs.insert(key);
 
@@ -378,39 +404,32 @@ impl PhysicsWorld {
         desired_movement: Vec3,
         dt: f32,
     ) -> (Vec3, bool) {
-        let body = &self.rigid_body_set[rb_handle];
-        let collider = &self.collider_set[col_handle];
-
         // Start from the pending kinematic target rather than the current
         // position. The target is only applied by the next physics step, and a
         // frame can pass without one, so successive moves must build on each
         // other instead of overwriting.
-        let start = *body.next_position();
+        let start = *self.rigid_body_set[rb_handle].next_position();
 
-        let movement = self.character_controller.move_shape(
-            dt,
-            &self.rigid_body_set,
-            &self.collider_set,
-            &self.query_pipeline,
-            collider.shape(),
-            &start,
-            vector![desired_movement.x, desired_movement.y, desired_movement.z],
-            QueryFilter::default().exclude_rigid_body(rb_handle),
-            |_| {},
-        );
+        let movement = {
+            let queries = self.query_pipeline(QueryFilter::default().exclude_rigid_body(rb_handle));
+            self.character_controller.move_shape(
+                dt,
+                &queries,
+                self.collider_set[col_handle].shape(),
+                &start,
+                to_rapier_vec(desired_movement),
+                |_| {},
+            )
+        };
 
         let grounded = movement.grounded;
-        let effective = Vec3::new(
-            movement.translation.x,
-            movement.translation.y,
-            movement.translation.z,
-        );
+        let effective = from_rapier_vec(movement.translation);
 
         // Apply the movement to the rigid body
-        let mut new_iso = start;
-        new_iso.translation.vector += movement.translation;
+        let mut new_pose = start;
+        new_pose.translation += movement.translation;
         if let Some(body) = self.rigid_body_set.get_mut(rb_handle) {
-            body.set_next_kinematic_position(new_iso);
+            body.set_next_kinematic_position(new_pose);
         }
 
         (effective, grounded)
@@ -421,10 +440,8 @@ impl PhysicsWorld {
         for (rb_handle, &entity) in &self.body_to_entity {
             if let Some(body) = self.rigid_body_set.get(*rb_handle) {
                 if let Ok(mut transform) = world.get::<&mut Transform>(entity) {
-                    let pos = body.position().translation;
-                    let rot = body.position().rotation;
-                    transform.position = Vec3::new(pos.x, pos.y, pos.z);
-                    transform.rotation = Quat::from_xyzw(rot.i, rot.j, rot.k, rot.w);
+                    transform.position = from_rapier_vec(body.position().translation);
+                    transform.rotation = from_rapier_rot(body.position().rotation);
                     transform.dirty = true;
                 }
             }
@@ -438,25 +455,14 @@ impl PhysicsWorld {
         direction: Vec3,
         max_distance: f32,
     ) -> Option<(hecs::Entity, f32, Vec3)> {
-        let ray = Ray::new(
-            point![origin.x, origin.y, origin.z],
-            vector![direction.x, direction.y, direction.z],
-        );
+        let ray = Ray::new(to_rapier_vec(origin), to_rapier_vec(direction));
 
-        if let Some((handle, intersection)) = self.query_pipeline.cast_ray_and_get_normal(
-            &self.rigid_body_set,
-            &self.collider_set,
-            &ray,
-            max_distance,
-            true,
-            QueryFilter::default(),
-        ) {
+        if let Some((handle, intersection)) = self
+            .query_pipeline(QueryFilter::default())
+            .cast_ray_and_get_normal(&ray, max_distance, true)
+        {
             if let Some(&entity) = self.collider_to_entity.get(&handle) {
-                let normal = Vec3::new(
-                    intersection.normal.x,
-                    intersection.normal.y,
-                    intersection.normal.z,
-                );
+                let normal = from_rapier_vec(intersection.normal);
                 return Some((entity, intersection.time_of_impact, normal));
             }
         }
@@ -473,10 +479,7 @@ impl PhysicsWorld {
         exclude_entity: Option<hecs::Entity>,
     ) -> Option<(hecs::Entity, f32, Vec3, Vec3)> {
         let dir = direction.normalize_or_zero();
-        let ray = Ray::new(
-            point![origin.x, origin.y, origin.z],
-            vector![dir.x, dir.y, dir.z],
-        );
+        let ray = Ray::new(to_rapier_vec(origin), to_rapier_vec(dir));
 
         // Find the collider handles to exclude based on entity
         let exclude_colliders: Vec<ColliderHandle> = if let Some(excl) = exclude_entity {
@@ -506,14 +509,10 @@ impl PhysicsWorld {
             QueryFilter::default()
         };
 
-        if let Some((handle, intersection)) = self.query_pipeline.cast_ray_and_get_normal(
-            &self.rigid_body_set,
-            &self.collider_set,
-            &ray,
-            max_distance,
-            true,
-            filter,
-        ) {
+        if let Some((handle, intersection)) =
+            self.query_pipeline(filter)
+                .cast_ray_and_get_normal(&ray, max_distance, true)
+        {
             // Double check collider isn't in exclude list
             if exclude_colliders.contains(&handle) {
                 return None;
@@ -521,11 +520,7 @@ impl PhysicsWorld {
             if let Some(&entity) = self.collider_to_entity.get(&handle) {
                 let toi = intersection.time_of_impact;
                 let hit_point = origin + dir * toi;
-                let normal = Vec3::new(
-                    intersection.normal.x,
-                    intersection.normal.y,
-                    intersection.normal.z,
-                );
+                let normal = from_rapier_vec(intersection.normal);
                 return Some((entity, toi, hit_point, normal));
             }
         }
@@ -535,7 +530,7 @@ impl PhysicsWorld {
     /// Set the linear velocity of a rigid body and optionally disable gravity.
     pub fn set_linvel(&mut self, rb_handle: RigidBodyHandle, velocity: Vec3, zero_gravity: bool) {
         if let Some(body) = self.rigid_body_set.get_mut(rb_handle) {
-            body.set_linvel(vector![velocity.x, velocity.y, velocity.z], true);
+            body.set_linvel(to_rapier_vec(velocity), true);
             if zero_gravity {
                 body.set_gravity_scale(0.0, true);
             }
@@ -545,23 +540,22 @@ impl PhysicsWorld {
     /// Apply an impulse to a rigid body (instantaneous velocity change).
     pub fn apply_impulse(&mut self, rb_handle: RigidBodyHandle, impulse: Vec3) {
         if let Some(body) = self.rigid_body_set.get_mut(rb_handle) {
-            body.apply_impulse(vector![impulse.x, impulse.y, impulse.z], true);
+            body.apply_impulse(to_rapier_vec(impulse), true);
         }
     }
 
     /// Apply a force to a rigid body (continuous acceleration).
     pub fn apply_force(&mut self, rb_handle: RigidBodyHandle, force: Vec3) {
         if let Some(body) = self.rigid_body_set.get_mut(rb_handle) {
-            body.add_force(vector![force.x, force.y, force.z], true);
+            body.add_force(to_rapier_vec(force), true);
         }
     }
 
     /// Get the linear velocity of a rigid body.
     pub fn get_linvel(&self, rb_handle: RigidBodyHandle) -> Option<Vec3> {
-        self.rigid_body_set.get(rb_handle).map(|body| {
-            let v = body.linvel();
-            Vec3::new(v.x, v.y, v.z)
-        })
+        self.rigid_body_set
+            .get(rb_handle)
+            .map(|body| from_rapier_vec(body.linvel()))
     }
 
     /// Set the restitution (bounciness) of all colliders attached to a rigid body.
@@ -588,6 +582,17 @@ impl PhysicsWorld {
         }
     }
 
+    /// Scene queries (ray casts, shape casts) against the colliders as of
+    /// the last physics step.
+    pub fn query_pipeline<'a>(&'a self, filter: QueryFilter<'a>) -> QueryPipeline<'a> {
+        self.broad_phase.as_query_pipeline(
+            self.narrow_phase.query_dispatcher(),
+            &self.rigid_body_set,
+            &self.collider_set,
+            filter,
+        )
+    }
+
     /// Remove a body and its colliders.
     pub fn remove_body(&mut self, rb_handle: RigidBodyHandle) {
         if let Some(body) = self.rigid_body_set.get(rb_handle) {
@@ -601,6 +606,7 @@ impl PhysicsWorld {
             &mut self.collider_set,
             &mut self.impulse_joint_set,
             &mut self.multibody_joint_set,
+            &mut self.soft_body_set,
             true,
         );
         self.body_to_entity.remove(&rb_handle);
@@ -633,9 +639,9 @@ fn shape_to_collider(shape: &PhysicsShape) -> ColliderBuilder {
     }
 }
 
-fn quat_to_angvector(q: Quat) -> rapier3d::na::Vector3<f32> {
+fn quat_to_angvector(q: Quat) -> rapier3d::math::AngVector {
     let (axis, angle) = q.to_axis_angle();
-    vector![axis.x * angle, axis.y * angle, axis.z * angle]
+    to_rapier_vec(axis * angle)
 }
 
 #[cfg(test)]
@@ -726,8 +732,8 @@ mod tests {
             0.5,
         );
 
-        // Update query pipeline
-        pw.query_pipeline.update(&pw.collider_set);
+        // Scene queries see colliders once a step has added them to the broad phase.
+        pw.step_fixed();
 
         // Raycast down
         let result = pw.raycast(Vec3::new(0.0, 5.0, 0.0), Vec3::new(0.0, -1.0, 0.0), 100.0);

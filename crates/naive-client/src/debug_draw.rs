@@ -152,9 +152,9 @@ impl DebugDrawRenderer {
                 pos_iso.translation.z,
             );
             let rot = Quat::from_xyzw(
-                pos_iso.rotation.i,
-                pos_iso.rotation.j,
-                pos_iso.rotation.k,
+                pos_iso.rotation.x,
+                pos_iso.rotation.y,
+                pos_iso.rotation.z,
                 pos_iso.rotation.w,
             );
 
@@ -275,9 +275,9 @@ fn draw_shape(
                                 sub_iso.translation.z,
                             );
                     let sub_rot_q = Quat::from_xyzw(
-                        sub_iso.rotation.i,
-                        sub_iso.rotation.j,
-                        sub_iso.rotation.k,
+                        sub_iso.rotation.x,
+                        sub_iso.rotation.y,
+                        sub_iso.rotation.z,
                         sub_iso.rotation.w,
                     );
                     let sub_rot = rot * sub_rot_q;

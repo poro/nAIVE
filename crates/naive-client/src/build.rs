@@ -448,7 +448,7 @@ mod tests {
         fs::write(&player, "player").unwrap();
         fs::create_dir_all(project.join("keep")).unwrap();
         fs::write(project.join("keep/important"), "preserve").unwrap();
-        let config: NaiveConfig = serde_yaml::from_str("name: demo\nversion: '1'\n").unwrap();
+        let config: NaiveConfig = serde_norway::from_str("name: demo\nversion: '1'\n").unwrap();
         let platform = current_platform();
         let bundle_name = if platform == "macos" {
             "demo.app".to_string()
@@ -479,7 +479,8 @@ mod tests {
 
     #[test]
     fn building_for_another_platform_is_refused() {
-        let config: NaiveConfig = serde_yaml::from_str("name: demo\nversion: \"0.1.0\"\n").unwrap();
+        let config: NaiveConfig =
+            serde_norway::from_str("name: demo\nversion: \"0.1.0\"\n").unwrap();
         let project = temp_project("other-platform");
 
         for target in ["windows", "some-other-os"] {
@@ -505,7 +506,8 @@ mod tests {
         fs::create_dir_all(project.join("scenes")).unwrap();
         fs::write(project.join("scenes/main.yaml"), "name: main\n").unwrap();
         let config: NaiveConfig =
-            serde_yaml::from_str(&fs::read_to_string(project.join("naive.yaml")).unwrap()).unwrap();
+            serde_norway::from_str(&fs::read_to_string(project.join("naive.yaml")).unwrap())
+                .unwrap();
         let platform = current_platform();
         let bundle = bundle_with_player(&config, &project, platform, &player).unwrap();
         let (binary, game) = if platform == "macos" {

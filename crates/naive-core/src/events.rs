@@ -66,7 +66,7 @@ impl EventBus {
         let schema_path = project_root.join("events/schema.yaml");
         if schema_path.exists() {
             match std::fs::read_to_string(&schema_path) {
-                Ok(contents) => match serde_yaml::from_str::<EventSchema>(&contents) {
+                Ok(contents) => match serde_norway::from_str::<EventSchema>(&contents) {
                     Ok(schema) => {
                         tracing::info!("Loaded event schema: {} event types", schema.events.len());
                         self.schema = Some(schema);

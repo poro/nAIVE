@@ -10,6 +10,6 @@ description = "nAIVE engine core types — components, scenes, transforms, tween
 glam = { workspace = true }
 hecs = { workspace = true }
 serde = { workspace = true }
-serde_yaml = { workspace = true }
+serde_norway = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

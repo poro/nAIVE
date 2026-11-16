@@ -128,7 +128,7 @@ pub fn snapshot_scene(
             let mut saved: CameraDef = components
                 .camera
                 .clone()
-                .unwrap_or_else(|| serde_yaml::from_str("{}").expect("camera defaults"));
+                .unwrap_or_else(|| serde_norway::from_str("{}").expect("camera defaults"));
             saved.fov = camera.fov_degrees;
             saved.near = camera.near;
             saved.far = camera.far;
@@ -256,7 +256,7 @@ pub fn snapshot_scene(
             let mut saved: CharacterControllerDef = components
                 .character_controller
                 .clone()
-                .unwrap_or_else(|| serde_yaml::from_str("{}").expect("character defaults"));
+                .unwrap_or_else(|| serde_norway::from_str("{}").expect("character defaults"));
             saved.move_speed = controller.move_speed;
             saved.sprint_multiplier = controller.sprint_multiplier;
             saved.jump_impulse = controller.jump_impulse;
@@ -296,7 +296,7 @@ pub fn snapshot_scene(
                 let mut saved = components
                     .collider
                     .clone()
-                    .unwrap_or_else(|| serde_yaml::from_str("{}").expect("collider defaults"));
+                    .unwrap_or_else(|| serde_norway::from_str("{}").expect("collider defaults"));
                 saved.is_trigger = collider.is_trigger;
                 match &collider.shape {
                     // A trimesh can use a fallback box when its mesh asset has
@@ -437,7 +437,7 @@ entities:
             );
             assert_eq!(saved.tags, source.tags);
         }
-        let yaml = serde_yaml::to_string(&saved).unwrap();
+        let yaml = serde_norway::to_string(&saved).unwrap();
         let reloaded = crate::scene::parse_scene(&yaml).unwrap();
         let mut second = SceneWorld::new();
         let mut second_physics = PhysicsWorld::new(reloaded.settings.gravity.into());
@@ -510,8 +510,8 @@ entities:
             9.
         );
         assert_eq!(
-            serde_yaml::to_string(&saved).unwrap(),
-            serde_yaml::to_string(&snapshot(&world, &physics)).unwrap()
+            serde_norway::to_string(&saved).unwrap(),
+            serde_norway::to_string(&snapshot(&world, &physics)).unwrap()
         );
     }
 

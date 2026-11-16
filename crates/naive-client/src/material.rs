@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug)]
 pub enum MaterialError {
     IoError(std::io::Error),
-    ParseError(serde_yaml::Error),
+    ParseError(serde_norway::Error),
 }
 
 impl std::fmt::Display for MaterialError {
@@ -150,7 +150,7 @@ impl MaterialCache {
 
         let mat_file = if full_path.exists() {
             let contents = std::fs::read_to_string(&full_path).map_err(MaterialError::IoError)?;
-            serde_yaml::from_str::<MaterialFile>(&contents).map_err(MaterialError::ParseError)?
+            serde_norway::from_str::<MaterialFile>(&contents).map_err(MaterialError::ParseError)?
         } else {
             tracing::warn!("Material file not found: {:?}, using defaults", full_path);
             MaterialFile {

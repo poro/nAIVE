@@ -51,7 +51,7 @@ fn default_engine() -> String {
 pub enum ConfigError {
     NotFound,
     Io(std::io::Error),
-    Parse(serde_yaml::Error),
+    Parse(serde_norway::Error),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -81,7 +81,7 @@ pub fn find_config(start_dir: &Path) -> Option<PathBuf> {
 /// Load and parse a `naive.yaml` file.
 pub fn load_config(path: &Path) -> Result<NaiveConfig, ConfigError> {
     let contents = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
-    let config: NaiveConfig = serde_yaml::from_str(&contents).map_err(ConfigError::Parse)?;
+    let config: NaiveConfig = serde_norway::from_str(&contents).map_err(ConfigError::Parse)?;
     Ok(config)
 }
 

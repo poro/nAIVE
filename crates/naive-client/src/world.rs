@@ -1395,7 +1395,7 @@ pub fn entity_needs_respawn(old_def: &EntityDef, new_def: &EntityDef) -> bool {
 }
 
 fn definition_changed<T: serde::Serialize>(old: &T, new: &T) -> bool {
-    match (serde_yaml::to_value(old), serde_yaml::to_value(new)) {
+    match (serde_norway::to_value(old), serde_norway::to_value(new)) {
         (Ok(old), Ok(new)) => old != new,
         // If a future component cannot be compared, rebuilding is safer than
         // leaving stale runtime state that a later save could resurrect.

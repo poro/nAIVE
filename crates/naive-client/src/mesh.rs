@@ -279,7 +279,7 @@ pub struct MeshCache {
 }
 
 /// Vertices and triangle indices of a mesh, as the physics engine takes them.
-pub type PhysicsTrimesh = (Vec<rapier3d::na::Point3<f32>>, Vec<[u32; 3]>);
+pub type PhysicsTrimesh = (Vec<rapier3d::math::Vector>, Vec<[u32; 3]>);
 
 impl MeshCache {
     pub fn new() -> Self {
@@ -424,9 +424,9 @@ impl MeshCache {
         let mesh = self.meshes.get(handle.0)?;
         let verts = mesh.physics_vertices.as_ref()?;
         let idxs = mesh.physics_indices.as_ref()?;
-        let scaled_verts: Vec<rapier3d::na::Point3<f32>> = verts
+        let scaled_verts: Vec<rapier3d::math::Vector> = verts
             .iter()
-            .map(|v| rapier3d::na::Point3::new(v[0] * scale.x, v[1] * scale.y, v[2] * scale.z))
+            .map(|v| rapier3d::math::Vector::new(v[0] * scale.x, v[1] * scale.y, v[2] * scale.z))
             .collect();
         Some((scaled_verts, idxs.clone()))
     }
