@@ -15,6 +15,18 @@ pub enum WatchEvent {
     ScriptChanged(PathBuf),
 }
 
+/// Saving another scene document must not replace the currently running scene.
+pub fn is_active_scene(scene: Option<&Path>, changed: &Path) -> bool {
+    let Some(scene) = scene else {
+        return false;
+    };
+    scene == changed
+        || match (scene.canonicalize(), changed.canonicalize()) {
+            (Ok(scene), Ok(changed)) => scene == changed,
+            _ => false,
+        }
+}
+
 /// Creates a file watcher on the project directory and returns a receiver
 /// for change events. The watcher must be kept alive.
 pub fn start_watching_all(
@@ -86,4 +98,27 @@ pub fn start_watching_all(
     }
 
     Ok((watcher, rx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saving_another_scene_does_not_reload_the_active_scene() {
+        let root = std::env::temp_dir().join(format!("naive-watch-scene-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let active = root.join("main.yaml");
+        let saved = root.join("saved.yaml");
+        std::fs::write(&active, "name: Main").unwrap();
+        std::fs::write(&saved, "name: Saved").unwrap();
+        assert!(is_active_scene(Some(&active), &active));
+        assert!(is_active_scene(
+            Some(&active),
+            &active.canonicalize().unwrap()
+        ));
+        assert!(!is_active_scene(Some(&active), &saved));
+        assert!(!is_active_scene(None, &saved));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

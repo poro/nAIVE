@@ -1658,7 +1658,9 @@ impl Engine {
         }
 
         for path in scene_paths {
-            self.handle_scene_reload(&path);
+            if crate::watcher::is_active_scene(self.scene_path.as_deref(), &path) {
+                self.handle_scene_reload(&path);
+            }
         }
 
         for path in &splat_paths {

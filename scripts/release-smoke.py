@@ -198,6 +198,7 @@ def main():
                        "spawned scripts did not initialize")
             initialized = command(socket_path, "query_events", filter="release.spawn_initialized")["events"]
             assert sorted(event["data"]["id"] for event in initialized) == ["lua_actor", "mcp_actor"], initialized
+            assert command(socket_path, "query_events", filter="release.initialized")["count"] == 1, "saving another document reloaded the active scene"
 
             # A failed script load must roll back the whole MCP entity, including physics.
             try:
@@ -224,7 +225,7 @@ def main():
             assert command(socket_path, "query_events", filter="release.ghost")["count"] == 0, "destroyed listener still ran"
 
             # Reopening a saved scene exercises on_destroy setters and physics reload.
-            # The bus keeps history from hot reloads; compare with that history.
+            # The bus preserves event history across transitions.
             stale_before = command(socket_path, "query_events", filter="release.stale_event")["count"]
             command(socket_path, "spawn_entity", entity_id="transition_marker", components={"transform": {}})
             command(socket_path, "run_lua", code='scene.load("scenes/roundtrip.yaml")')
