@@ -14,7 +14,7 @@ use crate::components::Transform;
 use crate::events::EventBus;
 use crate::input::InputState;
 use crate::physics::PhysicsWorld;
-use crate::scripting::{Script, ScriptRuntime};
+use crate::scripting::ScriptRuntime;
 use crate::swarm::CpuSwarms;
 use crate::swarm_api::{register_swarm_api, SharedSwarmBus, SwarmBus};
 use crate::tween::TweenSystem;
@@ -50,8 +50,8 @@ pub struct TestRunner {
     /// Swarms run on the CPU here, with the same maths as the GPU shaders.
     pub swarm_bus: SharedSwarmBus,
     pub cpu_swarms: CpuSwarms,
-    /// Whether the note about commands that need a GPU has been logged.
-    warned_about_dropped_commands: bool,
+    /// Failures remain sticky across scene changes and caught Lua errors.
+    errors: RefCell<Vec<String>>,
 }
 
 impl TestRunner {
@@ -77,15 +77,51 @@ impl TestRunner {
             pool_manager: Rc::new(RefCell::new(EntityPoolManager::new())),
             swarm_bus: Rc::new(RefCell::new(SwarmBus::new())),
             cpu_swarms: CpuSwarms::new(),
-            warned_about_dropped_commands: false,
+            errors: RefCell::new(Vec::new()),
         }
     }
 
     /// Load a scene by path (relative to project root).
     pub fn load_scene(&mut self, scene_rel: &str) -> Result<(), String> {
+        let result = self.load_scene_inner(scene_rel);
+        if let Err(error) = &result {
+            self.errors.borrow_mut().push(error.clone());
+        }
+        result
+    }
+
+    fn load_scene_inner(&mut self, scene_rel: &str) -> Result<(), String> {
         let scene_path = crate::project_path::resolve(&self.project_root, scene_rel)?;
         let scene = crate::scene::load_scene(&scene_path)
             .map_err(|e| format!("Failed to load scene: {:?}", e))?;
+        for definition in &scene.entities {
+            validate_headless_entity(definition)?;
+        }
+
+        // Use the same teardown as live destruction, without holding a world
+        // borrow while callbacks run. Preserve failures before replacing the VM.
+        let ids: Vec<_> = self
+            .scene_world
+            .borrow()
+            .entity_registry
+            .keys()
+            .cloned()
+            .collect();
+        for id in ids {
+            crate::sim::destroy_entity(
+                &self.scene_world,
+                Some(&self.physics_world),
+                Some(&mut self.script_runtime),
+                &id,
+            );
+        }
+        let previous_errors = self.take_errors();
+        self.errors.borrow_mut().extend(previous_errors);
+        self.lua_event_listeners.borrow_mut().clear();
+        self.lua_listener_id_map.borrow_mut().clear();
+        *self.next_lua_listener_id.borrow_mut() = 0;
+        *self.pool_manager.borrow_mut() = EntityPoolManager::new();
+        *self.event_bus.borrow_mut() = EventBus::new(1000);
 
         // Set gravity from scene settings
         let gravity = glam::Vec3::from(scene.settings.gravity);
@@ -131,6 +167,15 @@ impl TestRunner {
                 self.lua_listener_id_map.clone(),
             )
             .map_err(|e| format!("Event API: {}", e))?;
+        self.script_runtime
+            .register_audio_api(
+                Rc::new(RefCell::new(crate::audio::AudioSystem::silent())),
+                self.project_root.clone(),
+            )
+            .map_err(|e| format!("Audio API: {e}"))?;
+        self.script_runtime
+            .register_mesh_api(self.entity_commands.clone())
+            .map_err(|e| format!("Mesh API: {e}"))?;
         *self.swarm_bus.borrow_mut() = SwarmBus::new();
         self.cpu_swarms.clear();
         register_swarm_api(
@@ -143,59 +188,14 @@ impl TestRunner {
         // Load event schema
         self.event_bus.borrow_mut().load_schema(&self.project_root);
 
-        // Load scripts for entities
-        let scene_clone = self.scene_world.borrow().current_scene.clone();
-        if let Some(scene_data) = &scene_clone {
-            for entity_def in &scene_data.entities {
-                if let Some(script_def) = &entity_def.components.script {
-                    let sw = self.scene_world.borrow();
-                    if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
-                        let source_path = PathBuf::from(&script_def.source);
-                        let script_comp = Script {
-                            source: source_path.clone(),
-                            initialized: false,
-                        };
-                        drop(sw);
-                        let _ = self
-                            .scene_world
-                            .borrow_mut()
-                            .world
-                            .insert_one(entity, script_comp);
-
-                        if let Err(e) = self.script_runtime.load_script(
-                            entity,
-                            &self.project_root,
-                            &source_path,
-                        ) {
-                            tracing::error!("Failed to load script for '{}': {}", entity_def.id, e);
-                        } else {
-                            let _ = self
-                                .script_runtime
-                                .set_entity_string_id(entity, &entity_def.id);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Call init on all scripts (collect first to release world borrow before Lua runs)
-        let uninit: Vec<hecs::Entity> = {
-            let sw = self.scene_world.borrow();
-            let mut query = sw.world.query::<&Script>();
-            query
-                .iter()
-                .filter(|(_, s)| !s.initialized)
-                .map(|(e, _)| e)
-                .collect()
-        };
-        for entity in uninit {
-            self.script_runtime.call_init(entity);
-        }
-        {
-            let sw = self.scene_world.borrow_mut();
-            for (_entity, script) in sw.world.query::<&mut Script>().iter() {
-                script.initialized = true;
-            }
+        crate::sim::initialize_pending_scripts(
+            &self.scene_world,
+            &mut self.script_runtime,
+            &self.project_root,
+        )?;
+        let errors = self.script_runtime.take_errors();
+        if !errors.is_empty() {
+            return Err(errors.join("\n"));
         }
 
         // Emit lifecycle event
@@ -278,43 +278,231 @@ impl TestRunner {
         self.frame_count += 1;
     }
 
-    /// Apply the deferred entity commands that need no GPU. Destroying an
-    /// entity works headlessly. Spawning and the other commands need meshes
-    /// or textures, so they are dropped.
+    /// Apply gameplay operations through the same constructors/lifecycle as
+    /// the engine. GPU-only operations fail the test explicitly.
     fn process_entity_commands(&mut self) {
         crate::sim::process_destroys(
             &self.scene_world,
             Some(&self.physics_world),
-            Some(&self.script_runtime),
+            Some(&mut self.script_runtime),
             &self.entity_commands,
         );
-
-        let mut queue = self.entity_commands.borrow_mut();
-        let dropped = queue.spawns.len()
-            + queue.scale_updates.len()
-            + queue.visibility_updates.len()
-            + queue.projectile_spawns.len()
-            + queue.dynamic_spawns.len()
-            + queue.pool_ops.len()
-            + queue.texture_swaps.len()
-            + queue.mesh_creates.len()
-            + usize::from(queue.pending_scene_load.is_some());
-        queue.spawns.clear();
-        queue.scale_updates.clear();
-        queue.visibility_updates.clear();
-        queue.projectile_spawns.clear();
-        queue.dynamic_spawns.clear();
-        queue.pool_ops.clear();
-        queue.texture_swaps.clear();
-        queue.mesh_creates.clear();
-        queue.pending_scene_load = None;
-        if dropped > 0 && !self.warned_about_dropped_commands {
-            self.warned_about_dropped_commands = true;
-            tracing::warn!(
-                "Headless test runner: dropping entity commands that need the full engine \
-                 (spawning, pooling, scale, visibility, textures, meshes, scene loads)"
-            );
+        let (spawns, projectiles, dynamics, scales, visibility, pools, scene_load, gpu_ops) = {
+            let mut queue = self.entity_commands.borrow_mut();
+            let gpu_ops = queue.texture_swaps.len() + queue.mesh_creates.len();
+            queue.texture_swaps.clear();
+            queue.mesh_creates.clear();
+            (
+                std::mem::take(&mut queue.spawns),
+                std::mem::take(&mut queue.projectile_spawns),
+                std::mem::take(&mut queue.dynamic_spawns),
+                std::mem::take(&mut queue.scale_updates),
+                std::mem::take(&mut queue.visibility_updates),
+                std::mem::take(&mut queue.pool_ops),
+                queue.pending_scene_load.take(),
+                gpu_ops,
+            )
+        };
+        if gpu_ops > 0 {
+            self.errors.borrow_mut().push("Headless tests cannot execute GPU mesh/texture commands; use the native release smoke test".into());
         }
+
+        for command in spawns {
+            if self.spawn_definition(&command.entity_def()).is_some() {
+                crate::sim::finish_pool_spawn(&self.scene_world, &self.pool_manager, &command);
+            }
+        }
+        for command in projectiles {
+            use crate::scene::*;
+            let definition = EntityDef {
+                id: command.id.clone(),
+                tags: vec!["projectile".into()],
+                extends: None,
+                components: ComponentMap {
+                    transform: Some(TransformDef {
+                        position: command.position,
+                        rotation: [0.0; 3],
+                        scale: command.scale,
+                    }),
+                    mesh_renderer: Some(MeshRendererDef {
+                        mesh: command.mesh.clone(),
+                        material: command.material.clone(),
+                        cast_shadows: true,
+                        receive_shadows: true,
+                    }),
+                    rigid_body: Some(RigidBodyDef {
+                        body_type: "dynamic".into(),
+                        mass: 0.1,
+                        ccd: true,
+                    }),
+                    collider: Some(ColliderDef {
+                        shape: "sphere".into(),
+                        half_extents: None,
+                        radius: Some(0.1),
+                        half_height: None,
+                        is_trigger: false,
+                        restitution: 0.0,
+                        friction: 0.5,
+                    }),
+                    collision_damage: Some(CollisionDamageDef {
+                        damage: command.damage,
+                        destroy_on_hit: true,
+                    }),
+                    ..Default::default()
+                },
+            };
+            if let Some(entity) = self.spawn_definition(&definition) {
+                let mut world = self.scene_world.borrow_mut();
+                let _ = world.world.insert_one(
+                    entity,
+                    crate::components::Projectile {
+                        damage: command.damage,
+                        lifetime: command.lifetime,
+                        age: 0.0,
+                        owner_id: command.owner_id,
+                    },
+                );
+                if let Ok(body) = world.world.get::<&crate::physics::RigidBody>(entity) {
+                    self.physics_world.borrow_mut().set_linvel(
+                        body.handle,
+                        glam::Vec3::from(command.direction).normalize_or_zero() * command.speed,
+                        !command.gravity,
+                    );
+                };
+            }
+        }
+        for command in dynamics {
+            use crate::scene::*;
+            let definition = EntityDef {
+                id: command.id.clone(),
+                tags: vec!["dynamic".into()],
+                extends: None,
+                components: ComponentMap {
+                    transform: Some(TransformDef {
+                        position: command.position,
+                        rotation: [0.0; 3],
+                        scale: [command.radius * 2.0; 3],
+                    }),
+                    mesh_renderer: Some(MeshRendererDef {
+                        mesh: command.mesh,
+                        material: command.material,
+                        cast_shadows: true,
+                        receive_shadows: true,
+                    }),
+                    rigid_body: Some(RigidBodyDef {
+                        body_type: "dynamic".into(),
+                        mass: command.mass,
+                        ccd: false,
+                    }),
+                    collider: Some(ColliderDef {
+                        shape: "sphere".into(),
+                        half_extents: None,
+                        radius: Some(command.radius),
+                        half_height: None,
+                        is_trigger: false,
+                        restitution: command.restitution,
+                        friction: command.friction,
+                    }),
+                    ..Default::default()
+                },
+            };
+            if let Some(entity) = self.spawn_definition(&definition) {
+                let mut world = self.scene_world.borrow_mut();
+                let _ = world.world.insert_one(
+                    entity,
+                    crate::components::Projectile {
+                        damage: 0.0,
+                        lifetime: command.lifetime,
+                        age: 0.0,
+                        owner_id: String::new(),
+                    },
+                );
+                if let Ok(body) = world.world.get::<&crate::physics::RigidBody>(entity) {
+                    let mut physics = self.physics_world.borrow_mut();
+                    physics.set_linvel(body.handle, glam::Vec3::from(command.velocity), false);
+                    if let Some(body) = physics.rigid_body_set.get_mut(body.handle) {
+                        body.activation_mut().normalized_linear_threshold = -1.0;
+                    }
+                };
+            }
+        }
+        for (id, scale) in scales {
+            let world = self.scene_world.borrow();
+            if let Some(&entity) = world.entity_registry.get(&id) {
+                if let Ok(mut transform) = world.world.get::<&mut Transform>(entity) {
+                    transform.scale = glam::Vec3::from(scale);
+                    transform.dirty = true;
+                }
+            }
+        }
+        for (id, visible) in visibility {
+            let mut world = self.scene_world.borrow_mut();
+            if let Some(&entity) = world.entity_registry.get(&id) {
+                if visible {
+                    let _ = world.world.remove_one::<crate::components::Hidden>(entity);
+                } else {
+                    let _ = world.world.insert_one(entity, crate::components::Hidden);
+                }
+            }
+        }
+        for operation in pools {
+            match operation {
+                crate::world::PoolOp::Release(id) => {
+                    let mut world = self.scene_world.borrow_mut();
+                    if let Some(&entity) = world.entity_registry.get(&id) {
+                        let _ = world.world.insert_one(entity, crate::components::Hidden);
+                        if let Ok(mut pooled) =
+                            world.world.get::<&mut crate::components::Pooled>(entity)
+                        {
+                            pooled.active = false;
+                            self.pool_manager
+                                .borrow_mut()
+                                .release(&pooled.pool_name, &id);
+                        }
+                    }
+                }
+            }
+        }
+        if let Err(error) = crate::sim::initialize_pending_scripts(
+            &self.scene_world,
+            &mut self.script_runtime,
+            &self.project_root,
+        ) {
+            self.errors.borrow_mut().push(error);
+        }
+        if let Some(path) = scene_load {
+            let _ = self.load_scene(&path); // load_scene records the failure for the test result.
+        }
+    }
+
+    fn spawn_definition(&self, definition: &crate::scene::EntityDef) -> Option<hecs::Entity> {
+        if let Err(error) = validate_headless_entity(definition) {
+            self.errors.borrow_mut().push(error);
+            return None;
+        }
+        let mut world = self.scene_world.borrow_mut();
+        if world.entity_registry.contains_key(&definition.id) {
+            self.errors
+                .borrow_mut()
+                .push(format!("Cannot spawn duplicate entity '{}'", definition.id));
+            return None;
+        }
+        crate::world::spawn_entity_headless(
+            &mut world,
+            definition,
+            &mut self.physics_world.borrow_mut(),
+        );
+        world.entity_registry.get(&definition.id).copied()
+    }
+
+    pub fn take_errors(&self) -> Vec<String> {
+        let mut errors = std::mem::take(&mut *self.errors.borrow_mut());
+        errors.extend(self.script_runtime.take_errors());
+        let pending = self.entity_commands.borrow();
+        if !pending.mesh_creates.is_empty() || !pending.texture_swaps.is_empty() {
+            errors.push("Headless tests cannot execute GPU mesh/texture commands; use the native release smoke test".into());
+        }
+        errors
     }
 
     /// Advance multiple frames.
@@ -372,6 +560,18 @@ impl TestRunner {
         let transform = sw.world.get::<&Transform>(entity).ok()?;
         Some(transform.position)
     }
+}
+
+fn validate_headless_entity(definition: &crate::scene::EntityDef) -> Result<(), String> {
+    if definition
+        .components
+        .collider
+        .as_ref()
+        .is_some_and(|collider| collider.shape == "trimesh")
+    {
+        return Err(format!("Headless tests cannot construct trimesh collider for '{}'; use the native release smoke test", definition.id));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -490,19 +690,15 @@ fn run_single_test(project_root: &Path, test_source: &str, test_name: &str) -> T
     let game_time = runner.borrow().total_time;
     let _elapsed = start_time.elapsed();
 
-    match result {
-        Ok(()) => TestResult {
-            name: test_name.to_string(),
-            passed: true,
-            error: None,
-            game_time,
-        },
-        Err(e) => TestResult {
-            name: test_name.to_string(),
-            passed: false,
-            error: Some(format!("{}", e)),
-            game_time,
-        },
+    let mut errors = runner.borrow().take_errors();
+    if let Err(error) = result {
+        errors.insert(0, error.to_string());
+    }
+    TestResult {
+        name: test_name.to_string(),
+        passed: errors.is_empty(),
+        error: (!errors.is_empty()).then(|| errors.join("\n")),
+        game_time,
     }
 }
 
@@ -734,10 +930,8 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
             let max_frames = (timeout / delta_time) as u64;
             for _ in 0..max_frames {
                 r.borrow_mut().step_frame();
-                if let Ok(result) = func.call::<bool>(()) {
-                    if result {
-                        return Ok(true);
-                    }
+                if func.call::<bool>(())? {
+                    return Ok(true);
                 }
             }
             Err(LuaError::RuntimeError(format!(
@@ -836,6 +1030,203 @@ fn action_to_key(action: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Project(PathBuf);
+
+    impl Project {
+        fn new(script: &str) -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let root =
+                std::env::temp_dir().join(format!("naive-runner-{}-{id}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            let project = Self(root);
+            project.write("game.lua", script);
+            project.write("scene.yaml", "name: Regression\nentities:\n  - id: actor\n    components:\n      transform: {}\n      script: { source: game.lua }\n");
+            project
+        }
+
+        fn write(&self, path: &str, source: &str) {
+            std::fs::write(self.0.join(path), source).unwrap();
+        }
+
+        fn run(&self, body: &str) -> TestResult {
+            run_single_test(
+                &self.0,
+                &format!("function test_regression()\n{body}\nend"),
+                "test_regression",
+            )
+        }
+    }
+
+    impl Drop for Project {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn caught_scene_load_failures_and_game_callback_errors_fail_the_test() {
+        for (script, expected) in [
+            ("function broken(", "Failed to load script"),
+            ("error('load regression')", "load regression"),
+            ("function init() error('init regression') end", "init regression"),
+            ("function update(dt) error('update regression') end", "update regression"),
+            ("function init() events.on('regression', function() error('listener regression') end) end\nfunction update(dt) events.emit('regression', {}) end", "listener regression"),
+        ] {
+            let project = Project::new(script);
+            let result = project.run("pcall(scene.load, 'scene.yaml')\nwait_frames(3)");
+            assert!(!result.passed, "game failure was ignored: {expected}");
+            assert!(result.error.unwrap().contains(expected), "missing game error: {expected}");
+        }
+    }
+
+    #[test]
+    fn collision_callback_errors_fail_the_test() {
+        let project =
+            Project::new("function on_collision(other) error('collision regression') end");
+        project.write(
+            "scene.yaml",
+            r#"
+name: Collision regression
+settings: { gravity: [0, -9.81, 0] }
+entities:
+  - id: actor
+    components:
+      transform: { position: [0, 1, 0] }
+      rigid_body: { body_type: dynamic, mass: 1 }
+      collider: { shape: sphere, radius: 0.5 }
+      script: { source: game.lua }
+  - id: floor
+    components:
+      transform: { position: [0, -0.5, 0] }
+      collider: { shape: box, half_extents: [10, 0.5, 10] }
+"#,
+        );
+        let result = project.run("scene.load('scene.yaml')\nwait_frames(90)");
+        assert!(!result.passed);
+        assert!(result.error.unwrap().contains("collision regression"));
+    }
+
+    #[test]
+    fn unsupported_gpu_commands_fail_even_without_advancing_a_frame() {
+        for script in [
+            "function init() entity.set_texture('actor', 'albedo', 'image.png') end",
+            "function init() mesh.create('triangle', {{0,0,0},{1,0,0},{0,1,0}}, {0,1,2}, {}) end",
+        ] {
+            let project = Project::new(script);
+            let result = project.run("scene.load('scene.yaml')");
+            assert!(!result.passed);
+            assert!(result.error.unwrap().contains("GPU mesh/texture"));
+        }
+    }
+
+    #[test]
+    fn unsupported_trimesh_colliders_fail_instead_of_using_a_different_shape() {
+        let project = Project::new("");
+        project.write("scene.yaml", "name: Trimesh\nentities:\n  - id: actor\n    components:\n      collider: {shape: trimesh}\n");
+        let result = project.run("pcall(scene.load, 'scene.yaml')");
+        assert!(!result.passed);
+        assert!(result.error.unwrap().contains("trimesh collider"));
+        project.write("scene.yaml", "name: Spawn\nentities:\n  - id: actor\n    components:\n      script: {source: game.lua}\n");
+        project.write(
+            "game.lua",
+            "function init() entity.spawn_ex({id='mesh', collider={shape='trimesh'}}) end",
+        );
+        let result = project.run("scene.load('scene.yaml')\nwait_frames(1)");
+        assert!(!result.passed);
+        assert!(result.error.unwrap().contains("trimesh collider"));
+    }
+
+    #[test]
+    fn spawned_scripts_initialize_once_and_headless_visibility_is_applied() {
+        let project = Project::new(
+            r#"
+function init()
+    entity.spawn_ex({id='child', position={1,2,3}, script='child.lua'})
+end
+function update(dt)
+    entity.set_visible('child', false)
+    entity.set_scale('child', 2, 3, 4)
+end
+"#,
+        );
+        project.write("child.lua", "function init() game.child_inits = (game.child_inits or 0) + 1 end\nfunction update(dt) game.child_updates = (game.child_updates or 0) + 1 end");
+        let mut runner = TestRunner::new(&project.0);
+        runner.load_scene("scene.yaml").unwrap();
+        runner.step_frames(3);
+        let game: LuaTable = runner.script_runtime.lua.globals().get("game").unwrap();
+        assert_eq!(game.get::<u32>("child_inits").unwrap(), 1);
+        assert_eq!(game.get::<u32>("child_updates").unwrap(), 2);
+        let world = runner.scene_world.borrow();
+        let child = world.entity_registry["child"];
+        assert!(world.world.get::<&crate::components::Hidden>(child).is_ok());
+        assert_eq!(
+            world.world.get::<&Transform>(child).unwrap().scale,
+            glam::Vec3::new(2.0, 3.0, 4.0)
+        );
+        assert!(runner.take_errors().is_empty());
+    }
+
+    #[test]
+    fn missing_spawned_script_fails_the_test() {
+        let project =
+            Project::new("function init() entity.spawn_ex({id='child', script='missing.lua'}) end");
+        let result = project.run("scene.load('scene.yaml')\nwait_frames(1)");
+        assert!(!result.passed);
+        assert!(result.error.unwrap().contains("missing.lua"));
+    }
+
+    #[test]
+    fn scene_changes_preserve_previous_runtime_and_destroy_errors() {
+        let project = Project::new("function update(dt) error('previous scene update') end\nfunction on_destroy() error('previous scene destroy') end");
+        project.write("next.yaml", "name: Next\nentities: []\n");
+        let result =
+            project.run("scene.load('scene.yaml')\nwait_frames(1)\nscene.load('next.yaml')");
+        assert!(!result.passed);
+        let error = result.error.unwrap();
+        assert!(error.contains("previous scene update"));
+        assert!(error.contains("previous scene destroy"));
+    }
+
+    #[test]
+    fn scene_changes_preserve_pending_unsupported_commands() {
+        let project =
+            Project::new("function init() entity.set_texture('actor', 'albedo', 'image.png') end");
+        project.write("next.yaml", "name: Next\nentities: []\n");
+        let result = project.run("scene.load('scene.yaml')\nscene.load('next.yaml')");
+        assert!(!result.passed);
+        assert!(result.error.unwrap().contains("GPU mesh/texture"));
+    }
+
+    #[test]
+    fn headless_audio_api_and_scene_transitions_support_gameplay_scripts() {
+        let project = Project::new(
+            r#"
+function update(dt)
+    audio.play_sfx('hit', 'unused.wav', 0.5)
+    scene.load('next.yaml')
+end
+function on_destroy() entity.set_position('actor', 1, 2, 3) end
+"#,
+        );
+        project.write(
+            "next.yaml",
+            "name: Next\nentities:\n  - id: next\n    components:\n      transform: {}\n",
+        );
+        let result = project.run("scene.load('scene.yaml')\nwait_frames(2)\nassert(scene.find('next') ~= nil)\nassert(scene.find('actor') == nil)");
+        assert!(result.passed, "{:?}", result.error);
+    }
+
+    #[test]
+    fn wait_until_preserves_the_predicate_error() {
+        let project = Project::new("");
+        let result = project.run("wait_until(function() error('predicate regression') end, 0.1)");
+        assert!(!result.passed);
+        let error = result.error.unwrap();
+        assert!(error.contains("predicate regression"));
+        assert!(!error.contains("timed out"));
+    }
 
     #[test]
     fn test_action_to_key_mapping() {

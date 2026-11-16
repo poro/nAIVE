@@ -31,6 +31,17 @@ pub struct AudioSystem {
 }
 
 impl AudioSystem {
+    /// A headless backend with the same Lua interface and no audio-device IO.
+    pub fn silent() -> Self {
+        Self {
+            manager: None,
+            sounds: HashMap::new(),
+            music: None,
+            listener_pos: Vec3::ZERO,
+            master_volume: 1.0,
+        }
+    }
+
     pub fn new() -> Self {
         let settings = AudioManagerSettings::<DefaultBackend> {
             main_track_builder: kira::track::MainTrackBuilder::new().sound_capacity(512),

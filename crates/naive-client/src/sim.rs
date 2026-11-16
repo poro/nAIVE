@@ -445,32 +445,144 @@ pub fn process_health(scene_world: &SharedSceneWorld, script_runtime: &ScriptRun
 pub fn process_destroys(
     scene_world: &SharedSceneWorld,
     physics_world: Option<&SharedPhysicsWorld>,
-    script_runtime: Option<&ScriptRuntime>,
+    mut script_runtime: Option<&mut ScriptRuntime>,
     entity_commands: &SharedEntityCommandQueue,
 ) {
     let destroys: Vec<String> = std::mem::take(&mut entity_commands.borrow_mut().destroys);
     for id in destroys {
-        let entity = scene_world.borrow().entity_registry.get(&id).copied();
-        if let Some(entity) = entity {
-            // Call on_destroy before despawning, with nothing borrowed.
-            if let Some(runtime) = script_runtime {
-                runtime.call_on_destroy(entity);
-            }
-            // Clean up physics body if entity has one
-            let body = {
-                let sw = scene_world.borrow();
-                let handle = sw
-                    .world
-                    .get::<&RigidBodyComp>(entity)
-                    .ok()
-                    .map(|rb| rb.handle);
-                handle
-            };
-            if let (Some(handle), Some(physics_world)) = (body, physics_world) {
-                physics_world.borrow_mut().remove_body(handle);
+        destroy_entity(
+            scene_world,
+            physics_world,
+            script_runtime.as_deref_mut(),
+            &id,
+        );
+    }
+}
+
+/// One destruction path for Lua, MCP and scene transitions. User callbacks run
+/// before taking any mutable world/physics borrow, while the entity still exists.
+pub fn destroy_entity(
+    scene_world: &SharedSceneWorld,
+    physics_world: Option<&SharedPhysicsWorld>,
+    script_runtime: Option<&mut ScriptRuntime>,
+    id: &str,
+) -> bool {
+    let Some(entity) = scene_world.borrow().entity_registry.get(id).copied() else {
+        return false;
+    };
+    if let Some(runtime) = script_runtime {
+        runtime.remove_entity(entity);
+    }
+    let body = scene_world
+        .borrow()
+        .world
+        .get::<&RigidBodyComp>(entity)
+        .ok()
+        .map(|rb| rb.handle);
+    if let (Some(handle), Some(physics)) = (body, physics_world) {
+        physics.borrow_mut().remove_body(handle);
+    }
+    crate::world::destroy_runtime_entity(&mut scene_world.borrow_mut(), id)
+}
+
+/// Initialize newly attached scripts after construction has released its world
+/// borrows. Failed initialization is reported once and remains visible to tests.
+pub fn initialize_pending_scripts(
+    scene_world: &SharedSceneWorld,
+    runtime: &mut ScriptRuntime,
+    project_root: &std::path::Path,
+) -> Result<(), String> {
+    let pending: Vec<_> = {
+        let world = scene_world.borrow();
+        let pending = world
+            .world
+            .query::<&Script>()
+            .iter()
+            .filter(|(_, script)| !script.initialized)
+            .map(|(entity, script)| {
+                (
+                    entity,
+                    script.source.clone(),
+                    world
+                        .entity_registry
+                        .iter()
+                        .find_map(|(id, &handle)| (entity == handle).then(|| id.clone())),
+                )
+            })
+            .collect();
+        pending
+    };
+    let mut failures = Vec::new();
+    for (entity, source, id) in pending {
+        // Mark first: an init callback that queues more work cannot initialize
+        // the same component twice. A source change/reload explicitly resets it.
+        if let Ok(mut script) = scene_world.borrow().world.get::<&mut Script>(entity) {
+            script.initialized = true;
+        }
+        if let Err(error) = runtime.load_script(entity, project_root, &source) {
+            let error = format!(
+                "Failed to load script for '{}': {error}",
+                id.as_deref().unwrap_or("unknown")
+            );
+            runtime.record_error(error.clone());
+            failures.push(error);
+            continue;
+        }
+        if let Some(id) = id {
+            if let Err(error) = runtime.set_entity_string_id(entity, &id) {
+                runtime.record_error(error.clone());
+                runtime.forget_entity(entity);
+                failures.push(error);
+                continue;
             }
         }
-        crate::world::destroy_runtime_entity(&mut scene_world.borrow_mut(), &id);
+        if let Err(error) = runtime.call_init_checked(entity) {
+            runtime.forget_entity(entity);
+            failures.push(error);
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// Apply the same pool bookkeeping after native and headless construction.
+pub fn finish_pool_spawn(
+    scene_world: &SharedSceneWorld,
+    pool_manager: &crate::scripting::SharedEntityPoolManager,
+    command: &crate::world::SpawnCommand,
+) {
+    let Some((pool, _counter)) = command
+        .id
+        .strip_prefix("_pool_")
+        .and_then(|id| id.rsplit_once('_'))
+    else {
+        return;
+    };
+    let mut pools = pool_manager.borrow_mut();
+    if !pools.has_pool(pool) {
+        return;
+    }
+    let mut world = scene_world.borrow_mut();
+    let Some(&entity) = world.entity_registry.get(&command.id) else {
+        return;
+    };
+    let prewarm = command.position == [0.0, -1000.0, 0.0];
+    let _ = world.world.insert_one(
+        entity,
+        crate::components::Pooled {
+            pool_name: pool.to_string(),
+            active: !prewarm,
+        },
+    );
+    if prewarm {
+        let _ = world.world.insert_one(entity, crate::components::Hidden);
+    }
+    pools.register_entity(pool, &command.id);
+    if prewarm {
+        pools.release(pool, &command.id);
     }
 }
 
@@ -507,59 +619,54 @@ pub fn dispatch_lua_events(
                         .collect()
                 })
                 .unwrap_or_default();
-            for (index, func_result) in listener_keys.into_iter().enumerate() {
-                if let Ok(func) = func_result {
+            for func_result in listener_keys {
+                let result = (|| -> mlua::Result<()> {
+                    let func = func_result?;
                     let lua = &script_runtime.lua;
-                    if let Ok(tbl) = lua.create_table() {
-                        let _ = tbl.set("type", event.event_type.clone());
-                        if let Ok(data_tbl) = lua.create_table() {
-                            for (k, v) in &event.data {
-                                match v {
-                                    serde_json::Value::Number(n) => {
-                                        if let Some(f) = n.as_f64() {
-                                            let _ = data_tbl.set(k.as_str(), f);
-                                        }
-                                    }
-                                    serde_json::Value::String(s) => {
-                                        let _ = data_tbl.set(k.as_str(), s.as_str());
-                                    }
-                                    serde_json::Value::Bool(b) => {
-                                        let _ = data_tbl.set(k.as_str(), *b);
-                                    }
-                                    _ => {}
+                    let tbl = lua.create_table()?;
+                    tbl.set("type", event.event_type.clone())?;
+                    let data_tbl = lua.create_table()?;
+                    for (key, value) in &event.data {
+                        match value {
+                            serde_json::Value::Number(number) => {
+                                if let Some(value) = number.as_f64() {
+                                    data_tbl.set(key.as_str(), value)?;
                                 }
                             }
-                            let _ = tbl.set("data", data_tbl);
-                        }
-                        let result = script_runtime.run_limited(|| func.call::<()>(tbl));
-                        match script_runtime.limit_exceeded(result.as_ref().err()) {
-                            Some(limit) => disable_listener(
-                                listeners,
-                                script_runtime,
-                                &event.event_type,
-                                index,
-                                limit,
-                            ),
-                            None => {
-                                if let Err(e) = result {
-                                    tracing::error!("Lua event listener error: {}", e);
-                                }
+                            serde_json::Value::String(value) => {
+                                data_tbl.set(key.as_str(), value.as_str())?
                             }
+                            serde_json::Value::Bool(value) => data_tbl.set(key.as_str(), *value)?,
+                            _ => {}
                         }
                     }
+                    tbl.set("data", data_tbl)?;
+                    let result = script_runtime.run_limited(|| func.call::<()>(tbl));
+                    if let Some(limit) = script_runtime.limit_exceeded(result.as_ref().err()) {
+                        disable_listener(script_runtime, &event.event_type, &func, limit);
+                        return Ok(()); // report_limit already retains the failure.
+                    }
+                    result
+                })();
+                if let Err(error) = result {
+                    let message = format!(
+                        "Lua event listener for '{}' failed: {error}",
+                        event.event_type
+                    );
+                    script_runtime.record_error(message.clone());
+                    tracing::error!("{message}");
                 }
             }
         }
     }
 }
 
-/// Replace a listener that exceeded a limit with one that does nothing. Its
-/// slot is kept, so the ids of the other listeners stay valid.
+/// Remove a listener by live callback identity after it exceeded a limit.
+/// It may already have unsubscribed itself while running.
 fn disable_listener(
-    listeners: &RefCell<HashMap<String, Vec<mlua::RegistryKey>>>,
     script_runtime: &ScriptRuntime,
     event_type: &str,
-    index: usize,
+    callback: &mlua::Function,
     limit: LimitExceeded,
 ) {
     tracing::error!(
@@ -576,18 +683,10 @@ fn disable_listener(
         event_type, limit_name
     ));
 
-    let lua = &script_runtime.lua;
-    let do_nothing = lua
-        .create_function(|_, _: mlua::MultiValue| Ok(()))
-        .and_then(|f| lua.create_registry_value(f));
-    if let Ok(do_nothing) = do_nothing {
-        let mut listeners = listeners.borrow_mut();
-        if let Some(slot) = listeners
-            .get_mut(event_type)
-            .and_then(|keys| keys.get_mut(index))
-        {
-            *slot = do_nothing;
-        }
+    if let Err(error) = script_runtime.remove_event_listener(event_type, callback) {
+        let message = format!("Failed to remove event listener for '{event_type}': {error}");
+        script_runtime.record_error(message.clone());
+        tracing::error!("{message}");
     }
 }
 
@@ -606,7 +705,165 @@ mod tests {
     use crate::world::SceneWorld;
 
     #[test]
-    fn runaway_event_listener_is_cut_off_and_replaced() {
+    fn pending_scripts_initialize_once_and_destroy_without_borrowing_worlds() {
+        let scene: SharedSceneWorld = Rc::new(RefCell::new(SceneWorld::new()));
+        let physics: SharedPhysicsWorld = Rc::new(RefCell::new(PhysicsWorld::new(Vec3::ZERO)));
+        let bus = Rc::new(RefCell::new(EventBus::new(100)));
+        let listeners = Rc::new(RefCell::new(HashMap::new()));
+        let ids = Rc::new(RefCell::new(HashMap::new()));
+        let commands = Rc::new(RefCell::new(crate::world::EntityCommandQueue::default()));
+        let dir = std::env::temp_dir().join(format!(
+            "naive_lifecycle_initialize_destroy_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("entity.lua"),
+            r#"
+            function init()
+                counts.init = counts.init + 1
+                entity.set_position(_entity_string_id, 1, 2, 3)
+                events.on('ping', function()
+                    counts.events = counts.events + 1
+                    events.on('nested', function() counts.events = counts.events + 100 end)
+                end)
+            end
+            function update() counts.update = counts.update + 1 end
+            function on_destroy()
+                counts.destroy = counts.destroy + 1
+                local x = entity.get_position(_entity_string_id)
+                assert(x == 1)
+                entity.set_position(_entity_string_id, 4, 5, 6)
+                physics.set_velocity(_entity_string_id, 0, 0, 0)
+                events.on('ping', function() error('destroy listener escaped') end)
+            end
+        "#,
+        )
+        .unwrap();
+        let entity = scene.borrow_mut().world.spawn((
+            crate::components::Transform::default(),
+            Script {
+                source: "entity.lua".into(),
+                initialized: false,
+            },
+        ));
+        scene
+            .borrow_mut()
+            .entity_registry
+            .insert("hero".to_string(), entity);
+        let (body, _) = physics.borrow_mut().add_dynamic_body(
+            entity,
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            PhysicsShape::Sphere { radius: 0.5 },
+            1.0,
+            0.0,
+            0.5,
+            false,
+        );
+        scene
+            .borrow_mut()
+            .world
+            .insert_one(
+                entity,
+                RigidBodyComp {
+                    handle: body,
+                    body_type: PhysicsBodyType::Dynamic,
+                },
+            )
+            .unwrap();
+        let mut runtime = ScriptRuntime::new();
+        runtime
+            .register_entity_api(scene.clone(), physics.clone())
+            .unwrap();
+        runtime
+            .register_physics_api(physics.clone(), scene.clone())
+            .unwrap();
+        runtime
+            .register_event_api(
+                bus.clone(),
+                listeners.clone(),
+                Rc::new(RefCell::new(0)),
+                ids.clone(),
+            )
+            .unwrap();
+        runtime
+            .lua
+            .load("counts = {init=0, update=0, destroy=0, events=0}")
+            .exec()
+            .unwrap();
+
+        initialize_pending_scripts(&scene, &mut runtime, &dir).unwrap();
+        initialize_pending_scripts(&scene, &mut runtime, &dir).unwrap();
+        update_scripts(&scene, &runtime, 0.0);
+        bus.borrow_mut().emit("ping", HashMap::new());
+        dispatch_lua_events(&bus, &listeners, Some(&runtime), 0.0);
+        let counts: LuaTable = runtime.lua.globals().get("counts").unwrap();
+        assert_eq!(counts.get::<i64>("init").unwrap(), 1);
+        assert_eq!(counts.get::<i64>("update").unwrap(), 1);
+        assert_eq!(counts.get::<i64>("events").unwrap(), 1);
+
+        commands
+            .borrow_mut()
+            .destroys
+            .extend(["hero".to_string(), "hero".to_string()]);
+        process_destroys(&scene, Some(&physics), Some(&mut runtime), &commands);
+        assert_eq!(counts.get::<i64>("destroy").unwrap(), 1);
+        assert!(!scene.borrow().world.contains(entity));
+        assert!(!physics.borrow().rigid_body_set.contains(body));
+        assert!(!runtime.entity_envs.contains_key(&entity));
+        assert!(!runtime.script_sources.contains_key(&entity));
+        assert!(ids.borrow().is_empty());
+        assert!(listeners.borrow().values().all(Vec::is_empty));
+        for kind in ["ping", "nested"] {
+            bus.borrow_mut().emit(kind, HashMap::new());
+        }
+        dispatch_lua_events(&bus, &listeners, Some(&runtime), 0.0);
+        assert_eq!(counts.get::<i64>("events").unwrap(), 1);
+        assert!(runtime.take_errors().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_init_is_reported_once_and_drops_subscriptions() {
+        let scene: SharedSceneWorld = Rc::new(RefCell::new(SceneWorld::new()));
+        let listeners = Rc::new(RefCell::new(HashMap::new()));
+        let dir = std::env::temp_dir().join(format!(
+            "naive_lifecycle_failed_init_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("bad.lua"),
+            "function init() events.on('ping', function() end); error('init failed') end",
+        )
+        .unwrap();
+        let entity = scene.borrow_mut().world.spawn((Script {
+            source: "bad.lua".into(),
+            initialized: false,
+        },));
+        let mut runtime = ScriptRuntime::new();
+        runtime
+            .register_event_api(
+                Rc::new(RefCell::new(EventBus::new(100))),
+                listeners.clone(),
+                Rc::new(RefCell::new(0)),
+                Rc::new(RefCell::new(HashMap::new())),
+            )
+            .unwrap();
+        assert!(initialize_pending_scripts(&scene, &mut runtime, &dir)
+            .unwrap_err()
+            .contains("init failed"));
+        assert_eq!(runtime.take_errors().len(), 1);
+        assert!(!runtime.entity_envs.contains_key(&entity));
+        assert!(listeners.borrow().values().all(Vec::is_empty));
+        initialize_pending_scripts(&scene, &mut runtime, &dir).unwrap();
+        assert!(runtime.take_errors().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn runaway_event_listener_is_cut_off_and_removed() {
         let event_bus: SharedEventBus = Rc::new(RefCell::new(EventBus::new(100)));
         let listeners = Rc::new(RefCell::new(HashMap::new()));
         let runtime = ScriptRuntime::with_limits(ScriptLimits {
@@ -638,11 +895,113 @@ mod tests {
             dispatch_lua_events(&event_bus, &listeners, Some(&runtime), 1.0 / 60.0);
         }
 
-        // The runaway listener was cut off once and then replaced, so it is
+        // The runaway listener was cut off once and then removed, so it is
         // reported once. The healthy listener heard both events.
         assert_eq!(runtime.take_limit_reports().len(), 1);
         let heard: i64 = runtime.lua.globals().get("heard").unwrap();
         assert_eq!(heard, 2);
+    }
+
+    #[test]
+    fn listener_removal_during_a_runaway_callback_does_not_disable_healthy_listeners() {
+        for remove in ["runaway", "earlier"] {
+            let event_bus: SharedEventBus = Rc::new(RefCell::new(EventBus::new(100)));
+            let listeners = Rc::new(RefCell::new(HashMap::new()));
+            let runtime = ScriptRuntime::with_limits(ScriptLimits {
+                instructions_per_call: 200_000,
+                memory_bytes: 16 * 1024 * 1024,
+            });
+            runtime
+                .register_event_api(
+                    event_bus.clone(),
+                    listeners.clone(),
+                    Rc::new(RefCell::new(0)),
+                    Rc::new(RefCell::new(HashMap::new())),
+                )
+                .unwrap();
+            runtime
+                .lua
+                .load(format!(
+                    r#"
+                heard = 0
+                runaway_calls = 0
+                local earlier = events.on('boom', function() end)
+                local runaway
+                runaway = events.on('boom', function()
+                    runaway_calls = runaway_calls + 1
+                    events.off({remove})
+                    while true do end
+                end)
+                events.on('boom', function() heard = heard + 1 end)
+            "#
+                ))
+                .exec()
+                .unwrap();
+            for _ in 0..2 {
+                event_bus.borrow_mut().emit("boom", HashMap::new());
+                dispatch_lua_events(&event_bus, &listeners, Some(&runtime), 0.0);
+            }
+            assert_eq!(runtime.take_limit_reports().len(), 1, "remove {remove}");
+            assert_eq!(
+                runtime.lua.globals().get::<u32>("runaway_calls").unwrap(),
+                1,
+                "remove {remove}"
+            );
+            assert_eq!(
+                runtime.lua.globals().get::<u32>("heard").unwrap(),
+                2,
+                "remove {remove}"
+            );
+        }
+    }
+
+    #[test]
+    fn event_payload_allocation_and_invalid_registry_entries_record_errors() {
+        let event_bus: SharedEventBus = Rc::new(RefCell::new(EventBus::new(100)));
+        let listeners = Rc::new(RefCell::new(HashMap::new()));
+        let runtime = ScriptRuntime::new();
+        runtime
+            .register_event_api(
+                event_bus.clone(),
+                listeners.clone(),
+                Rc::new(RefCell::new(0)),
+                Rc::new(RefCell::new(HashMap::new())),
+            )
+            .unwrap();
+        runtime
+            .lua
+            .load("events.on('boom', function() end)")
+            .exec()
+            .unwrap();
+        runtime.lua.gc_stop();
+        let old_limit = runtime
+            .lua
+            .set_memory_limit(runtime.lua.used_memory() + 1)
+            .unwrap();
+        let mut payload = HashMap::new();
+        payload.insert(
+            "large".into(),
+            serde_json::Value::String("x".repeat(1024 * 1024)),
+        );
+        event_bus.borrow_mut().emit("boom", payload);
+        dispatch_lua_events(&event_bus, &listeners, Some(&runtime), 0.0);
+        runtime.lua.set_memory_limit(old_limit).unwrap();
+        runtime.lua.gc_restart();
+        assert!(
+            !runtime.take_errors().is_empty(),
+            "event allocation failure was hidden"
+        );
+
+        let invalid = runtime.lua.create_registry_value("not a function").unwrap();
+        listeners
+            .borrow_mut()
+            .insert("invalid".into(), vec![invalid]);
+        event_bus.borrow_mut().emit("invalid", HashMap::new());
+        dispatch_lua_events(&event_bus, &listeners, Some(&runtime), 0.0);
+        assert!(
+            !runtime.take_errors().is_empty(),
+            "invalid event callback was hidden"
+        );
     }
 
     #[test]
@@ -693,7 +1052,10 @@ mod tests {
 
         // The ball's script answers the contact with a physics call that needs
         // the physics world mutably.
-        let dir = std::env::temp_dir().join("naive_test_sim_on_collision");
+        let dir = std::env::temp_dir().join(format!(
+            "naive_test_sim_on_collision_{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("ball.lua"),

@@ -59,8 +59,7 @@ fn test_load_and_call_script() {
     runtime.register_api().unwrap();
 
     // Create a temp script file
-    let dir = std::env::temp_dir().join("naive_test_scripts");
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = script_dir("load_and_call_script");
     let script_path = dir.join("test.lua");
     std::fs::write(
         &script_path,
@@ -98,7 +97,10 @@ fn test_load_and_call_script() {
 
 /// A scratch directory for one test's script files.
 fn script_dir(test: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("naive_test_scripting_{test}"));
+    let dir = std::env::temp_dir().join(format!(
+        "naive_test_scripting_{}_{test}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -428,4 +430,244 @@ fn hot_reload_keeps_the_entity_string_id() {
         Some("hero")
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn failed_reload_keeps_live_state_code_and_subscriptions() {
+    let mut runtime = ScriptRuntime::new();
+    let entity = hecs::World::new().reserve_entity();
+    let events = Rc::new(RefCell::new(EventBus::new(100)));
+    let listeners = Rc::new(RefCell::new(HashMap::new()));
+    runtime
+        .register_event_api(
+            events.clone(),
+            listeners.clone(),
+            Rc::new(RefCell::new(0)),
+            Rc::new(RefCell::new(HashMap::new())),
+        )
+        .unwrap();
+    let dir = script_dir("transactional_reload");
+    let source = dir.join("script.lua");
+    let good = r#"
+        self.count = 1
+        self.nested = { value = 7 }
+        self.cycle = self
+        self.listener = events.on("ping", function() self.count = self.count + 1 end)
+        function update() self.count = self.count + 1 end
+    "#;
+    std::fs::write(&source, good).unwrap();
+    runtime
+        .load_script(entity, &dir, Path::new("script.lua"))
+        .unwrap();
+    runtime.set_entity_string_id(entity, "hero").unwrap();
+
+    for broken in [
+        "function update( syntax error",
+        "events.on('ping', function() error('leaked listener') end); error('top-level failed')",
+        r#"
+            function on_reload()
+                self.count = 999
+                self.nested.value = 999
+                events.off(self.listener)
+                events.on('ping', function() error('leaked listener') end)
+                error('reload failed')
+            end
+        "#,
+    ] {
+        std::fs::write(&source, broken).unwrap();
+        assert!(runtime
+            .hot_reload_script(entity, &dir, Path::new("script.lua"))
+            .is_err());
+        assert_eq!(runtime.script_sources.get(&entity).unwrap(), good);
+        let state: LuaTable = env_of(&runtime, entity).get("self").unwrap();
+        assert_eq!(state.get::<i64>("count").unwrap(), 1);
+        assert_eq!(
+            state
+                .get::<LuaTable>("nested")
+                .unwrap()
+                .get::<i64>("value")
+                .unwrap(),
+            7
+        );
+        assert_eq!(listeners.borrow()["ping"].len(), 1);
+    }
+    events.borrow_mut().emit("ping", HashMap::new());
+    crate::sim::dispatch_lua_events(&events, &listeners, Some(&runtime), 0.0);
+    runtime.call_update(entity, 0.0);
+    let state: LuaTable = env_of(&runtime, entity).get("self").unwrap();
+    assert_eq!(state.get::<i64>("count").unwrap(), 3);
+    assert!(runtime.take_errors().is_empty());
+
+    std::fs::write(
+        &source,
+        r#"
+        events.on('ping', function() self.count = self.count + 10 end)
+        function on_reload() self.nested.value = 8 end
+    "#,
+    )
+    .unwrap();
+    assert!(runtime
+        .hot_reload_script(entity, &dir, Path::new("script.lua"))
+        .unwrap());
+    assert_eq!(listeners.borrow()["ping"].len(), 1);
+    events.borrow_mut().emit("ping", HashMap::new());
+    crate::sim::dispatch_lua_events(&events, &listeners, Some(&runtime), 0.0);
+    let state: LuaTable = env_of(&runtime, entity).get("self").unwrap();
+    assert_eq!(state.get::<i64>("count").unwrap(), 13);
+    assert_eq!(
+        state
+            .get::<LuaTable>("nested")
+            .unwrap()
+            .get::<i64>("value")
+            .unwrap(),
+        8
+    );
+    assert_eq!(
+        state.get::<LuaTable>("cycle").unwrap().to_pointer(),
+        state.to_pointer()
+    );
+    assert!(runtime.take_errors().is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn same_frame_pool_expansion_reserves_unique_ids() {
+    let runtime = ScriptRuntime::new();
+    let world = Rc::new(RefCell::new(SceneWorld::new()));
+    let physics = Rc::new(RefCell::new(PhysicsWorld::new(glam::Vec3::ZERO)));
+    let commands = Rc::new(RefCell::new(EntityCommandQueue::default()));
+    let pools = Rc::new(RefCell::new(EntityPoolManager::new()));
+    runtime.register_entity_api(world.clone(), physics).unwrap();
+    runtime
+        .register_entity_command_api(world.clone(), commands.clone(), pools.clone())
+        .unwrap();
+    runtime
+        .lua
+        .load(
+            r#"
+        entity.pool_create('effects_with_underscores', 'procedural:cube', 'procedural:default', 2)
+        first = entity.pool_acquire('effects_with_underscores')
+        second = entity.pool_acquire('effects_with_underscores')
+        assert(first ~= second)
+    "#,
+        )
+        .exec()
+        .unwrap();
+    let commands = commands.borrow();
+    let unique: std::collections::HashSet<_> =
+        commands.spawns.iter().map(|spawn| &spawn.id).collect();
+    assert_eq!(unique.len(), 4);
+    for command in &commands.spawns {
+        let entity = world
+            .borrow_mut()
+            .world
+            .spawn((crate::components::Transform::default(),));
+        world
+            .borrow_mut()
+            .entity_registry
+            .insert(command.id.clone(), entity);
+        crate::sim::finish_pool_spawn(&world, &pools, command);
+    }
+    assert_eq!(pools.borrow().pool_size("effects_with_underscores"), (4, 2));
+}
+
+#[test]
+fn init_only_subscriptions_survive_reloads_with_shared_current_state() {
+    let mut runtime = ScriptRuntime::new();
+    let entity = hecs::World::new().reserve_entity();
+    let events = Rc::new(RefCell::new(EventBus::new(100)));
+    let listeners = Rc::new(RefCell::new(HashMap::new()));
+    runtime
+        .register_event_api(
+            events.clone(),
+            listeners.clone(),
+            Rc::new(RefCell::new(0)),
+            Rc::new(RefCell::new(HashMap::new())),
+        )
+        .unwrap();
+    runtime
+        .lua
+        .load("counts = {initializations = 0}")
+        .exec()
+        .unwrap();
+    let dir = script_dir("init_only_subscriptions");
+    std::fs::write(
+        dir.join("script.lua"),
+        r#"
+        function init()
+            counts.initializations = counts.initializations + 1
+            self.count = 0
+            events.on('ping', function() self.count = self.count + 1 end)
+        end
+    "#,
+    )
+    .unwrap();
+    runtime
+        .load_script(entity, &dir, Path::new("script.lua"))
+        .unwrap();
+    runtime.call_init(entity);
+    for revision in 1..=3 {
+        std::fs::write(
+            dir.join("script.lua"),
+            format!("function update() self.count = self.count + 10 end -- revision {revision}"),
+        )
+        .unwrap();
+        runtime
+            .hot_reload_script(entity, &dir, Path::new("script.lua"))
+            .unwrap();
+        runtime.call_update(entity, 0.0);
+        events.borrow_mut().emit("ping", HashMap::new());
+        crate::sim::dispatch_lua_events(&events, &listeners, Some(&runtime), 0.0);
+        let state: LuaTable = env_of(&runtime, entity).get("self").unwrap();
+        assert_eq!(state.get::<i64>("count").unwrap(), revision * 11);
+        assert_eq!(listeners.borrow()["ping"].len(), 1);
+    }
+    let counts: LuaTable = runtime.lua.globals().get("counts").unwrap();
+    assert_eq!(counts.get::<i64>("initializations").unwrap(), 1);
+    std::fs::write(
+        dir.join("script.lua"),
+        "function on_reload() events.on('ping', function() self.count = self.count + 100 end) end",
+    )
+    .unwrap();
+    runtime
+        .hot_reload_script(entity, &dir, Path::new("script.lua"))
+        .unwrap();
+    events.borrow_mut().emit("ping", HashMap::new());
+    crate::sim::dispatch_lua_events(&events, &listeners, Some(&runtime), 0.0);
+    let state: LuaTable = env_of(&runtime, entity).get("self").unwrap();
+    assert_eq!(state.get::<i64>("count").unwrap(), 133);
+    assert_eq!(listeners.borrow()["ping"].len(), 1);
+    runtime.remove_entity(entity);
+    assert!(listeners.borrow().values().all(Vec::is_empty));
+    assert!(runtime.listener_environments.borrow().is_empty());
+    assert!(runtime.take_errors().is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn deeply_nested_state_rejects_reload_without_losing_live_environment() {
+    let mut runtime = ScriptRuntime::new();
+    let entity = hecs::World::new().reserve_entity();
+    let dir = script_dir("deep_reload_state");
+    let old_code = "self.chain = {}; local cursor = self.chain; for i=1,100000 do cursor.next = {}; cursor = cursor.next end; function update() self.alive = true end";
+    std::fs::write(dir.join("script.lua"), old_code).unwrap();
+    runtime
+        .load_script(entity, &dir, Path::new("script.lua"))
+        .unwrap();
+    std::fs::write(
+        dir.join("script.lua"),
+        "function update() error('replacement should not run') end",
+    )
+    .unwrap();
+    let error = runtime
+        .hot_reload_script(entity, &dir, Path::new("script.lua"))
+        .unwrap_err();
+    assert!(error.contains("depth limit"), "{error}");
+    assert_eq!(runtime.script_sources.get(&entity).unwrap(), old_code);
+    runtime.call_update(entity, 0.0);
+    let state: LuaTable = env_of(&runtime, entity).get("self").unwrap();
+    assert!(state.get::<bool>("alive").unwrap());
+    assert!(state.get::<LuaTable>("chain").is_ok());
+    assert!(runtime.take_errors().is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
 }

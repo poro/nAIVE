@@ -33,6 +33,14 @@ use crate::physics::PhysicsWorld;
 use crate::ui::UiRenderer;
 use crate::world::{EntityCommandQueue, EntityPoolManager, SceneWorld};
 
+type LuaListeners = Rc<RefCell<HashMap<String, Vec<LuaRegistryKey>>>>;
+type LuaListenerIds = Rc<RefCell<HashMap<u64, (String, usize)>>>;
+
+struct EventSubscriptions {
+    listeners: LuaListeners,
+    ids: LuaListenerIds,
+}
+
 // Shared reference types for safe Lua closure captures.
 pub type SharedSceneWorld = Rc<RefCell<SceneWorld>>;
 pub type SharedPhysicsWorld = Rc<RefCell<PhysicsWorld>>;
@@ -160,6 +168,45 @@ fn is_memory_error(error: &LuaError) -> bool {
     }
 }
 
+/// Copy script state before on_reload so a failed replacement cannot mutate the
+/// live self table. Preserve aliases and cycles within nested state tables.
+fn copy_state_table(
+    lua: &Lua,
+    source: &LuaTable,
+    seen: &mut HashMap<usize, LuaTable>,
+    depth: usize,
+) -> LuaResult<LuaTable> {
+    let address = source.to_pointer() as usize;
+    if let Some(table) = seen.get(&address) {
+        return Ok(table.clone());
+    }
+    if depth >= 256 {
+        return Err(LuaError::runtime(
+            "script state exceeds the reload depth limit of 256 tables",
+        ));
+    }
+    let target = lua.create_table()?;
+    seen.insert(address, target.clone());
+    for pair in source.clone().pairs::<LuaValue, LuaValue>() {
+        let (key, value) = pair?;
+        let key = match key {
+            LuaValue::Table(table) => {
+                LuaValue::Table(copy_state_table(lua, &table, seen, depth + 1)?)
+            }
+            value => value,
+        };
+        let value = match value {
+            LuaValue::Table(table) => {
+                LuaValue::Table(copy_state_table(lua, &table, seen, depth + 1)?)
+            }
+            value => value,
+        };
+        target.raw_set(key, value)?;
+    }
+    target.set_metatable(source.metatable());
+    Ok(target)
+}
+
 /// Central scripting runtime managing all Lua VMs.
 pub struct ScriptRuntime {
     pub lua: Lua,
@@ -173,6 +220,13 @@ pub struct ScriptRuntime {
     /// One line per script stopped for exceeding a limit, until the engine
     /// takes them for display.
     limit_reports: RefCell<Vec<String>>,
+    errors: RefCell<Vec<String>>,
+    active_entity: Rc<Cell<Option<hecs::Entity>>>,
+    listener_owners: Rc<RefCell<HashMap<u64, hecs::Entity>>>,
+    listener_environments: Rc<RefCell<HashMap<u64, LuaTable>>>,
+    subscriptions: RefCell<Option<EventSubscriptions>>,
+    staged_listener_removals: Rc<RefCell<Option<Vec<u64>>>>,
+    next_pool_id: Rc<Cell<u64>>,
 }
 
 impl ScriptRuntime {
@@ -214,6 +268,13 @@ impl ScriptRuntime {
             limits,
             budget,
             limit_reports: RefCell::new(Vec::new()),
+            errors: RefCell::new(Vec::new()),
+            active_entity: Rc::new(Cell::new(None)),
+            listener_owners: Rc::new(RefCell::new(HashMap::new())),
+            listener_environments: Rc::new(RefCell::new(HashMap::new())),
+            subscriptions: RefCell::new(None),
+            staged_listener_removals: Rc::new(RefCell::new(None)),
+            next_pool_id: Rc::new(Cell::new(0)),
         }
     }
 
@@ -276,7 +337,119 @@ impl ScriptRuntime {
 
     /// Record a one-line message about a script that hit a limit.
     pub fn report_limit(&self, message: String) {
+        self.record_error(message.clone());
         self.limit_reports.borrow_mut().push(message);
+    }
+
+    /// Retain gameplay failures so headless tests cannot pass by merely logging them.
+    pub fn record_error(&self, message: String) {
+        let mut errors = self.errors.borrow_mut();
+        if errors.len() < 256 {
+            errors.push(message);
+        }
+    }
+
+    pub fn take_errors(&self) -> Vec<String> {
+        std::mem::take(&mut *self.errors.borrow_mut())
+    }
+
+    fn run_as_entity<R>(
+        &self,
+        entity: hecs::Entity,
+        f: impl FnOnce() -> LuaResult<R>,
+    ) -> LuaResult<R> {
+        struct Restore<'a>(&'a Cell<Option<hecs::Entity>>, Option<hecs::Entity>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.1);
+            }
+        }
+        let _restore = Restore(
+            &self.active_entity,
+            self.active_entity.replace(Some(entity)),
+        );
+        self.run_limited(f)
+    }
+
+    fn owned_listener_ids(&self, entity: hecs::Entity) -> Vec<u64> {
+        self.listener_owners
+            .borrow()
+            .iter()
+            .filter_map(|(&id, &owner)| (owner == entity).then_some(id))
+            .collect()
+    }
+
+    fn remove_listener(&self, id: u64) {
+        self.listener_owners.borrow_mut().remove(&id);
+        self.listener_environments.borrow_mut().remove(&id);
+        if let Some(subscriptions) = self.subscriptions.borrow().as_ref() {
+            let mut ids = subscriptions.ids.borrow_mut();
+            if let Some((event, index)) = ids.remove(&id) {
+                if let Some(list) = subscriptions.listeners.borrow_mut().get_mut(&event) {
+                    if index < list.len() {
+                        let _ = self.lua.remove_registry_value(list.remove(index));
+                        for (kind, other) in ids.values_mut() {
+                            if *kind == event && *other > index {
+                                *other -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Remove the live subscription matching a dispatched callback. Callbacks
+    /// may unsubscribe while running, so their old vector index is not stable.
+    pub fn remove_event_listener(
+        &self,
+        event_type: &str,
+        callback: &LuaFunction,
+    ) -> Result<bool, String> {
+        let id = {
+            let subscriptions = self.subscriptions.borrow();
+            let Some(subscriptions) = subscriptions.as_ref() else {
+                return Ok(false);
+            };
+            let listeners = subscriptions.listeners.borrow();
+            let Some(list) = listeners.get(event_type) else {
+                return Ok(false);
+            };
+            let mut index = None;
+            for (candidate_index, key) in list.iter().enumerate() {
+                let candidate: LuaFunction =
+                    self.lua.registry_value(key).map_err(|e| e.to_string())?;
+                if candidate.to_pointer() == callback.to_pointer() {
+                    index = Some(candidate_index);
+                    break;
+                }
+            }
+            let Some(index) = index else {
+                return Ok(false);
+            };
+            let ids = subscriptions.ids.borrow();
+            ids.iter()
+                .find_map(|(&id, (event, candidate))| {
+                    (event == event_type && *candidate == index).then_some(id)
+                })
+                .ok_or_else(|| {
+                    format!("Event listener for '{event_type}' has no subscription ID")
+                })?
+        };
+        self.remove_listener(id);
+        Ok(true)
+    }
+
+    /// Release script state and owned subscriptions without calling user code.
+    /// Used after scene reconciliation has already removed the ECS entity.
+    pub fn forget_entity(&mut self, entity: hecs::Entity) {
+        for id in self.owned_listener_ids(entity) {
+            self.remove_listener(id);
+        }
+        self.script_sources.remove(&entity);
+        if let Some(key) = self.entity_envs.remove(&entity) {
+            let _ = self.lua.remove_registry_value(key);
+        }
     }
 
     /// Take the messages recorded since the last call, for display.
@@ -284,7 +457,79 @@ impl ScriptRuntime {
         std::mem::take(&mut *self.limit_reports.borrow_mut())
     }
 
-    /// Load and initialize a script for an entity.
+    /// Prepare a replacement without releasing the last working environment.
+    fn prepare_script(
+        &self,
+        entity: hecs::Entity,
+        source: &Path,
+        code: &str,
+    ) -> Result<LuaTable, String> {
+        let env = self.lua.create_table().map_err(|e| e.to_string())?;
+        let meta = self.lua.create_table().map_err(|e| e.to_string())?;
+        meta.set("__index", self.lua.globals())
+            .map_err(|e| e.to_string())?;
+        env.set_metatable(Some(meta));
+        env.set("_entity_id", entity.id() as u64)
+            .map_err(|e| e.to_string())?;
+        env.set("self", self.lua.create_table().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        let chunk = self
+            .lua
+            .load(code)
+            .set_name(source.to_string_lossy())
+            .set_environment(env.clone());
+        let result = self.run_as_entity(entity, || chunk.exec());
+        let limit = self.limit_exceeded(result.as_ref().err());
+        result.map_err(|error| format!("Script error in {:?}: {}", source, error))?;
+        if let Some(limit) = limit {
+            return Err(format!(
+                "Script error in {:?}: {}",
+                source,
+                self.describe_limit(limit)
+            ));
+        }
+        Ok(env)
+    }
+
+    fn discard_candidate_listeners(&self, entity: hecs::Entity, old_listeners: &[u64]) {
+        for id in self.owned_listener_ids(entity) {
+            if !old_listeners.contains(&id) {
+                self.remove_listener(id);
+            }
+        }
+    }
+
+    fn commit_script(
+        &mut self,
+        entity: hecs::Entity,
+        env: LuaTable,
+        code: String,
+        old_listeners: &[u64],
+        replace_listeners: bool,
+    ) -> Result<(), String> {
+        let key = self.lua.create_registry_value(env).map_err(|error| {
+            self.discard_candidate_listeners(entity, old_listeners);
+            self.staged_listener_removals.borrow_mut().take();
+            error.to_string()
+        })?;
+        if replace_listeners {
+            for &id in old_listeners {
+                self.remove_listener(id);
+            }
+        }
+        if let Some(removals) = self.staged_listener_removals.borrow_mut().take() {
+            for id in removals {
+                self.remove_listener(id);
+            }
+        }
+        if let Some(old_key) = self.entity_envs.insert(entity, key) {
+            let _ = self.lua.remove_registry_value(old_key);
+        }
+        self.script_sources.insert(entity, code);
+        Ok(())
+    }
+
+    /// Load an entity's script. Call init separately after releasing ECS borrows.
     pub fn load_script(
         &mut self,
         entity: hecs::Entity,
@@ -293,43 +538,16 @@ impl ScriptRuntime {
     ) -> Result<(), String> {
         let full_path = crate::project_path::resolve(project_root, source)?;
         let code = std::fs::read_to_string(&full_path)
-            .map_err(|e| format!("Failed to read script {:?}: {}", full_path, e))?;
-
-        self.script_sources.insert(entity, code.clone());
-
-        // Create per-entity environment table
-        let env = self.lua.create_table().map_err(|e| e.to_string())?;
-
-        // Set up environment with access to globals (math, string, table, etc.)
-        let globals = self.lua.globals();
-        let meta = self.lua.create_table().map_err(|e| e.to_string())?;
-        meta.set("__index", globals).map_err(|e| e.to_string())?;
-        env.set_metatable(Some(meta));
-
-        // Store entity ID in the environment
-        env.set("_entity_id", entity.id() as u64)
-            .map_err(|e| e.to_string())?;
-
-        // Initialize the entity table for storing per-entity state
-        let entity_table = self.lua.create_table().map_err(|e| e.to_string())?;
-        env.set("self", entity_table).map_err(|e| e.to_string())?;
-
-        // Load and execute the script in the environment
-        let chunk = self
-            .lua
-            .load(&code)
-            .set_name(source.to_string_lossy())
-            .set_environment(env.clone());
-        self.run_limited(|| chunk.exec())
-            .map_err(|e| format!("Script error in {:?}: {}", source, e))?;
-
-        // Store the environment
-        let key = self
-            .lua
-            .create_registry_value(env)
-            .map_err(|e| e.to_string())?;
-        self.entity_envs.insert(entity, key);
-
+            .map_err(|error| format!("Failed to read script {:?}: {}", full_path, error))?;
+        let old_listeners = self.owned_listener_ids(entity);
+        *self.staged_listener_removals.borrow_mut() = Some(Vec::new());
+        let env = self
+            .prepare_script(entity, source, &code)
+            .inspect_err(|_| {
+                self.discard_candidate_listeners(entity, &old_listeners);
+                self.staged_listener_removals.borrow_mut().take();
+            })?;
+        self.commit_script(entity, env, code, &old_listeners, true)?;
         tracing::info!("Loaded script: {:?} for entity {:?}", source, entity);
         Ok(())
     }
@@ -337,6 +555,11 @@ impl ScriptRuntime {
     /// Call the `init` lifecycle hook on an entity's script.
     pub fn call_init(&self, entity: hecs::Entity) {
         self.call_hook(entity, "init", ());
+    }
+
+    /// Initialization must fail visibly to callers constructing a live entity.
+    pub fn call_init_checked(&self, entity: hecs::Entity) -> Result<(), String> {
+        self.try_call_hook(entity, "init", ())
     }
 
     /// Call the `update` lifecycle hook with delta time.
@@ -381,24 +604,46 @@ impl ScriptRuntime {
 
     /// Internal: call a named function in an entity's environment.
     fn call_hook<A: IntoLuaMulti>(&self, entity: hecs::Entity, name: &str, args: A) {
+        let _ = self.try_call_hook(entity, name, args);
+    }
+
+    fn try_call_hook<A: IntoLuaMulti>(
+        &self,
+        entity: hecs::Entity,
+        name: &str,
+        args: A,
+    ) -> Result<(), String> {
         let key = match self.entity_envs.get(&entity) {
             Some(k) => k,
-            None => return,
+            None => return Ok(()),
         };
         let env: LuaTable = match self.lua.registry_value(key) {
             Ok(t) => t,
-            Err(_) => return,
+            Err(_) => return Ok(()),
         };
         let func: LuaFunction = match env.get(name) {
             Ok(f) => f,
-            Err(_) => return, // Hook not defined, that's fine
+            Err(_) => return Ok(()), // Hook not defined, that's fine
         };
-        let result = self.run_limited(|| func.call::<()>(args));
+        let result = self.run_as_entity(entity, || func.call::<()>(args));
         match self.limit_exceeded(result.as_ref().err()) {
-            Some(limit) => self.stop_script(entity, &env, name, limit),
+            Some(limit) => {
+                self.stop_script(entity, &env, name, limit);
+                Err(format!(
+                    "Script {:?}.{} {}",
+                    entity,
+                    name,
+                    self.describe_limit(limit)
+                ))
+            }
             None => {
                 if let Err(e) = result {
-                    tracing::error!("Script error in {:?}.{}: {}", entity, name, e);
+                    let error = format!("Script error in {:?}.{}: {}", entity, name, e);
+                    self.record_error(error.clone());
+                    tracing::error!("{error}");
+                    Err(error)
+                } else {
+                    Ok(())
                 }
             }
         }
@@ -408,6 +653,9 @@ impl ScriptRuntime {
     /// state are dropped, so it is not called again and its memory can be
     /// reclaimed. Saving the script file loads it afresh.
     fn stop_script(&self, entity: hecs::Entity, env: &LuaTable, hook: &str, limit: LimitExceeded) {
+        for id in self.owned_listener_ids(entity) {
+            self.remove_listener(id);
+        }
         let numeric_id = env.raw_get::<LuaValue>("_entity_id").unwrap_or(LuaNil);
         let string_id = env
             .raw_get::<LuaValue>("_entity_string_id")
@@ -456,7 +704,7 @@ impl ScriptRuntime {
         Ok(())
     }
 
-    /// Hot-reload a script if it has changed.
+    /// Hot-reload only after the candidate code and on_reload both succeed.
     pub fn hot_reload_script(
         &mut self,
         entity: hecs::Entity,
@@ -464,65 +712,73 @@ impl ScriptRuntime {
         source: &Path,
     ) -> Result<bool, String> {
         let full_path = crate::project_path::resolve(project_root, source)?;
-        let new_code = std::fs::read_to_string(&full_path)
-            .map_err(|e| format!("Failed to read script {:?}: {}", full_path, e))?;
-
-        // Check if source changed
-        if let Some(old_code) = self.script_sources.get(&entity) {
-            if *old_code == new_code {
-                return Ok(false); // No change
-            }
+        let code = std::fs::read_to_string(&full_path)
+            .map_err(|error| format!("Failed to read script {:?}: {}", full_path, error))?;
+        if self.script_sources.get(&entity) == Some(&code) {
+            return Ok(false);
         }
-
-        tracing::info!("Hot-reloading script: {:?}", source);
-
-        // Preserve state and the entity's string id from the old environment
-        let old_env: Option<LuaTable> = self
+        let old_env = self
             .entity_envs
             .get(&entity)
             .and_then(|key| self.lua.registry_value::<LuaTable>(key).ok());
-        let old_state: Option<LuaTable> = old_env
-            .as_ref()
-            .and_then(|env| env.raw_get::<LuaTable>("self").ok());
-        let old_string_id: Option<String> = old_env.as_ref().and_then(|env| {
-            env.raw_get::<Option<String>>("_entity_string_id")
-                .ok()
-                .flatten()
-        });
-
-        // Remove old environment
-        if let Some(key) = self.entity_envs.remove(&entity) {
-            let _ = self.lua.remove_registry_value(key);
-        }
-
-        // Reload
-        self.load_script(entity, project_root, source)?;
-
-        // Restore state and id
-        if let Some(key) = self.entity_envs.get(&entity) {
-            if let Ok(env) = self.lua.registry_value::<LuaTable>(key) {
-                if let Some(state) = old_state {
-                    let _ = env.set("self", state);
+        let old_listeners = self.owned_listener_ids(entity);
+        *self.staged_listener_removals.borrow_mut() = Some(Vec::new());
+        let candidate = (|| {
+            let env = self.prepare_script(entity, source, &code)?;
+            if let Some(old_env) = &old_env {
+                if let Ok(state) = old_env.raw_get::<LuaTable>("self") {
+                    let copied = copy_state_table(&self.lua, &state, &mut HashMap::new(), 0)
+                        .map_err(|error| error.to_string())?;
+                    env.set("self", copied).map_err(|error| error.to_string())?;
                 }
-                if let Some(string_id) = old_string_id {
-                    let _ = env.set("_entity_string_id", string_id);
+                let id = old_env
+                    .raw_get::<LuaValue>("_entity_string_id")
+                    .unwrap_or(LuaNil);
+                env.set("_entity_string_id", id)
+                    .map_err(|error| error.to_string())?;
+            }
+            if let Ok(hook) = env.get::<LuaFunction>("on_reload") {
+                let result = self.run_as_entity(entity, || hook.call::<()>(()));
+                if let Some(limit) = self.limit_exceeded(result.as_ref().err()) {
+                    return Err(format!(
+                        "Reload {:?} {}",
+                        source,
+                        self.describe_limit(limit)
+                    ));
+                }
+                result.map_err(|error| format!("Reload {:?}: {}", source, error))?;
+            }
+            Ok(env)
+        })();
+        let env = candidate.inspect_err(|_| {
+            self.discard_candidate_listeners(entity, &old_listeners);
+            self.staged_listener_removals.borrow_mut().take();
+        })?;
+        // Keep init-only subscriptions when the replacement supplies none.
+        // Re-running init would repeat gameplay side effects.
+        let replace_listeners = self
+            .owned_listener_ids(entity)
+            .iter()
+            .any(|id| !old_listeners.contains(id));
+        let state = env.get::<LuaTable>("self").ok();
+        self.commit_script(entity, env, code, &old_listeners, replace_listeners)?;
+        if !replace_listeners {
+            if let Some(state) = state {
+                for id in old_listeners {
+                    if let Some(env) = self.listener_environments.borrow().get(&id) {
+                        let _ = env.raw_set("self", state.clone());
+                    }
                 }
             }
         }
-
-        // Call on_reload hook
-        self.call_hook(entity, "on_reload", ());
-
+        tracing::info!("Hot-reloaded script: {:?}", source);
         Ok(true)
     }
 
     /// Remove a script environment for an entity.
     pub fn remove_entity(&mut self, entity: hecs::Entity) {
         self.call_on_destroy(entity);
-        self.script_sources.remove(&entity);
-        if let Some(key) = self.entity_envs.remove(&entity) {
-            let _ = self.lua.remove_registry_value(key);
-        }
+        self.forget_entity(entity);
     }
 }
 

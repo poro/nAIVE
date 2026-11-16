@@ -135,6 +135,12 @@ impl EventBus {
         }
     }
 
+    /// Drop queued events when leaving a scene, without dispatching or logging
+    /// them. Keep history, schema, listeners, logging and elapsed time intact.
+    pub fn discard_pending(&mut self) {
+        self.pending.clear();
+    }
+
     /// Flush pending events: notify Rust listeners, log to ring buffer and file.
     /// Returns the flushed events for Lua listener dispatch.
     pub fn flush(&mut self) -> Vec<GameEvent> {
@@ -247,5 +253,55 @@ mod tests {
         bus.emit_simple("test");
         bus.flush();
         assert_eq!(*received.lock().unwrap(), 1); // Still 1, listener was removed
+    }
+
+    #[test]
+    fn discarding_pending_events_preserves_bus_state_and_history() {
+        let mut bus = EventBus::new(100);
+        let received = Arc::new(Mutex::new(0));
+        let received_by_listener = received.clone();
+        bus.listen("test", move |_| *received_by_listener.lock().unwrap() += 1);
+        let log_path =
+            std::env::temp_dir().join(format!("naive-events-discard-{}.jsonl", std::process::id()));
+        std::fs::write(&log_path, "").unwrap();
+        bus.enable_file_logging(log_path.clone());
+        bus.schema = Some(EventSchema {
+            events: HashMap::from([(
+                "test".into(),
+                EventFieldSchema {
+                    fields: vec![],
+                    description: "kept".into(),
+                },
+            )]),
+        });
+        bus.emit_simple("test");
+        bus.flush();
+        bus.tick(4.0);
+        bus.emit_simple("test");
+
+        bus.discard_pending();
+
+        assert!(bus.flush().is_empty());
+        assert_eq!(*received.lock().unwrap(), 1);
+        assert_eq!(bus.get_log().len(), 1);
+        assert_eq!(bus.total_time(), 4.0);
+        assert_eq!(
+            bus.schema.as_ref().unwrap().events["test"].description,
+            "kept"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&log_path).unwrap().lines().count(),
+            1
+        );
+        bus.emit_simple("test");
+        let flushed = bus.flush();
+        assert_eq!(flushed[0].timestamp, 4.0);
+        assert_eq!(*received.lock().unwrap(), 2);
+        assert_eq!(bus.get_log().len(), 2);
+        assert_eq!(
+            std::fs::read_to_string(&log_path).unwrap().lines().count(),
+            2
+        );
+        std::fs::remove_file(log_path).unwrap();
     }
 }

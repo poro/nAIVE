@@ -18,7 +18,10 @@ python3 scripts/release-smoke.py
 
 The release smoke test builds optimized binaries without Slang, creates and bundles a fixture
 project, launches the packaged runtime, loads a scene, drives the real command
-socket, captures a PNG, and runs a Lua test. Linux CI uses Xvfb and Mesa software
+socket, captures a PNG, and runs Lua tests. It also saves and reloads gameplay
+components, initializes Lua and MCP spawns, checks collider and listener cleanup,
+and transitions scenes through an `on_destroy` hook that edits its entity.
+Linux CI uses Xvfb and Mesa software
 Vulkan so this path is exercised without a physical display. Failed runs must
 fail CI rather than silently skip rendering. This proves the built-in WGSL
 distribution works independently of the source checkout and SDK. A default
@@ -39,6 +42,25 @@ Editor commands are implemented in `naive-client/src/engine/commands.rs`.
 The shared command types and MCP tool schemas live in `naive-core/src/command.rs`.
 Lua APIs are grouped under `scripting/`; GPU swarm setup, flow-field solving,
 CPU reference simulation and shader code live under `swarm/`.
+
+Scene saves retain resolved entity definitions, including script paths, physics,
+gameplay components, camera modes, mesh flags and unknown authored components.
+Snapshots overlay supported live edits and write through a temporary file before
+replacing the destination. They are scene-authoring snapshots: Lua state,
+velocities and simulation progress are not savegame data. Saving fails explicitly
+for transient projectiles, visibility/material overrides, generated meshes or
+runtime texture changes that the scene schema cannot represent.
+
+Entity creation uses the scene constructors, then initializes pending scripts
+after ECS borrows have ended. Destruction calls `on_destroy` while the entity is
+still accessible, then removes physics, scripts and entity-owned event listeners.
+Script reloads keep the last working environment and state if loading or
+`on_reload` fails. State nested beyond 256 tables rejects the reload safely.
+When a replacement registers event listeners, they replace that entity's old
+listeners. If it registers none, subscriptions created by `init` remain active
+and share the current `self` table; `init` is not replayed. Those retained
+callbacks keep their previous code and captured locals until explicitly replaced
+from `on_reload`. These lifecycle paths are shared by native and headless code.
 
 Project paths reject absolute paths, parent traversal and symlinks escaping the
 project. The command socket is local developer control: access is limited to

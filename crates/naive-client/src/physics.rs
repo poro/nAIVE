@@ -590,6 +590,11 @@ impl PhysicsWorld {
 
     /// Remove a body and its colliders.
     pub fn remove_body(&mut self, rb_handle: RigidBodyHandle) {
+        if let Some(body) = self.rigid_body_set.get(rb_handle) {
+            for handle in body.colliders() {
+                self.collider_to_entity.remove(handle);
+            }
+        }
         self.rigid_body_set.remove(
             rb_handle,
             &mut self.island_manager,
@@ -599,6 +604,9 @@ impl PhysicsWorld {
             true,
         );
         self.body_to_entity.remove(&rb_handle);
+        self.active_contact_pairs.retain(|pair| {
+            self.collider_set.contains(pair[0]) && self.collider_set.contains(pair[1])
+        });
     }
 }
 
@@ -633,6 +641,40 @@ fn quat_to_angvector(q: Quat) -> rapier3d::na::Vector3<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removing_a_body_cleans_colliders_and_handle_mappings() {
+        let mut world = hecs::World::new();
+        let removed = world.spawn(());
+        let retained = world.spawn(());
+        let mut physics = PhysicsWorld::new(Vec3::ZERO);
+        let add = |physics: &mut PhysicsWorld, entity, position| {
+            physics.add_static_body(
+                entity,
+                position,
+                Quat::IDENTITY,
+                PhysicsShape::Sphere { radius: 0.5 },
+                false,
+                0.0,
+                0.5,
+            )
+        };
+        let (body, collider) = add(&mut physics, removed, Vec3::ZERO);
+        let (retained_body, retained_collider) = add(&mut physics, retained, Vec3::X * 5.0);
+        physics
+            .active_contact_pairs
+            .insert([collider, retained_collider]);
+        physics.remove_body(body);
+        physics.remove_body(body); // Cleanup is safe if requested more than once.
+        assert!(!physics.rigid_body_set.contains(body));
+        assert!(!physics.collider_set.contains(collider));
+        assert!(!physics.body_to_entity.contains_key(&body));
+        assert!(!physics.collider_to_entity.contains_key(&collider));
+        assert!(physics.active_contact_pairs.is_empty());
+        assert_eq!(physics.body_to_entity[&retained_body], retained);
+        assert_eq!(physics.collider_to_entity[&retained_collider], retained);
+        assert_eq!(physics.collider_set.len(), 1);
+    }
 
     #[test]
     fn test_physics_world_creation() {

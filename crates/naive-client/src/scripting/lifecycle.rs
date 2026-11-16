@@ -375,6 +375,7 @@ impl ScriptRuntime {
         // entity.pool_create(name, mesh, material, count) — create pool and pre-warm
         let cmd = cmd_queue.clone();
         let pool_mgr = pool_manager.clone();
+        let next_pool_id = self.next_pool_id.clone();
         let pool_create_fn = self
             .lua
             .create_function(
@@ -383,7 +384,9 @@ impl ScriptRuntime {
                     let mut cmd = cmd.borrow_mut();
                     pool_mgr.create_pool(&name, &mesh, &material);
                     // Pre-warm by spawning `count` hidden entities
-                    for i in 0..count {
+                    for _ in 0..count {
+                        let i = next_pool_id.get();
+                        next_pool_id.set(i + 1);
                         let entity_id = format!("_pool_{}_{}", name, i);
                         cmd.spawns.push(crate::world::SpawnCommand {
                             id: entity_id,
@@ -408,6 +411,7 @@ impl ScriptRuntime {
         let sw = scene_world.clone();
         let cmd = cmd_queue.clone();
         let pool_mgr = pool_manager.clone();
+        let next_pool_id = self.next_pool_id.clone();
         let pool_acquire_fn = self
             .lua
             .create_function(move |_, name: String| {
@@ -433,7 +437,9 @@ impl ScriptRuntime {
                     // Pool empty — spawn a new entity
                     let mut cmd = cmd.borrow_mut();
                     if let Some((mesh, material)) = pool_mgr.get_pool_assets(&name) {
-                        let entity_id = format!("_pool_{}_{}", name, sw.entity_registry.len());
+                        let reserved = next_pool_id.get();
+                        next_pool_id.set(reserved + 1);
+                        let entity_id = format!("_pool_{}_{}", name, reserved);
                         cmd.spawns.push(crate::world::SpawnCommand {
                             id: entity_id.clone(),
                             mesh,
@@ -444,7 +450,6 @@ impl ScriptRuntime {
                             rigid_body: None,
                             script: None,
                         });
-                        pool_mgr.register_entity(&name, &entity_id);
                         Ok(Some(entity_id))
                     } else {
                         Ok(None)
