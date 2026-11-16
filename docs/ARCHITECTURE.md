@@ -42,7 +42,7 @@ The development roadmap is organized into tiers, each validated by HAVOC — a 3
 | `beautify.rs` | 672 | Scene beautification pipeline (simple mesh → Gaussian Splat conversion) |
 | `physics.rs` | 652 | PhysicsWorld — Rapier3D wrapper (dynamic, kinematic, static bodies, VHACD) |
 | `demos.rs` | 620 | 19 embedded demos with interactive CLI browser |
-| `command.rs` | 594 | MCP JSON-RPC command socket (TCP :6969) |
+| `command.rs` | 594 | Command socket — newline-delimited JSON over a Unix domain socket (default `/tmp/naive-runtime.sock`) |
 | `renderer.rs` | 580 | GpuState, DrawUniformPool, instance buffer management |
 | `input.rs` | 506 | InputState — key/mouse capture, binding system, synthetic injection |
 | `ui.rs` | 472 | UiRenderer — text overlay, HUD, flash effects |
@@ -69,7 +69,7 @@ Each frame follows a strict 12-stage pipeline, designed around a 16ms budget at 
 
 1. **Timing** — Compute frame delta, cap to prevent spiral-of-death on long frames.
 2. **Hot-Reload** — Check file watchers for scene, script, shader, and material changes. Reload in <100ms.
-3. **MCP Commands** — Drain the TCP :6969 command socket. AI agent instructions (spawn, modify, destroy, run Lua) are queued here.
+3. **MCP Commands** — Drain the Unix domain command socket (`/tmp/naive-runtime.sock`). AI agent instructions (spawn, modify, destroy, run Lua) are queued here.
 4. **Input Capture** — Read keyboard and mouse state, resolve binding mappings, accept synthetic input injection from MCP.
 5. **Scripts** — Call `update(dt)` on every entity's Lua script. Scripts push commands to the EntityCommandQueue rather than mutating the world directly.
 6. **Physics** — Step Rapier3D. Supports dynamic, kinematic, and static rigid bodies with CCD. Sync transforms back to ECS components.
@@ -102,7 +102,7 @@ Three backends provide redundancy: self-hosted GPU (fastest, full control), Hugg
 
 ### MCP Scene Control
 
-The `naive_mcp` bridge process connects Claude Code to the running engine via JSON-RPC over TCP port 6969. Fifteen tools provide full scene + runtime control: `naive_spawn_entity`, `naive_destroy_entity`, `naive_modify_entity`, `naive_list_entities`, `naive_query_entity`, `naive_run_lua`, `naive_save_scene`, `naive_get_scene_yaml`, `naive_set_camera`, `naive_editor_status`, `naive_inject_input`, `naive_emit_event`, `naive_query_events`, `naive_runtime_control`, and `naive_beautify_scene`.
+The `naive_mcp` bridge process connects Claude Code to the running engine: it speaks MCP (JSON-RPC 2.0) over stdio and forwards each call to the engine's Unix domain socket (default `/tmp/naive-runtime.sock`, set with `--socket`). Fifteen tools provide full scene + runtime control: `naive_spawn_entity`, `naive_destroy_entity`, `naive_modify_entity`, `naive_list_entities`, `naive_query_entity`, `naive_run_lua`, `naive_save_scene`, `naive_get_scene_yaml`, `naive_set_camera`, `naive_editor_status`, `naive_inject_input`, `naive_emit_event`, `naive_query_events`, `naive_runtime_control`, and `naive_beautify_scene`.
 
 This architecture means every action the AI takes is observable, replayable, and version-controlled. A session of AI scene-building produces a YAML file and Lua scripts — human-readable artifacts that can be reviewed, modified, and committed to version control.
 

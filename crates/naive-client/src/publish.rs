@@ -16,7 +16,7 @@ pub fn publish_project(config: &NaiveConfig) -> Result<(), String> {
     println!("  Players will connect directly — no downloads, no installs.");
     println!("  The nAIVE runtime streams your world to any device.");
     println!();
-    println!("  Follow progress: https://github.com/anthropics/naive");
+    println!("  Follow progress: https://github.com/poro/nAIVE");
     println!();
 
     Err("World server publishing is not yet available".to_string())

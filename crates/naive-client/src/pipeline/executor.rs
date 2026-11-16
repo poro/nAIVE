@@ -165,8 +165,9 @@ pub fn execute_pipeline_to_view(
 
     // Query directional light and compute shadow VP matrix
     let mut light_vp = glam::Mat4::IDENTITY;
-    for (_entity, dir_light) in
-        scene_world.world.query::<&DirectionalLight>().iter()
+    // Only one directional light is supported, so take the first.
+    if let Some((_entity, dir_light)) =
+        scene_world.world.query::<&DirectionalLight>().iter().next()
     {
         light_data.has_directional = 1;
         light_data.dir_light_direction = dir_light.direction.to_array();
@@ -182,7 +183,6 @@ pub fn execute_pipeline_to_view(
         );
         light_vp = light_proj * light_view;
         light_data.light_vp = light_vp.to_cols_array_2d();
-        break; // Only one directional light supported
     }
 
     // Debug: inject a directional light for ambient override

@@ -583,7 +583,7 @@
       </div>
     </div>
 
-    <div class="connector">▼ MCP Commands (TCP :6969) &nbsp;&nbsp;▼ YAML + Lua Files &nbsp;&nbsp;▼ Generated GLB Assets</div>
+    <div class="connector">▼ MCP Commands (Unix socket) &nbsp;&nbsp;▼ YAML + Lua Files &nbsp;&nbsp;▼ Generated GLB Assets</div>
 
     <!-- Engine Layer -->
     <div class="arch-grid" style="grid-template-columns: 1fr 1fr 1fr;">
@@ -729,7 +729,7 @@
     </div>
     <div class="pipe-node">
       <div class="pn-title">3. MCP Command Processing</div>
-      <div class="pn-detail">Read pending commands from TCP socket (:6969). Execute spawn, destroy, modify, run_lua, save_scene, etc.</div>
+      <div class="pn-detail">Read pending commands from the Unix domain socket (/tmp/naive-runtime.sock). Execute spawn, destroy, modify, run_lua, save_scene, etc.</div>
       <div class="pn-file">command.rs → process_commands()</div>
     </div>
     <div class="pipe-node">
@@ -1113,7 +1113,7 @@
       </div>
       <div class="flow-arrow">→</div>
       <div class="flow-box">
-        <div class="name">TCP :6969</div>
+        <div class="name">Unix socket</div>
         <div class="detail">Command Socket</div>
       </div>
       <div class="flow-arrow">→</div>
@@ -1246,7 +1246,7 @@
     <div class="mod-card"><span class="mod-lines">1,111</span><div class="mod-name">init.rs</div><div class="mod-desc">Project scaffolding, template generation for naive init</div></div>
     <div class="mod-card"><span class="mod-lines">814</span><div class="mod-name">test_runner.rs</div><div class="mod-desc">Headless test execution, Lua test discovery, result aggregation</div></div>
     <div class="mod-card"><span class="mod-lines">672</span><div class="mod-name">beautify.rs</div><div class="mod-desc">Scene beautification pipeline (mesh → splat conversion)</div></div>
-    <div class="mod-card"><span class="mod-lines">594</span><div class="mod-name">command.rs</div><div class="mod-desc">MCP JSON-RPC command server, TCP :6969, editor tools</div></div>
+    <div class="mod-card"><span class="mod-lines">594</span><div class="mod-name">command.rs</div><div class="mod-desc">Command server on a Unix domain socket (newline-delimited JSON), editor tools</div></div>
     <div class="mod-card"><span class="mod-lines">553</span><div class="mod-name">demos.rs</div><div class="mod-desc">17 embedded demos with binary asset inclusion</div></div>
     <div class="mod-card"><span class="mod-lines">197</span><div class="mod-name">reflect.rs</div><div class="mod-desc">Reflection utilities for component inspection</div></div>
     <div class="mod-card"><span class="mod-lines">150</span><div class="mod-name">project_config.rs</div><div class="mod-desc">naive.yaml project metadata parsing</div></div>

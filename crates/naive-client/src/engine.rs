@@ -3404,11 +3404,15 @@ impl ApplicationHandler for Engine {
                         // Update listener position for spatial audio
                         if let Some(scene_world) = &self.scene_world {
                             let scene_world = scene_world.borrow();
-                            for (_entity, (transform, _player)) in
-                                scene_world.world.query::<(&Transform, &Player)>().iter()
-                            {
-                                self.audio_system.borrow_mut().set_listener_position(transform.position);
-                                break;
+                            // Only the first player entity drives the listener.
+                            let listener_pos = scene_world
+                                .world
+                                .query::<(&Transform, &Player)>()
+                                .iter()
+                                .next()
+                                .map(|(_entity, (transform, _player))| transform.position);
+                            if let Some(pos) = listener_pos {
+                                self.audio_system.borrow_mut().set_listener_position(pos);
                             }
                         }
                     }

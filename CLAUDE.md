@@ -34,7 +34,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/renderer.rs` | wgpu render pipeline, instance buffers, particles |
 | `crates/naive-client/src/pipeline/` | CompiledPipeline — YAML render-pass DAG (split into `def`/`resource`/`compiler`/`executor`/`mod`) |
 | `crates/naive-client/src/debug_draw.rs` | Wireframe physics collider visualization (toggle: H key) |
-| `crates/naive-client/src/command.rs` | MCP JSON-RPC command socket (TCP :6969) |
+| `crates/naive-client/src/command.rs` | Command socket — newline-delimited JSON over a Unix domain socket (default `/tmp/naive-runtime.sock`); `naive_mcp` bridges it to MCP |
 | `crates/naive-client/src/test_runner.rs` | Headless test runner for `naive test` CLI command |
 | `crates/naive-client/src/dev_log.rs` | `naive submit-log` — POST dev.log as GitHub Issue |
 | `crates/naive-client/src/demos.rs` | `naive demo` — 19 embedded demos with interactive browser |

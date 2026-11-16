@@ -39,9 +39,9 @@ cd nAIVE
 
 # Download SLANG SDK (required for shader compilation)
 # macOS ARM:
-curl -L https://github.com/shader-slang/slang/releases/download/v2026.2.1/slang-2026.2.1-macos-aarch64.tar.gz | tar xz -C vendor/
+curl -L https://github.com/shader-slang/slang/releases/download/v2026.2.2/slang-2026.2.2-macos-aarch64.tar.gz | tar xz -C vendor/
 # macOS Intel:
-curl -L https://github.com/shader-slang/slang/releases/download/v2026.2.1/slang-2026.2.1-macos-x86_64.tar.gz | tar xz -C vendor/
+curl -L https://github.com/shader-slang/slang/releases/download/v2026.2.2/slang-2026.2.2-macos-x86_64.tar.gz | tar xz -C vendor/
 
 export SLANG_DIR=$(pwd)/vendor
 cargo build --release
