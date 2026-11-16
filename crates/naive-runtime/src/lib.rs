@@ -40,7 +40,7 @@ pub fn run() {
                         }
                     };
                     tracing::info!("Loaded project: {} v{}", config.name, config.version);
-                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root);
+                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root, &args.socket);
                     // CLI scene override takes priority
                     if scene.is_some() {
                         cli_args.scene = scene.clone();
@@ -198,7 +198,7 @@ pub fn run() {
                         }
                     };
                     tracing::info!("Loaded project: {} v{}", config.name, config.version);
-                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root);
+                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root, &args.socket);
                     // In edit mode, only use --scene flag, not project default_scene.
                     // A blank canvas is the default when no --scene is given.
                     cli_args.scene = scene.clone();
@@ -331,7 +331,7 @@ pub fn run() {
                         }
                     };
                     tracing::info!("Auto-detected project: {} v{}", config.name, config.version);
-                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root);
+                    let mut cli_args = naive_client::project_config::to_cli_args(&config, project_root, &args.socket);
                     cli_args.hud = args.hud;
                     run_engine(cli_args);
                     return;

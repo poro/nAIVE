@@ -88,13 +88,14 @@ pub fn load_config(path: &Path) -> Result<NaiveConfig, ConfigError> {
 }
 
 /// Convert a NaiveConfig into CliArgs for the engine (bridge pattern).
-pub fn to_cli_args(config: &NaiveConfig, project_root: &Path) -> CliArgs {
+/// `socket` is the command socket path from the command line.
+pub fn to_cli_args(config: &NaiveConfig, project_root: &Path, socket: &str) -> CliArgs {
     CliArgs {
         command: None,
         scene: config.default_scene.clone(),
         pipeline: config.default_pipeline.clone(),
         project: project_root.to_string_lossy().to_string(),
-        socket: "/tmp/naive-runtime.sock".to_string(),
+        socket: socket.to_string(),
         hud: false,
         editor_mode: false,
     }

@@ -3085,9 +3085,11 @@ let input = input.borrow();
             (&self.gpu, &self.scene_world, &self.draw_pool)
         {
             let dt = if self.paused { 0.0 } else { self.delta_time };
+            let physics = self.physics_world.as_ref().map(|p| p.borrow());
             self.swarm_system.update(
                 gpu,
                 &scene_world.borrow(),
+                physics.as_deref(),
                 &self.mesh_cache,
                 &self.material_cache,
                 draw_pool,
