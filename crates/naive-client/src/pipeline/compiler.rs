@@ -213,7 +213,7 @@ pub fn compile_pipeline(
 
         // Compile the shader (try SLANG first, then fallback)
         let shader_path = project_root.join(&pass_def.shader);
-        let wgsl_source = compile_pass_shader(&shader_path, &pass_def.name)?;
+        let wgsl_source = compile_pass_shader(&shader_path, &pass_def.name, pass_type)?;
 
         // Create the render pipeline for this pass
         let pipeline = match pass_type {
@@ -225,7 +225,7 @@ pub fn compile_pipeline(
                     depth_target.as_deref(),
                     &resources,
                     &camera_state.bind_group_layout,
-                    &draw_pool.bind_group_layout,
+                    &draw_pool.storage_bind_group_layout,
                     texture_bind_group_layout,
                     Some(&skin_bind_group_layout),
                 )
@@ -369,7 +369,7 @@ pub fn compile_pipeline(
                     depth_target.as_deref(),
                     &resources,
                     &shadow_bg_layout,
-                    &draw_pool.bind_group_layout,
+                    &draw_pool.storage_bind_group_layout,
                     &skin_bind_group_layout,
                 );
 
@@ -434,10 +434,23 @@ pub fn compile_pipeline(
 }
 
 /// Compile a pass shader: try SLANG, fallback to WGSL.
-fn compile_pass_shader(shader_path: &Path, pass_name: &str) -> Result<String, PipelineError> {
-    // Skip SLANG for geometry pass -- SLANG-compiled WGSL doesn't support dynamic-offset UBOs correctly
-    let skip_slang = pass_name.contains("geometry") || pass_name.contains("gbuffer");
-    if shader_path.exists() && !skip_slang {
+///
+/// Passes that draw meshes (rasterize and shadow) always use the engine's own
+/// shaders, whatever the pipeline file names: they read each entity's data
+/// from a storage buffer by instance index, which the executor's instanced
+/// draws depend on.
+fn compile_pass_shader(
+    shader_path: &Path,
+    pass_name: &str,
+    pass_type: PassType,
+) -> Result<String, PipelineError> {
+    match pass_type {
+        PassType::Rasterize => return Ok(crate::shader::get_gbuffer_wgsl()),
+        PassType::Shadow => return Ok(crate::shader::get_shadow_depth_wgsl()),
+        _ => {}
+    }
+
+    if shader_path.exists() {
         match crate::shader::compile_slang_to_wgsl_public(shader_path) {
             Ok(wgsl) => {
                 tracing::info!("SLANG compiled for pass '{}': {:?}", pass_name, shader_path);
@@ -455,9 +468,6 @@ fn compile_pass_shader(shader_path: &Path, pass_name: &str) -> Result<String, Pi
 
     // Use fallback WGSL
     let wgsl = match pass_name {
-        name if name.contains("geometry") || name.contains("gbuffer") => {
-            crate::shader::get_gbuffer_wgsl()
-        }
         name if name.contains("splat") && !name.contains("light") => {
             crate::shader::get_splat_render_wgsl()
         }
@@ -465,7 +475,6 @@ fn compile_pass_shader(shader_path: &Path, pass_name: &str) -> Result<String, Pi
         name if name.contains("bloom") => crate::shader::get_bloom_wgsl(),
         name if name.contains("tonemap") => crate::shader::get_tonemap_wgsl(),
         name if name.contains("fxaa") => crate::shader::get_fxaa_wgsl(),
-        name if name.contains("shadow") => crate::shader::get_shadow_depth_wgsl(),
         _ => {
             return Err(PipelineError::ShaderError(format!(
                 "No fallback WGSL for pass '{}'",

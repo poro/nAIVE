@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 
 use crate::camera::CameraState;
-use crate::components::{DirectionalLight, GaussianSplat, Hidden, MaterialOverride, MeshRenderer, PointLight, Transform};
+use crate::components::{
+    Animator, DirectionalLight, GaussianSplat, Hidden, MaterialOverride, MeshHandle, MeshRenderer,
+    PointLight, Transform,
+};
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
 use crate::renderer::{DrawUniformPool, DrawUniforms, GpuState, DRAW_UNIFORM_SIZE};
 use crate::splat::SplatCache;
+use crate::texture_cache::TextureHandle;
 use crate::world::SceneWorld;
 
 use super::resource::{LightingUniforms, PointLightUniform, ShadowUniforms, MAX_LIGHTS, PassType};
@@ -75,70 +79,17 @@ pub fn execute_pipeline_to_view(
     texture_cache: Option<&crate::texture_cache::TextureCache>,
 ) -> wgpu::CommandEncoder {
 
-    // Upload per-entity draw uniforms (skip hidden entities before incrementing draw_index)
-    let mut draw_index = 0u32;
-    for (entity, (transform, mesh_renderer)) in
-        scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
-    {
-        if scene_world.world.get::<&Hidden>(entity).is_ok() {
-            continue;
-        }
-        let material = material_cache.get(mesh_renderer.material_handle);
-        let model_matrix = transform.world_matrix;
-        let normal_matrix = model_matrix.inverse().transpose();
-
-        // Apply runtime material overrides from Lua scripts
-        let mat_override = scene_world.world.get::<&MaterialOverride>(entity).ok();
-        let roughness = mat_override
-            .as_ref()
-            .and_then(|o| o.roughness)
-            .unwrap_or(material.uniform.roughness);
-        let metallic = mat_override
-            .as_ref()
-            .and_then(|o| o.metallic)
-            .unwrap_or(material.uniform.metallic);
-        let emission = if debug.emission_enabled {
-            mat_override
-                .as_ref()
-                .and_then(|o| o.emission)
-                .map(|e| [e[0], e[1], e[2], 0.0])
-                .unwrap_or(material.uniform.emission)
-        } else {
-            [0.0; 4]
-        };
-
-        let base_color = mat_override
-            .as_ref()
-            .and_then(|o| o.base_color)
-            .map(|c| [c[0], c[1], c[2], material.uniform.base_color[3]])
-            .unwrap_or(material.uniform.base_color);
-
-        let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
-        let has_texture = if material.albedo_texture.is_some() || gpu_mesh.texture_bind_group.is_some() { 1.0f32 } else { 0.0f32 };
-        // Check if entity has skeletal animation
-        let entity_has_skin = scene_world.world
-            .get::<&crate::components::Animator>(entity)
-            .is_ok();
-
-        let draw_uniform = DrawUniforms {
-            model_matrix: model_matrix.to_cols_array_2d(),
-            normal_matrix: normal_matrix.to_cols_array_2d(),
-            base_color,
-            roughness,
-            metallic,
-            has_texture,
-            has_skin: if entity_has_skin { 1.0 } else { 0.0 },
-            emission,
-            _padding: [0.0; 20],
-        };
-
-        gpu.queue.write_buffer(
-            &draw_pool.buffer,
-            draw_index as u64 * DRAW_UNIFORM_SIZE,
-            bytemuck::cast_slice(&[draw_uniform]),
-        );
-        draw_index += 1;
-    }
+    // Per-entity draw data for both mesh passes, uploaded once in batch order.
+    let draws = collect_draws(
+        scene_world,
+        mesh_cache,
+        material_cache,
+        debug,
+        bone_palettes,
+        draw_pool.capacity,
+    );
+    upload_draws(gpu, draw_pool, &draws);
+    upload_skin_palette(gpu, compiled, draws.skin_palette);
 
     // Upload light uniforms (point lights + directional light)
     let mut light_data = LightingUniforms::default();
@@ -249,16 +200,13 @@ pub fn execute_pipeline_to_view(
             PassType::Rasterize => {
                 execute_rasterize_pass(
                     &mut encoder,
-                    gpu,
                     pass,
                     compiled,
-                    scene_world,
                     camera_state,
                     draw_pool,
+                    &draws,
                     mesh_cache,
-                    material_cache,
                     texture_resources,
-                    bone_palettes,
                     texture_cache,
                 );
             }
@@ -285,13 +233,11 @@ pub fn execute_pipeline_to_view(
             PassType::Shadow => {
                 execute_shadow_pass(
                     &mut encoder,
-                    gpu,
                     pass,
                     compiled,
-                    scene_world,
                     draw_pool,
+                    &draws,
                     mesh_cache,
-                    bone_palettes,
                 );
             }
             PassType::Compute => {
@@ -303,17 +249,182 @@ pub fn execute_pipeline_to_view(
     encoder
 }
 
+/// Entities that share a mesh and an albedo texture. Their draw data is
+/// contiguous in the draw buffer, so one instanced draw covers them all.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct BatchKey {
+    mesh: usize,
+    albedo_texture: Option<usize>,
+}
+
+struct DrawBatch {
+    key: BatchKey,
+    /// Index of the batch's first entry in the draw buffer.
+    first: u32,
+    count: u32,
+}
+
+impl DrawBatch {
+    fn mesh(&self) -> MeshHandle {
+        MeshHandle(self.key.mesh)
+    }
+
+    fn instances(&self) -> std::ops::Range<u32> {
+        self.first..self.first + self.count
+    }
+}
+
+/// Everything the mesh passes draw in one frame.
+struct FrameDraws<'a> {
+    /// Draw data for each visible entity, in the order the world listed them.
+    uniforms: Vec<DrawUniforms>,
+    /// Indices into `uniforms` in draw-buffer order: grouped into batches, and
+    /// in world order within a batch.
+    order: Vec<u32>,
+    batches: Vec<DrawBatch>,
+    /// The bone palette every skinned entity is drawn with this frame.
+    skin_palette: Option<&'a crate::anim_system::BoneMatrixPalette>,
+}
+
+/// Gather the draw data for every visible mesh entity and group the entities
+/// into batches that share a mesh and an albedo texture.
+fn collect_draws<'a>(
+    scene_world: &SceneWorld,
+    mesh_cache: &MeshCache,
+    material_cache: &MaterialCache,
+    debug: &RenderDebugState,
+    bone_palettes: &'a HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
+    capacity: u32,
+) -> FrameDraws<'a> {
+    let mut uniforms = Vec::new();
+    let mut keys = Vec::new();
+    let mut skin_palette = None;
+
+    let mut query = scene_world.world.query::<(
+        &Transform,
+        &MeshRenderer,
+        Option<&MaterialOverride>,
+        Option<&Animator>,
+        Option<&Hidden>,
+    )>();
+    for (entity, (transform, mesh_renderer, mat_override, animator, hidden)) in query.iter() {
+        if hidden.is_some() {
+            continue;
+        }
+        let material = material_cache.get(mesh_renderer.material_handle);
+        let model_matrix = transform.world_matrix;
+        let normal_matrix = model_matrix.inverse().transpose();
+
+        // Apply runtime material overrides from Lua scripts
+        let roughness = mat_override
+            .and_then(|o| o.roughness)
+            .unwrap_or(material.uniform.roughness);
+        let metallic = mat_override
+            .and_then(|o| o.metallic)
+            .unwrap_or(material.uniform.metallic);
+        let emission = if debug.emission_enabled {
+            mat_override
+                .and_then(|o| o.emission)
+                .map(|e| [e[0], e[1], e[2], 0.0])
+                .unwrap_or(material.uniform.emission)
+        } else {
+            [0.0; 4]
+        };
+        let base_color = mat_override
+            .and_then(|o| o.base_color)
+            .map(|c| [c[0], c[1], c[2], material.uniform.base_color[3]])
+            .unwrap_or(material.uniform.base_color);
+
+        let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
+        let has_texture = material.albedo_texture.is_some() || gpu_mesh.texture_bind_group.is_some();
+
+        // Entities with skeletal animation. All of them read the one skin
+        // buffer, so they share the palette of the last one found.
+        let has_skin = animator.is_some();
+        if has_skin {
+            skin_palette = bone_palettes.get(&entity);
+        }
+
+        uniforms.push(DrawUniforms {
+            model_matrix: model_matrix.to_cols_array_2d(),
+            normal_matrix: normal_matrix.to_cols_array_2d(),
+            base_color,
+            roughness,
+            metallic,
+            has_texture: if has_texture { 1.0 } else { 0.0 },
+            has_skin: if has_skin { 1.0 } else { 0.0 },
+            emission,
+            _padding: [0.0; 20],
+        });
+        keys.push(BatchKey {
+            mesh: mesh_renderer.mesh_handle.0,
+            albedo_texture: material.albedo_texture.map(|t| t.0),
+        });
+    }
+
+    // A stable sort keeps world order inside each batch, so overlapping
+    // surfaces resolve the same way every frame.
+    let mut order: Vec<u32> = (0..uniforms.len() as u32).collect();
+    order.sort_by_key(|&i| keys[i as usize]);
+
+    // The engine grows the draw buffer before rendering. If entities appeared
+    // since then (a capture taken in the same frame as a spawn), draw what fits.
+    if order.len() > capacity as usize {
+        tracing::warn!(
+            "{} mesh entities but room for {}; drawing {} this frame",
+            order.len(),
+            capacity,
+            capacity
+        );
+        order.truncate(capacity as usize);
+    }
+
+    let mut batches: Vec<DrawBatch> = Vec::new();
+    for (slot, &i) in order.iter().enumerate() {
+        let key = keys[i as usize];
+        match batches.last_mut() {
+            Some(batch) if batch.key == key => batch.count += 1,
+            _ => batches.push(DrawBatch {
+                key,
+                first: slot as u32,
+                count: 1,
+            }),
+        }
+    }
+
+    FrameDraws {
+        uniforms,
+        order,
+        batches,
+        skin_palette,
+    }
+}
+
+/// Write the frame's draw data into the draw buffer in batch order, in one
+/// upload.
+fn upload_draws(gpu: &GpuState, draw_pool: &DrawUniformPool, draws: &FrameDraws) {
+    let Some(size) = wgpu::BufferSize::new(draws.order.len() as u64 * DRAW_UNIFORM_SIZE) else {
+        return;
+    };
+    let Some(mut staging) = gpu.queue.write_buffer_with(&draw_pool.buffer, 0, size) else {
+        return;
+    };
+    for (slot, &i) in staging
+        .chunks_exact_mut(DRAW_UNIFORM_SIZE as usize)
+        .zip(&draws.order)
+    {
+        slot.copy_from_slice(bytemuck::bytes_of(&draws.uniforms[i as usize]));
+    }
+}
+
 /// Execute a shadow depth pass (renders all geometry from light's perspective).
-#[allow(clippy::too_many_arguments)]
 fn execute_shadow_pass(
     encoder: &mut wgpu::CommandEncoder,
-    gpu: &GpuState,
     pass: &CompiledPass,
     compiled: &CompiledPipeline,
-    scene_world: &SceneWorld,
     draw_pool: &DrawUniformPool,
+    draws: &FrameDraws,
     mesh_cache: &MeshCache,
-    bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
 ) {
     let depth_view = pass
         .depth_target
@@ -345,58 +456,43 @@ fn execute_shadow_pass(
             render_pass.set_bind_group(0, bg, &[]);
         }
 
-        // Draw all mesh entities (skip hidden before incrementing draw_index)
-        let mut draw_index = 0u32;
-        let mut last_palette = None;
-        for (entity, (_, mesh_renderer)) in
-            scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
-        {
-            if scene_world.world.get::<&Hidden>(entity).is_ok() {
-                continue;
-            }
-            let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
-            let dynamic_offset = draw_index * DRAW_UNIFORM_SIZE as u32;
+        // Group 1: every entity's draw data; group 2: bone matrices.
+        render_pass.set_bind_group(1, &draw_pool.storage_bind_group, &[]);
+        if let Some(skin_bg) = &compiled.skin_bind_group {
+            render_pass.set_bind_group(2, skin_bg, &[]);
+        }
 
-            render_pass.set_bind_group(1, &draw_pool.bind_group, &[dynamic_offset]);
-
-            // Bone matrices (group 2 in shadow shader). See `upload_skin_palette`.
-            if let Some(skin_bg) = &compiled.skin_bind_group {
-                last_palette = Some(bone_palettes.get(&entity));
-                render_pass.set_bind_group(2, skin_bg, &[]);
-            }
-
+        for batch in &draws.batches {
+            let gpu_mesh = mesh_cache.get(batch.mesh());
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
             render_pass.set_index_buffer(
                 gpu_mesh.index_buffer.slice(..),
                 wgpu::IndexFormat::Uint32,
             );
-            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
-            draw_index += 1;
+            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.instances());
         }
-        upload_skin_palette(gpu, compiled, last_palette);
     }
 }
 
-/// Upload the bone matrices for a pass, once.
+/// Upload the bone matrices for the frame, once.
 ///
-/// Every draw in a pass reads the same skin buffer, and buffer writes all land
-/// before the pass runs, so only the last write ever counted. Writing once per
-/// entity changed nothing on screen but allocated a staging buffer for each
-/// one, which dominated frame time with a few thousand entities. `last` is the
-/// palette of the last entity drawn: `Some(None)` means it was not skinned.
+/// Every draw reads the same skin buffer, and buffer writes all land before
+/// the passes run, so there is one palette per frame: the one `collect_draws`
+/// picked. The shaders only apply it to entities with an animator. With no
+/// palette, upload the identity one, which turns skinning off.
 fn upload_skin_palette(
     gpu: &GpuState,
     compiled: &CompiledPipeline,
-    last: Option<Option<&crate::anim_system::BoneMatrixPalette>>,
+    palette: Option<&crate::anim_system::BoneMatrixPalette>,
 ) {
-    let (Some(skin_buffer), Some(last)) = (&compiled.skin_buffer, last) else {
+    let Some(skin_buffer) = &compiled.skin_buffer else {
         return;
     };
-    match last {
-        Some(palette) => gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[*palette])),
+    match palette {
+        Some(palette) => gpu.queue.write_buffer(skin_buffer, 0, bytemuck::bytes_of(palette)),
         None => {
             let identity = crate::anim_system::BoneMatrixPalette::default();
-            gpu.queue.write_buffer(skin_buffer, 0, bytemuck::cast_slice(&[identity]));
+            gpu.queue.write_buffer(skin_buffer, 0, bytemuck::bytes_of(&identity));
         }
     }
 }
@@ -405,16 +501,13 @@ fn upload_skin_palette(
 #[allow(clippy::too_many_arguments)]
 fn execute_rasterize_pass(
     encoder: &mut wgpu::CommandEncoder,
-    gpu: &GpuState,
     pass: &CompiledPass,
     compiled: &CompiledPipeline,
-    scene_world: &SceneWorld,
     camera_state: &CameraState,
     draw_pool: &DrawUniformPool,
+    draws: &FrameDraws,
     mesh_cache: &MeshCache,
-    material_cache: &MaterialCache,
     texture_resources: Option<&crate::mesh::TextureResources>,
-    bone_palettes: &HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
     texture_cache: Option<&crate::texture_cache::TextureCache>,
 ) {
     // Build color attachments from pass targets
@@ -469,25 +562,19 @@ fn execute_rasterize_pass(
 
         render_pass.set_pipeline(&pass.pipeline);
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
+        // Group 1: every entity's draw data; group 3: bone matrices.
+        render_pass.set_bind_group(1, &draw_pool.storage_bind_group, &[]);
+        if let Some(skin_bg) = &compiled.skin_bind_group {
+            render_pass.set_bind_group(3, skin_bg, &[]);
+        }
 
-        let mut draw_index = 0u32;
-        let mut last_palette = None;
-        for (entity, (_, mesh_renderer)) in
-            scene_world.world.query::<(&Transform, &MeshRenderer)>().iter()
-        {
-            if scene_world.world.get::<&Hidden>(entity).is_ok() {
-                continue;
-            }
-            let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
-            let dynamic_offset = draw_index * DRAW_UNIFORM_SIZE as u32;
-
-            render_pass.set_bind_group(1, &draw_pool.bind_group, &[dynamic_offset]);
+        for batch in &draws.batches {
+            let gpu_mesh = mesh_cache.get(batch.mesh());
 
             // Bind texture at group(2): material texture > mesh texture > white fallback
             if let Some(tex_res) = texture_resources {
-                let material = material_cache.get(mesh_renderer.material_handle);
-                let tex_bg = if let (Some(albedo_handle), Some(tc)) = (material.albedo_texture, texture_cache) {
-                    tc.get(albedo_handle)
+                let tex_bg = if let (Some(albedo), Some(tc)) = (batch.key.albedo_texture, texture_cache) {
+                    tc.get(TextureHandle(albedo))
                 } else if let Some(mesh_tex) = gpu_mesh.texture_bind_group.as_ref() {
                     mesh_tex
                 } else {
@@ -496,26 +583,22 @@ fn execute_rasterize_pass(
                 render_pass.set_bind_group(2, tex_bg, &[]);
             }
 
-            // Bone matrices (group 3). See `upload_skin_palette`.
-            if let Some(skin_bg) = &compiled.skin_bind_group {
-                last_palette = Some(bone_palettes.get(&entity));
-                render_pass.set_bind_group(3, skin_bg, &[]);
-            }
-
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
             render_pass.set_index_buffer(
                 gpu_mesh.index_buffer.slice(..),
                 wgpu::IndexFormat::Uint32,
             );
-            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
-            draw_index += 1;
+            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.instances());
         }
-        upload_skin_palette(gpu, compiled, last_palette);
-        let draw_count = draw_index;
-        if draw_count == 0 {
+        if draws.order.is_empty() {
             tracing::warn!("Rasterize pass '{}': ZERO entities drawn!", pass.name);
         } else {
-            tracing::debug!("Rasterize pass '{}': {} entities drawn", pass.name, draw_count);
+            tracing::debug!(
+                "Rasterize pass '{}': {} entities in {} draws",
+                pass.name,
+                draws.order.len(),
+                draws.batches.len()
+            );
         }
     }
 }

@@ -549,6 +549,7 @@ struct CameraUniform {
     inv_view_projection: mat4x4<f32>,
 };
 
+// One entry per visible entity, 256 bytes each (matches the CPU struct).
 struct DrawUniforms {
     model_matrix: mat4x4<f32>,
     normal_matrix: mat4x4<f32>,
@@ -556,8 +557,9 @@ struct DrawUniforms {
     roughness: f32,
     metallic: f32,
     has_texture: f32,
-    _pad: f32,
+    has_skin: f32,
     emission: vec4<f32>,
+    _padding: array<vec4<f32>, 5>,
 };
 
 struct SkinUniforms {
@@ -568,7 +570,9 @@ struct SkinUniforms {
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
-@group(1) @binding(0) var<uniform> draw: DrawUniforms;
+// Entities sharing a mesh and texture are drawn in one instanced draw; the
+// instance index selects the entity's entry.
+@group(1) @binding(0) var<storage, read> draws: array<DrawUniforms>;
 @group(2) @binding(0) var albedo_texture: texture_2d<f32>;
 @group(2) @binding(1) var albedo_sampler: sampler;
 @group(3) @binding(0) var<storage, read> skin: SkinUniforms;
@@ -588,6 +592,7 @@ struct VertexOutput {
     @location(1) world_pos: vec3<f32>,
     @location(2) tex_coords: vec2<f32>,
     @location(3) vertex_color: vec4<f32>,
+    @location(4) @interpolate(flat) draw_index: u32,
 };
 
 struct GBufferOutput {
@@ -596,8 +601,10 @@ struct GBufferOutput {
     @location(2) emission: vec4<f32>, // rgb = emission color, a = 0
 };
 
-fn apply_skinning(position: vec3<f32>, normal: vec3<f32>, joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
-    if (skin.has_skin == 0u) {
+// Only entities with an animator are skinned. Static meshes have joint 0 at
+// full weight, so skinning them would move them with the uploaded palette.
+fn apply_skinning(entity_has_skin: bool, joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
+    if (skin.has_skin == 0u || !entity_has_skin) {
         return mat4x4<f32>(
             vec4<f32>(1.0, 0.0, 0.0, 0.0),
             vec4<f32>(0.0, 1.0, 0.0, 0.0),
@@ -613,10 +620,11 @@ fn apply_skinning(position: vec3<f32>, normal: vec3<f32>, joints: vec4<u32>, wei
 }
 
 @vertex
-fn vs_main(model: VertexInput) -> VertexOutput {
+fn vs_main(model: VertexInput, @builtin(instance_index) instance: u32) -> VertexOutput {
     var out: VertexOutput;
+    let draw = draws[instance];
 
-    let skin_matrix = apply_skinning(model.position, model.normal, model.joint_indices, model.joint_weights);
+    let skin_matrix = apply_skinning(draw.has_skin > 0.5, model.joint_indices, model.joint_weights);
     let skinned_pos = skin_matrix * vec4<f32>(model.position, 1.0);
     let skinned_normal = (skin_matrix * vec4<f32>(model.normal, 0.0)).xyz;
 
@@ -626,12 +634,14 @@ fn vs_main(model: VertexInput) -> VertexOutput {
     out.world_pos = world_pos.xyz;
     out.tex_coords = model.tex_coords;
     out.vertex_color = model.color;
+    out.draw_index = instance;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> GBufferOutput {
     var out: GBufferOutput;
+    let draw = draws[in.draw_index];
     var albedo = draw.base_color.rgb * in.vertex_color.rgb;
     if (draw.has_texture > 0.5) {
         let tex_color = textureSample(albedo_texture, albedo_sampler, in.tex_coords);
@@ -1569,7 +1579,8 @@ struct SkinUniforms {
 };
 
 @group(0) @binding(0) var<uniform> shadow: ShadowUniforms;
-@group(1) @binding(0) var<uniform> draw: DrawUniforms;
+// Indexed by instance, as in the G-buffer shader.
+@group(1) @binding(0) var<storage, read> draws: array<DrawUniforms>;
 @group(2) @binding(0) var<storage, read> skin: SkinUniforms;
 
 struct VertexInput {
@@ -1582,9 +1593,10 @@ struct VertexInput {
 };
 
 @vertex
-fn vs_main(model: VertexInput) -> @builtin(position) vec4<f32> {
+fn vs_main(model: VertexInput, @builtin(instance_index) instance: u32) -> @builtin(position) vec4<f32> {
+    let draw = draws[instance];
     var pos = vec4<f32>(model.position, 1.0);
-    if (skin.has_skin > 0u) {
+    if (skin.has_skin > 0u && draw.has_skin > 0.5) {
         let m0 = skin.matrices[model.joint_indices.x];
         let m1 = skin.matrices[model.joint_indices.y];
         let m2 = skin.matrices[model.joint_indices.z];
@@ -1592,7 +1604,7 @@ fn vs_main(model: VertexInput) -> @builtin(position) vec4<f32> {
         let skin_matrix = m0 * model.joint_weights.x + m1 * model.joint_weights.y + m2 * model.joint_weights.z + m3 * model.joint_weights.w;
         pos = skin_matrix * pos;
     }
-    return shadow.light_view_projection * draw.model_matrix * pos;
+    return shadow.light_view_projection * (draw.model_matrix * pos);
 }
 
 @fragment
