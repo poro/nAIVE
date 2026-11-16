@@ -172,6 +172,14 @@ def main():
                     refused = json.loads(reader.readline())
             assert refused["status"] == "error", refused
             assert not (temporary / "escaped.yaml").exists()
+        except Exception:
+            # CI runners discard their temporary directories. Include the
+            # actual engine error rather than only a path to an unavailable log.
+            log.flush()
+            print("Packaged runtime log:", file=sys.stderr, flush=True)
+            print(log_path.read_text(errors="replace")[-64 * 1024:],
+                  file=sys.stderr, flush=True)
+            raise
         finally:
             process.terminate()
             try:

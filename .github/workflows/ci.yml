@@ -110,7 +110,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libasound2-dev libwayland-dev libxkbcommon-dev libclang-dev pkg-config \
+            libasound2-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libclang-dev pkg-config \
             mesa-vulkan-drivers xvfb
 
       - name: Install SLANG SDK
@@ -127,6 +127,7 @@ jobs:
       - name: Standalone release smoke test (software Vulkan)
         env:
           WGPU_BACKEND: vulkan
+          RUST_BACKTRACE: "1"
         run: xvfb-run -a python3 scripts/release-smoke.py
 
   check-web:
