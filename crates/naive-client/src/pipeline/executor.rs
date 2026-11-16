@@ -98,6 +98,11 @@ pub fn execute_pipeline_to_view(
     timer: Option<&GpuTimer>,
 ) -> wgpu::CommandEncoder {
     // Per-entity draw data for both mesh passes, uploaded once in batch order.
+    let frustum = debug.frustum_culling.then(|| {
+        crate::culling::Frustum::from_view_projection(&glam::Mat4::from_cols_array_2d(
+            &camera_state.uniform.view_projection,
+        ))
+    });
     let draws = collect_draws(
         scene_world,
         mesh_cache,
@@ -105,6 +110,7 @@ pub fn execute_pipeline_to_view(
         debug,
         bone_palettes,
         draw_pool.capacity,
+        frustum.as_ref(),
     );
     upload_draws(gpu, draw_pool, &draws);
     upload_skin_palette(gpu, compiled, draws.skin_palette);
@@ -309,6 +315,9 @@ struct DrawBatch {
     /// Index of the batch's first entry in the draw buffer.
     first: u32,
     count: u32,
+    /// How many of the batch's entries, from `first`, the camera can see.
+    /// Those come first, so the rest of the batch is outside the view.
+    visible: u32,
 }
 
 impl DrawBatch {
@@ -316,8 +325,15 @@ impl DrawBatch {
         MeshHandle(self.key.mesh)
     }
 
+    /// Every entity in the batch: what the shadow pass draws, since an
+    /// entity out of view can cast a shadow into it.
     fn instances(&self) -> std::ops::Range<u32> {
         self.first..self.first + self.count
+    }
+
+    /// The entities the camera can see: what the camera passes draw.
+    fn visible_instances(&self) -> std::ops::Range<u32> {
+        self.first..self.first + self.visible
     }
 }
 
@@ -329,6 +345,8 @@ struct FrameDraws<'a> {
     /// in world order within a batch.
     order: Vec<u32>,
     batches: Vec<DrawBatch>,
+    /// Entities outside the camera's view this frame.
+    culled: usize,
     /// The bone palette every skinned entity is drawn with this frame.
     skin_palette: Option<&'a crate::anim_system::BoneMatrixPalette>,
 }
@@ -342,9 +360,12 @@ fn collect_draws<'a>(
     debug: &RenderDebugState,
     bone_palettes: &'a HashMap<hecs::Entity, crate::anim_system::BoneMatrixPalette>,
     capacity: u32,
+    frustum: Option<&crate::culling::Frustum>,
 ) -> FrameDraws<'a> {
     let mut uniforms = Vec::new();
     let mut keys = Vec::new();
+    // Per entity: outside the camera's view.
+    let mut outside = Vec::new();
     let mut skin_palette = None;
 
     let mut query = scene_world.world.query::<(
@@ -411,12 +432,17 @@ fn collect_draws<'a>(
             mesh: mesh_renderer.mesh_handle.0,
             albedo_texture: material.albedo_texture.map(|t| t.0),
         });
+        // A skinned pose can reach outside the mesh's rest-pose bounds, so
+        // skinned entities are always drawn.
+        outside
+            .push(!has_skin && frustum.is_some_and(|f| !f.sees(&gpu_mesh.bounds, &model_matrix)));
     }
 
     // A stable sort keeps world order inside each batch, so overlapping
-    // surfaces resolve the same way every frame.
+    // surfaces resolve the same way every frame. Within a batch, entities in
+    // view come first, so the camera passes can draw just those.
     let mut order: Vec<u32> = (0..uniforms.len() as u32).collect();
-    order.sort_by_key(|&i| keys[i as usize]);
+    order.sort_by_key(|&i| (keys[i as usize], outside[i as usize]));
 
     // The engine grows the draw buffer before rendering. If entities appeared
     // since then (a capture taken in the same frame as a spawn), draw what fits.
@@ -431,14 +457,21 @@ fn collect_draws<'a>(
     }
 
     let mut batches: Vec<DrawBatch> = Vec::new();
+    let mut culled = 0;
     for (slot, &i) in order.iter().enumerate() {
         let key = keys[i as usize];
+        let visible = u32::from(!outside[i as usize]);
+        culled += 1 - visible as usize;
         match batches.last_mut() {
-            Some(batch) if batch.key == key => batch.count += 1,
+            Some(batch) if batch.key == key => {
+                batch.count += 1;
+                batch.visible += visible;
+            }
             _ => batches.push(DrawBatch {
                 key,
                 first: slot as u32,
                 count: 1,
+                visible,
             }),
         }
     }
@@ -447,6 +480,7 @@ fn collect_draws<'a>(
         uniforms,
         order,
         batches,
+        culled,
         skin_palette,
     }
 }
@@ -655,7 +689,7 @@ fn execute_rasterize_pass(
             render_pass.set_bind_group(3, skin_bg, &[]);
         }
 
-        for batch in &draws.batches {
+        for batch in draws.batches.iter().filter(|batch| batch.visible > 0) {
             let gpu_mesh = mesh_cache.get(batch.mesh());
 
             // Bind texture at group(2): material texture > mesh texture > white fallback
@@ -668,7 +702,7 @@ fn execute_rasterize_pass(
             render_pass.set_vertex_buffer(0, gpu_mesh.vertex_buffer.slice(..));
             render_pass
                 .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.instances());
+            render_pass.draw_indexed(0..gpu_mesh.index_count, 0, batch.visible_instances());
         }
 
         // Swarms: the same shader, reading each swarm's own draw data.
@@ -690,9 +724,10 @@ fn execute_rasterize_pass(
             tracing::warn!("Rasterize pass '{}': ZERO entities drawn!", pass.name);
         } else {
             tracing::debug!(
-                "Rasterize pass '{}': {} entities in {} draws, {} swarms",
+                "Rasterize pass '{}': {} entities ({} outside the view) in {} draws, {} swarms",
                 pass.name,
                 draws.order.len(),
+                draws.culled,
                 draws.batches.len(),
                 swarms.len()
             );

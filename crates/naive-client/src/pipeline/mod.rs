@@ -30,6 +30,8 @@ pub struct RenderDebugState {
     pub light_intensity_mult: f32,
     /// Override ambient light level (0.0 = use scene default)
     pub ambient_override: f32,
+    /// Leave entities outside the camera's view out of the camera passes.
+    pub frustum_culling: bool,
 }
 
 impl Default for RenderDebugState {
@@ -43,6 +45,7 @@ impl Default for RenderDebugState {
             show_colliders: false,
             light_intensity_mult: 1.0,
             ambient_override: 0.0,
+            frustum_culling: true,
         }
     }
 }

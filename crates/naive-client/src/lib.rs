@@ -15,6 +15,7 @@ pub mod camera;
 pub mod capture;
 pub mod cli;
 pub mod command;
+pub mod culling;
 pub mod debug_draw;
 pub mod demos;
 pub mod dev_log;

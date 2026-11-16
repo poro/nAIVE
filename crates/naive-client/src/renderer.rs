@@ -533,7 +533,12 @@ pub fn render_scene_to_view(
     encoder: &mut wgpu::CommandEncoder,
     texture_resources: Option<&crate::mesh::TextureResources>,
 ) {
-    // Write per-draw uniforms (skip hidden entities before incrementing draw_index)
+    // Write per-draw uniforms for the entities to draw: not hidden, and in
+    // the camera's view.
+    let frustum = crate::culling::Frustum::from_view_projection(&glam::Mat4::from_cols_array_2d(
+        &camera_state.uniform.view_projection,
+    ));
+    let mut drawn = Vec::new();
     let mut draw_index = 0u32;
     for (entity, (transform, mesh_renderer)) in scene_world
         .world
@@ -543,10 +548,13 @@ pub fn render_scene_to_view(
         if scene_world.world.get::<&Hidden>(entity).is_ok() {
             continue;
         }
-        let material = material_cache.get(mesh_renderer.material_handle);
         let model_matrix = transform.world_matrix;
-        let normal_matrix = model_matrix.inverse().transpose();
         let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
+        if !frustum.sees(&gpu_mesh.bounds, &model_matrix) {
+            continue;
+        }
+        let material = material_cache.get(mesh_renderer.material_handle);
+        let normal_matrix = model_matrix.inverse().transpose();
         let has_texture = if gpu_mesh.texture_bind_group.is_some() {
             1.0f32
         } else {
@@ -570,6 +578,7 @@ pub fn render_scene_to_view(
             draw_index as u64 * DRAW_UNIFORM_SIZE,
             bytemuck::cast_slice(&[draw_uniform]),
         );
+        drawn.push(mesh_renderer.mesh_handle);
         draw_index += 1;
     }
 
@@ -606,16 +615,9 @@ pub fn render_scene_to_view(
         render_pass.set_pipeline(forward_pipeline);
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
-        let mut draw_index = 0u32;
-        for (entity, (_, mesh_renderer)) in scene_world
-            .world
-            .query::<(hecs::Entity, (&Transform, &MeshRenderer))>()
-            .iter()
-        {
-            if scene_world.world.get::<&Hidden>(entity).is_ok() {
-                continue;
-            }
-            let gpu_mesh = mesh_cache.get(mesh_renderer.mesh_handle);
+        for (draw_index, &mesh_handle) in drawn.iter().enumerate() {
+            let draw_index = draw_index as u32;
+            let gpu_mesh = mesh_cache.get(mesh_handle);
             let dynamic_offset = draw_index * DRAW_UNIFORM_SIZE as u32;
 
             render_pass.set_bind_group(1, &draw_pool.bind_group, &[dynamic_offset]);
@@ -633,7 +635,6 @@ pub fn render_scene_to_view(
             render_pass
                 .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
-            draw_index += 1;
         }
     }
 }
