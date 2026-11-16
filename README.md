@@ -15,7 +15,7 @@ Built from the ground up in Rust. Worlds are created by AI, rendering happens on
 | Shaders are HLSL/GLSL, platform-locked | SLANG shaders cross-compile to any GPU backend |
 | 3D assets from art pipelines only | Gaussian splats from text prompts |
 | Render pipeline hardcoded in C++ | YAML-defined render pipeline DAG |
-| Entity counts limited by CPU | GPU compute simulation drives 50,000+ entities |
+| Entity counts limited by CPU | GPU compute simulation for 50,000+ entities (planned, Tier 4) |
 
 **Sub-second hot-reload.** Shaders in <200ms. Scenes in <100ms. Scripts in <50ms. 100x faster than Unity or Unreal.
 

@@ -6,7 +6,7 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-use crate::cli::{CliArgs, OutputMode};
+use crate::cli::CliArgs;
 
 #[derive(Debug, Deserialize)]
 pub struct NaiveConfig {
@@ -93,7 +93,6 @@ pub fn to_cli_args(config: &NaiveConfig, project_root: &Path) -> CliArgs {
         command: None,
         scene: config.default_scene.clone(),
         pipeline: config.default_pipeline.clone(),
-        output: OutputMode::Window,
         project: project_root.to_string_lossy().to_string(),
         socket: "/tmp/naive-runtime.sock".to_string(),
         hud: false,

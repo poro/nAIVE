@@ -65,9 +65,6 @@ mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }
 # Audio
 kira = "0.9"
 
-# Time
-instant = "0.1"
-
 # HTTP client (for submit-log)
 ureq = { version = "2", features = ["json"] }
 

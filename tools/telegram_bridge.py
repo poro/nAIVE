@@ -10,6 +10,9 @@ Setup:
     2. Set environment variables:
        export TELEGRAM_BOT_TOKEN="your-bot-token"
        export ANTHROPIC_API_KEY="your-anthropic-key"
+       export TELEGRAM_ALLOWED_CHAT_IDS="123456789"   # comma-separated chat ids
+    Only chats listed in TELEGRAM_ALLOWED_CHAT_IDS can control the engine. Message
+    the bot from a chat that is not listed and it replies with that chat's id.
     3. Start nAIVE engine (it creates /tmp/naive-runtime.sock)
     4. Run this script: python3 telegram_bridge.py
 
@@ -38,6 +41,16 @@ import urllib.error
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 NAIVE_SOCKET = os.environ.get("NAIVE_SOCKET", "/tmp/naive-runtime.sock")
+
+
+def parse_chat_ids(value: str) -> set:
+    """Parse a comma-separated list of Telegram chat ids, ignoring blanks."""
+    return {int(part) for part in value.replace(" ", "").split(",") if part}
+
+
+# Chats allowed to control the engine. Anyone can message a Telegram bot, so
+# without this list anyone who finds the bot could drive the running engine.
+ALLOWED_CHAT_IDS = parse_chat_ids(os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", ""))
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 # ─────────────────────────────────────────────────────────────
@@ -273,7 +286,15 @@ def main():
     print(f"  Bot: @{bot_name}")
     print(f"  Socket: {NAIVE_SOCKET}")
     print(f"  Send messages to @{bot_name} on Telegram to control nAIVE!")
+    if ALLOWED_CHAT_IDS:
+        print(f"  Allowed chats: {sorted(ALLOWED_CHAT_IDS)}")
+    else:
+        print("  No chats are allowed yet. Message the bot to learn your chat id,")
+        print("  then set TELEGRAM_ALLOWED_CHAT_IDS and restart.")
     print()
+
+    # Chats that have already been told they are not allowed.
+    refused = set()
 
     # Long polling loop
     offset = 0
@@ -293,6 +314,17 @@ def main():
                     chat_id = msg.get("chat", {}).get("id")
 
                     if not text or not chat_id:
+                        continue
+
+                    if chat_id not in ALLOWED_CHAT_IDS:
+                        print(f"Ignored a message from chat {chat_id}, which is not allowed")
+                        if chat_id not in refused:
+                            refused.add(chat_id)
+                            send_telegram_message(
+                                chat_id,
+                                f"This chat is not allowed to control nAIVE. To allow it, add "
+                                f"{chat_id} to TELEGRAM_ALLOWED_CHAT_IDS and restart the bridge.",
+                            )
                         continue
 
                     if text.startswith("/start"):

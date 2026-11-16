@@ -2119,7 +2119,6 @@ dependencies = [
  "gltf",
  "hecs",
  "image",
- "instant",
  "kira",
  "linked-hash-map",
  "mlua",
