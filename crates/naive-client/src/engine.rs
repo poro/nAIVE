@@ -120,6 +120,8 @@ pub struct Engine {
     // Editor mode
     pub editor_camera: Option<EditorCamera>,
     pub editor_command_log: Vec<(String, std::time::Instant)>,
+    /// Scene snapshots taken before each undoable command, newest last.
+    pub(crate) undo_stack: Vec<commands::UndoEntry>,
     pub editor_scene_path: Option<PathBuf>,
 
     // Surface config shared with scripting API
@@ -187,6 +189,7 @@ impl Engine {
             camera_shake: Rc::new(RefCell::new(CameraShakeState::new())),
             editor_camera: None,
             editor_command_log: Vec::new(),
+            undo_stack: Vec::new(),
             editor_scene_path: None,
             shared_surface_config: None,
             texture_resources: None,
@@ -2063,6 +2066,22 @@ impl Engine {
             }
         };
 
+        // Undo steps belong to the scene being replaced.
+        self.undo_stack.clear();
+        if !self.replace_scene(scene) {
+            return;
+        }
+        // 9. Update scene_path for hot-reload
+        self.scene_path = Some(scene_path);
+
+        tracing::info!("Scene loaded via scene.load(\"{}\")", scene_rel);
+    }
+
+    /// Replace the running scene with `scene`: destroy every entity through
+    /// the usual path (so `on_destroy` hooks run), reset per-scene state, then
+    /// build and initialize the new entities. Shared by `scene.load` and the
+    /// `undo` command. Returns false when there is no GPU to build with.
+    pub(crate) fn replace_scene(&mut self, scene: crate::scene::SceneFile) -> bool {
         // Destroy through the same path as Lua and MCP. Never hold world borrows
         // while invoking user callbacks.
         if let Some(world) = &self.scene_world {
@@ -2114,7 +2133,7 @@ impl Engine {
 
         let gpu = match &self.gpu {
             Some(gpu) => gpu,
-            None => return,
+            None => return false,
         };
 
         // 6. Re-spawn entities
@@ -2324,11 +2343,7 @@ impl Engine {
                 tracing::error!("scene.load: {error}");
             }
         }
-
-        // 9. Update scene_path for hot-reload
-        self.scene_path = Some(scene_path);
-
-        tracing::info!("Scene loaded via scene.load(\"{}\")", scene_rel);
+        true
     }
 
     /// Compute camera shake offset, decaying the timer.

@@ -2,6 +2,7 @@
 
 use super::*;
 use naive_core::command::CommandKind;
+use serde_json::json;
 
 /// Replace a scene only after the complete new document reaches disk.
 fn write_scene_file(path: &Path, yaml: &str) -> Result<(), String> {
@@ -43,6 +44,18 @@ fn write_scene_file(path: &Path, yaml: &str) -> Result<(), String> {
         let _ = std::fs::remove_file(temporary);
     }
     result
+}
+
+/// Undo steps kept; older ones are dropped.
+const UNDO_LIMIT: usize = 32;
+/// Scenes larger than this are not snapshotted for undo (too slow and large).
+const UNDO_MAX_ENTITIES: usize = 5000;
+
+/// The scene as it was before an undoable command, or why it could not be
+/// captured.
+pub(crate) struct UndoEntry {
+    label: String,
+    scene: Result<crate::scene::SceneFile, String>,
 }
 
 impl Engine {
@@ -139,7 +152,20 @@ impl Engine {
                 }
             }
 
+            let undoable = matches!(
+                kind,
+                CommandKind::SpawnEntity
+                    | CommandKind::DestroyEntity
+                    | CommandKind::ModifyEntity
+                    | CommandKind::RunLua
+            );
+            if undoable {
+                self.record_undo(kind.name());
+            }
             let response = match kind {
+                CommandKind::RunTests => self.handle_run_tests(&pending.request),
+                CommandKind::ScreenshotDiff => self.handle_screenshot_diff(&pending.request),
+                CommandKind::Undo => self.handle_undo(),
                 CommandKind::SpawnEntity => self.handle_spawn_entity(&pending.request),
                 CommandKind::DestroyEntity => self.handle_destroy_entity(&pending.request),
                 CommandKind::SaveScene => self.handle_save_scene(&pending.request),
@@ -163,7 +189,158 @@ impl Engine {
                     )
                 }
             };
+            // A command that failed changed nothing, so it has no undo step.
+            if undoable && response.status != "ok" {
+                self.undo_stack.pop();
+            }
             let _ = pending.responder.send(response);
+        }
+    }
+
+    /// Snapshot the scene before an undoable command. A scene that cannot be
+    /// snapshotted leaves a step that explains why it cannot be undone, so
+    /// that undo never silently skips over a change.
+    fn record_undo(&mut self, label: &str) {
+        let scene = match &self.scene_world {
+            None => return,
+            Some(world) if world.borrow().entity_registry.len() > UNDO_MAX_ENTITIES => {
+                Err(format!(
+                    "the scene had more than {UNDO_MAX_ENTITIES} entities, too many to snapshot"
+                ))
+            }
+            Some(_) => self.snapshot_scene_file(),
+        };
+        self.undo_stack.push(UndoEntry {
+            label: label.to_string(),
+            scene,
+        });
+        if self.undo_stack.len() > UNDO_LIMIT {
+            self.undo_stack.remove(0);
+        }
+    }
+
+    pub(super) fn handle_undo(&mut self) -> crate::command::CommandResponse {
+        use crate::command::CommandResponse;
+        let Some(entry) = self.undo_stack.pop() else {
+            return CommandResponse::error("Nothing to undo");
+        };
+        match entry.scene {
+            Err(reason) => {
+                CommandResponse::error(format!("Cannot undo {}: {}", entry.label, reason))
+            }
+            Ok(scene) => {
+                if self.replace_scene(scene) {
+                    CommandResponse::ok(json!({
+                        "undone": entry.label,
+                        "remaining": self.undo_stack.len(),
+                    }))
+                } else {
+                    CommandResponse::error("No GPU to rebuild the scene with")
+                }
+            }
+        }
+    }
+
+    /// Run Lua tests headlessly, in their own worlds; the running scene is
+    /// not touched.
+    pub(super) fn handle_run_tests(
+        &mut self,
+        req: &crate::command::CommandRequest,
+    ) -> crate::command::CommandResponse {
+        use crate::command::CommandResponse;
+        let files = match req.params.get("file").and_then(|v| v.as_str()) {
+            Some(file) => match crate::project_path::resolve(&self.project_root, file) {
+                Ok(path) if path.is_file() => vec![path],
+                Ok(_) => return CommandResponse::error(format!("Test file not found: {file}")),
+                Err(error) => return CommandResponse::error(error),
+            },
+            None => {
+                let config =
+                    match crate::project_config::load_config(&self.project_root.join("naive.yaml"))
+                    {
+                        Ok(config) => config,
+                        Err(error) => return CommandResponse::error(error.to_string()),
+                    };
+                match crate::project_config::discover_test_files(&config, &self.project_root) {
+                    Ok(files) => files,
+                    Err(error) => return CommandResponse::error(error),
+                }
+            }
+        };
+        let root = self
+            .project_root
+            .canonicalize()
+            .unwrap_or_else(|_| self.project_root.clone());
+        let mut tests = Vec::new();
+        let (mut passed, mut failed) = (0, 0);
+        for file in &files {
+            let shown = file
+                .strip_prefix(&root)
+                .unwrap_or(file)
+                .display()
+                .to_string();
+            for result in crate::test_runner::run_test_file(&self.project_root, file) {
+                if result.passed {
+                    passed += 1;
+                } else {
+                    failed += 1;
+                }
+                tests.push(json!({
+                    "file": shown,
+                    "name": result.name,
+                    "passed": result.passed,
+                    "error": result.error,
+                    "game_time": result.game_time,
+                }));
+            }
+        }
+        CommandResponse::ok(json!({
+            "passed": passed,
+            "failed": failed,
+            "files": files.len(),
+            "tests": tests,
+        }))
+    }
+
+    pub(super) fn handle_screenshot_diff(
+        &mut self,
+        req: &crate::command::CommandRequest,
+    ) -> crate::command::CommandResponse {
+        use crate::command::CommandResponse;
+        let text = |key: &str| req.params.get(key).and_then(|v| v.as_str());
+        let (Some(a), Some(b)) = (text("a"), text("b")) else {
+            return CommandResponse::error("screenshot_diff needs a and b");
+        };
+        let output = text("output").unwrap_or("captures/diff.png");
+        let threshold = req
+            .params
+            .get("threshold")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(8)
+            .min(255) as u8;
+        let resolve = |path: &str| crate::project_path::resolve(&self.project_root, path);
+        let (a, b) = match (resolve(a), resolve(b)) {
+            (Ok(a), Ok(b)) => (a, b),
+            (Err(error), _) | (_, Err(error)) => return CommandResponse::error(error),
+        };
+        let output = match crate::capture::capture_path(&self.project_root, output) {
+            Ok(path) => path,
+            Err(error) => return CommandResponse::error(error),
+        };
+        match crate::capture::diff_frames(&a, &b, &output, threshold) {
+            Ok(diff) => {
+                let total = u64::from(diff.width) * u64::from(diff.height);
+                CommandResponse::ok(json!({
+                    "width": diff.width,
+                    "height": diff.height,
+                    "changed_pixels": diff.changed_pixels,
+                    "changed_percent": 100.0 * diff.changed_pixels as f64 / total.max(1) as f64,
+                    "max_difference": diff.max_difference,
+                    "mean_difference": diff.mean_difference,
+                    "diff_image": output.display().to_string(),
+                }))
+            }
+            Err(error) => CommandResponse::error(error),
         }
     }
 
@@ -487,15 +664,20 @@ impl Engine {
 
     /// Preserve authored component definitions and overlay live ECS state.
     pub(super) fn serialize_scene_to_yaml(&self) -> Result<String, String> {
+        let scene = self.snapshot_scene_file()?;
+        serde_norway::to_string(&scene).map_err(|error| error.to_string())
+    }
+
+    /// The running scene as a scene document.
+    pub(super) fn snapshot_scene_file(&self) -> Result<crate::scene::SceneFile, String> {
         let world = self.scene_world.as_ref().ok_or("No scene loaded")?.borrow();
         let physics = self.physics_world.as_ref().map(|physics| physics.borrow());
-        let scene = crate::scene_snapshot::snapshot_scene(
+        crate::scene_snapshot::snapshot_scene(
             &world,
             &self.mesh_cache,
             &self.material_cache,
             physics.as_deref(),
-        )?;
-        serde_norway::to_string(&scene).map_err(|error| error.to_string())
+        )
     }
 
     pub(super) fn gpu_timings_json(&self) -> serde_json::Value {

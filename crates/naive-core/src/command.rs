@@ -164,6 +164,16 @@ commands! {
         frames: Option<u32> => "Frames to run (default 240)"
     };
     GpuTimings => "gpu_timings", "GPU milliseconds per frame over the last 60 frames, for the whole frame and per render pass (the swarm step is \"swarms\"), from timestamp queries. On screen with vsync the GPU slows to fit the display refresh, so use naive_benchmark to measure headroom.", {};
+    RunTests => "run_tests", "Run the project's Lua tests headlessly inside the running engine (the scene on screen is not touched) and return each test's result with its error. Use after changing scripts or scenes to check gameplay still works.", {
+        file: Option<String> => "One test file relative to the project, e.g. tests/test_combat.lua. Omit to run every test that naive.yaml configures."
+    };
+    ScreenshotDiff => "screenshot_diff", "Compare two PNG captures inside the project (for example a capture_frame from before and after a change): report how many pixels changed and by how much, and write a diff image that shows the changed pixels in red over a dimmed copy of the second image.", {
+        a: String => "First PNG, relative to the project, e.g. captures/before.png",
+        b: String => "Second PNG of the same size, e.g. captures/after.png",
+        output: Option<String> => "Where to write the diff image (default captures/diff.png)",
+        threshold: Option<u32> => "Largest per-channel difference (0-255) still counted as unchanged (default 8)"
+    };
+    Undo => "undo", "Undo the last spawn_entity, destroy_entity, modify_entity or run_lua by restoring the scene as it was before it. Scripts restart from init; Lua variables and velocities are not restored. Up to 32 steps; a change made while the scene held state a scene file cannot represent cannot be undone.", {};
     RunLua => "run_lua", "Run Lua in the running engine, sandboxed with instruction and memory limits. Tables: entity (spawn, spawn_dynamic, destroy, get_position/set_position, get_rotation/set_rotation, set_scale, find_by_tag, damage, heal, set_base_color, set_emission, ...), physics (apply_impulse, apply_force, set_velocity, raycast, hitscan), events (emit, on, off), audio (play_sfx, play_music, stop_music), particles (spawn_burst), camera (shake, world_to_screen), animation, mesh, input and swarm. Use it for batch edits and anything the other tools do not cover.", {
         code: String => "Lua code to run. Its return value and print() output are returned."
     }
