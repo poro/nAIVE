@@ -9,7 +9,9 @@ use std::path::PathBuf;
 // Re-export all public items so external code using `crate::pipeline::*` continues to work.
 pub use compiler::compile_pipeline;
 pub use def::*;
-pub use executor::{execute_pipeline, execute_pipeline_to_view, rebuild_bind_groups};
+pub use executor::{
+    execute_pipeline, execute_pipeline_to_view, rebuild_bind_groups, sync_environment,
+};
 pub use resource::*;
 
 // ---------------------------------------------------------------------------
@@ -85,6 +87,8 @@ pub struct CompiledPipeline {
     pub shadow_bind_group: Option<wgpu::BindGroup>,
     /// Shadow map sampler (comparison) for lighting pass.
     pub shadow_sampler: Option<wgpu::Sampler>,
+    /// The scene's sky, drawn and lit by the lighting pass.
+    pub environment: crate::sky::Environment,
     /// Skin matrix storage buffer for skeletal animation (shared, updated per-entity).
     pub skin_buffer: Option<wgpu::Buffer>,
     pub skin_bind_group_layout: Option<wgpu::BindGroupLayout>,
