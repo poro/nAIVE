@@ -1,0 +1,176 @@
+name: Release
+
+# Releases are cut from tags on master. Bump the version in a pull request
+# (scripts/bump-version.sh), merge it once CI passes, then push a tag on the
+# merge commit: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep in step with ci.yml, the README and the Homebrew formula.
+  SLANG_VERSION: "2026.2.2"
+  RUST_TOOLCHAIN: "1.100.0"
+
+jobs:
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Tag matches the workspace version and is on master
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::$GITHUB_REF_NAME is not on master; release from a merged commit"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  macos:
+    name: Build and package (macOS)
+    needs: verify
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      # Optional. Without them the demo app is signed ad hoc, which other
+      # Macs refuse to open when downloaded. See docs/DEVELOPMENT.md.
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Install SLANG SDK
+        run: |
+          mkdir -p vendor
+          curl -fsSL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-macos-aarch64.tar.gz" \
+            | tar xz -C vendor
+
+      - name: Build naive (with Slang)
+        run: cargo build --release --locked -p naive-runtime --bins
+
+      # On its own, so feature unification cannot link Slang into it.
+      - name: Build naive-player (without Slang)
+        run: |
+          cargo build --release --locked -p naive-player
+          if otool -L target/release/naive-player | grep -i slang; then
+            echo "::error::naive-player links a Slang library"
+            exit 1
+          fi
+
+      - name: Bundle the demo project
+        working-directory: project
+        run: ../target/release/naive build
+
+      - name: Sign with Developer ID and notarize
+        if: env.MACOS_CERTIFICATE != '' && env.APPLE_ID != ''
+        run: |
+          app=$(ls -d project/dist/*.app)
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 16)
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" "$app"
+          codesign --verify --strict --verbose=2 "$app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$app"
+
+      - name: Package
+        run: |
+          app=$(ls -d project/dist/*.app)
+          name=$(basename "$app" .app)
+          mkdir -p release
+          ditto -c -k --keepParent "$app" "release/nAIVE-demo-${name}-${VERSION}-macos-arm64.zip"
+          tar -C target/release -czf "release/naive-player-${VERSION}-macos-arm64.tar.gz" naive-player
+          (cd release && shasum -a 256 * > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: macos
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [verify, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v5
+        with:
+          name: macos
+          path: release
+
+      # Homebrew builds from GitHub's source archive, and include_bytes! embeds
+      # LFS-tracked meshes. An archive without LFS objects would compile pointer
+      # files into the binary. Repository setting: Settings > General >
+      # Archives > "Include Git LFS objects in archives".
+      - name: Source archive includes Git LFS objects
+        id: archive
+        run: |
+          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+          curl -fsSL "$url" -o source.tar.gz
+          # GitHub drops the tag's leading "v" from the archive's directory.
+          mesh="nAIVE-${VERSION}/project/assets/meshes/meshy_car.glb"
+          tar -xzf source.tar.gz -O "$mesh" > mesh.glb
+          # An LFS pointer is a ~130-byte text file; the real mesh is megabytes.
+          if [ "$(wc -c < mesh.glb)" -lt 4096 ]; then
+            echo "::error::The source archive holds a Git LFS pointer for $mesh. Turn on 'Include Git LFS objects in archives' and re-run."
+            exit 1
+          fi
+          echo "sha256=$(sha256sum source.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --verify-tag --title "nAIVE $GITHUB_REF_NAME" --generate-notes
+          {
+            echo "### Homebrew formula"
+            echo "url \"${{ steps.archive.outputs.url }}\""
+            echo "sha256 \"${{ steps.archive.outputs.sha256 }}\""
+          } >> "$GITHUB_STEP_SUMMARY"

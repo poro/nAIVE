@@ -651,6 +651,16 @@ impl Engine {
         self.try_load_pipeline();
 
         // Phase 8: Start command socket server
+        self.start_command_server();
+    }
+
+    /// Start the command socket, unless this run has none: a shipped game
+    /// started without --socket passes an empty path.
+    fn start_command_server(&mut self) {
+        if self.args.socket.is_empty() {
+            tracing::info!("Command socket disabled");
+            return;
+        }
         match CommandServer::start(&self.args.socket) {
             Ok(server) => {
                 tracing::info!("Command socket: {}", server.socket_path);
@@ -972,18 +982,7 @@ impl Engine {
         self.try_load_pipeline();
 
         // Start command socket
-        match CommandServer::start(&self.args.socket) {
-            Ok(server) => {
-                tracing::info!("Editor command socket: {}", server.socket_path);
-                self.command_server = Some(server);
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Command socket unavailable, MCP and socket commands will not work: {}",
-                    e
-                );
-            }
-        }
+        self.start_command_server();
 
         tracing::info!("Editor mode initialized");
     }

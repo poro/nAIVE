@@ -58,14 +58,18 @@ curl -L https://github.com/shader-slang/slang/releases/download/v2026.2.2/slang-
 
 export SLANG_DIR=$(pwd)/vendor
 cargo build --release
+# The player that `naive build` ships in game bundles. Build it on its own so
+# it stays free of the Slang libraries.
+cargo build --release -p naive-player
 ```
 
 Git LFS is required for the GLB and audio assets, including meshes embedded by `include_bytes!`. Install it before building from a clone. For core development without the Slang SDK, use `cargo test --workspace --exclude naive-web --no-default-features --locked`; native rendering uses built-in WGSL shaders, while Slang hot reload and Slang-defined pipeline passes require the SDK. See [development and release checks](docs/DEVELOPMENT.md) and [asset storage](docs/ASSETS.md).
 
-The build produces three binaries in `target/release/`:
+The builds produce four binaries in `target/release/`:
 - **`naive`** — Main CLI for running games
 - **`naive-runtime`** — Full engine runtime (same as `naive`)
 - **`naive_mcp`** — MCP JSON-RPC server for AI agent integration
+- **`naive-player`** — `naive` without the Slang compiler; `naive build` ships it inside game bundles
 
 ### Requirements
 

@@ -6,6 +6,16 @@ members = [
     "crates/naive-runtime",
     "crates/naive-server",
     "crates/naive-web",
+    "crates/naive-player",
+]
+# `cargo build` at the root builds these. naive-web only builds for wasm32, and
+# naive-player must be built on its own so it stays free of Slang (see its
+# Cargo.toml).
+default-members = [
+    "crates/naive-core",
+    "crates/naive-client",
+    "crates/naive-runtime",
+    "crates/naive-server",
 ]
 
 [workspace.package]

@@ -275,12 +275,26 @@ fn fixup_slang_wgsl(wgsl: &str) -> String {
     output
 }
 
-/// Fallback when SLANG feature is disabled.
+/// Where `naive build` writes the WGSL compiled from a Slang shader:
+/// `bloom.slang` becomes `bloom.slang.wgsl` in the same directory.
+pub fn precompiled_wgsl_path(slang_path: &Path) -> std::path::PathBuf {
+    let mut name = slang_path.as_os_str().to_owned();
+    name.push(".wgsl");
+    std::path::PathBuf::from(name)
+}
+
+/// Without the Slang compiler, use the WGSL that `naive build` compiled from
+/// this shader, if there is one (as in a shipped game bundle).
 #[cfg(not(feature = "slang"))]
-fn compile_slang_to_wgsl(_path: &Path) -> Result<String, ShaderError> {
-    Err(ShaderError::SlangCompilationFailed(
-        "SLANG support not compiled in (feature 'slang' disabled)".to_string(),
-    ))
+fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
+    let precompiled = precompiled_wgsl_path(path);
+    tracing::debug!("Loading precompiled WGSL {:?}", precompiled);
+    std::fs::read_to_string(&precompiled).map_err(|_| {
+        ShaderError::SlangCompilationFailed(format!(
+            "SLANG support not compiled in (feature 'slang' disabled) and no precompiled {}",
+            precompiled.display()
+        ))
+    })
 }
 
 /// Hardcoded WGSL fallback for the 3D forward mesh shader.
@@ -1689,5 +1703,22 @@ mod tests {
                 "{name}'s DrawUniforms is {span} bytes"
             );
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "slang")))]
+mod precompiled_tests {
+    use super::*;
+
+    #[test]
+    fn without_slang_the_precompiled_wgsl_beside_a_shader_is_used() {
+        let dir = std::env::temp_dir().join(format!("naive-precompiled-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let slang = dir.join("bloom.slang");
+        std::fs::write(&slang, "// slang source").unwrap();
+        assert!(compile_slang_to_wgsl(&slang).is_err());
+        std::fs::write(precompiled_wgsl_path(&slang), "// compiled").unwrap();
+        assert_eq!(compile_slang_to_wgsl(&slang).unwrap(), "// compiled");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

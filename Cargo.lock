@@ -2154,6 +2154,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "naive-player"
+version = "0.1.21"
+dependencies = [
+ "naive-runtime",
+]
+
+[[package]]
 name = "naive-runtime"
 version = "0.1.21"
 dependencies = [
