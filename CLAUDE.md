@@ -62,7 +62,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | Tier 2.5 | Physics & Scene API (impulse/force, velocity, CCD, collider materials, entity tags, camera shake, scene loading) | **DONE v0.1.7** |
 | Tier 2.7 | DX & Code Quality (physics hot-reload, component patch coverage, pipeline modularization, HUD reload notifications, debug wireframes, kinematic bodies, convex decomposition) | **DONE v0.1.15** |
 | Tier 3 | Visual & Interaction (texture mapping, procedural meshes, mouse picking, screen_to_ray) | **IN PROGRESS v0.1.18** |
-| Tier 4 | GPU Scale (50K+ GPU compute entities, neighbor-grid collisions, flow field) | Planned |
+| Tier 4 | GPU Scale (50K+ GPU compute entities, neighbor-grid collisions, flow field) | **IN PROGRESS** — instanced drawing and `gpu_swarm` movement done (milestones 0–2 of `docs/tier4-plan.md`) |
 | Tier 5 | Animation & Polish (skeletal animation, VAT, UI) | Planned |
 
 ## AI Asset Generation
