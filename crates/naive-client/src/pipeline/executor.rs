@@ -129,14 +129,7 @@ pub fn execute_pipeline_to_view(
         light_data.dir_light_intensity = dir_light.intensity;
         light_data.dir_light_color = dir_light.color.to_array();
 
-        // Compute orthographic VP from light direction
-        let extent = dir_light.shadow_extent;
-        let light_pos = -dir_light.direction.normalize() * 30.0;
-        let light_view = glam::Mat4::look_at_rh(light_pos, glam::Vec3::ZERO, glam::Vec3::Y);
-        let light_proj = glam::Mat4::orthographic_rh(
-            -extent, extent, -extent, extent, 0.1, 60.0,
-        );
-        light_vp = light_proj * light_view;
+        light_vp = directional_shadow_view_projection(dir_light.direction, dir_light.shadow_extent);
         light_data.light_vp = light_vp.to_cols_array_2d();
     }
 
@@ -252,6 +245,22 @@ pub fn execute_pipeline_to_view(
     }
 
     encoder
+}
+
+/// The directional light's shadow camera: an orthographic box around the world
+/// origin that reaches `extent` from it in every direction, sideways and along
+/// the light. The light sits `extent` back from the origin and the far plane
+/// is `2 * extent` away, so the depth range grows with the scene instead of
+/// cutting it off at a fixed distance.
+fn directional_shadow_view_projection(direction: glam::Vec3, extent: f32) -> glam::Mat4 {
+    let dir = direction.try_normalize().unwrap_or(glam::Vec3::NEG_Y);
+    let extent = extent.max(0.01);
+    // look_at needs an up vector that is not parallel to the view direction.
+    let up = if dir.y.abs() > 0.99 { glam::Vec3::Z } else { glam::Vec3::Y };
+    let light_view = glam::Mat4::look_at_rh(-dir * extent, glam::Vec3::ZERO, up);
+    let light_proj =
+        glam::Mat4::orthographic_rh(-extent, extent, -extent, extent, 0.0, 2.0 * extent);
+    light_proj * light_view
 }
 
 /// Entities that share a mesh and an albedo texture. Their draw data is
@@ -1046,5 +1055,47 @@ pub fn rebuild_bind_groups(
                 },
             ],
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::{Vec3, Vec3Swizzles, Vec4Swizzles};
+
+    /// Where a world point lands in the shadow map: xy in [-1, 1], depth in [0, 1].
+    fn to_shadow_ndc(vp: glam::Mat4, p: Vec3) -> Vec3 {
+        let clip = vp * p.extend(1.0);
+        clip.xyz() / clip.w
+    }
+
+    #[test]
+    fn shadow_depth_range_covers_the_extent_along_the_light() {
+        let dir = Vec3::new(0.35, -1.0, 0.25);
+        let extent = 140.0;
+        let vp = directional_shadow_view_projection(dir, extent);
+        let n = dir.normalize();
+
+        let origin = to_shadow_ndc(vp, Vec3::ZERO);
+        assert!(origin.xy().length() < 1e-4);
+        assert!((origin.z - 0.5).abs() < 1e-4);
+
+        // Points `extent` toward and away from the light sit on the near and
+        // far planes, so nothing inside the box is cut off.
+        assert!(to_shadow_ndc(vp, -n * extent).z.abs() < 1e-4);
+        assert!((to_shadow_ndc(vp, n * extent).z - 1.0).abs() < 1e-4);
+
+        // A floor corner well inside the box: inside the map on every axis.
+        let corner = to_shadow_ndc(vp, Vec3::new(90.0, 0.0, 90.0));
+        assert!(corner.x.abs() < 1.0 && corner.y.abs() < 1.0);
+        assert!(corner.z > 0.0 && corner.z < 1.0);
+    }
+
+    #[test]
+    fn shadow_camera_handles_a_light_pointing_straight_down() {
+        let vp = directional_shadow_view_projection(Vec3::NEG_Y, 20.0);
+        assert!(vp.is_finite());
+        let below = to_shadow_ndc(vp, Vec3::new(0.0, -10.0, 0.0));
+        assert!((below.z - 0.75).abs() < 1e-4);
     }
 }

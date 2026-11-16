@@ -927,6 +927,11 @@ fn generate_flat_normals(positions: &[[f32; 3]]) -> Vec<[f32; 3]> {
 
 /// Create a procedural UV sphere.
 fn create_procedural_sphere(device: &wgpu::Device, radius: f32, rings: u32, sectors: u32) -> GpuMesh {
+    let (vertices, indices) = sphere_geometry(radius, rings, sectors);
+    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Sphere")
+}
+
+fn sphere_geometry(radius: f32, rings: u32, sectors: u32) -> (Vec<Vertex3D>, Vec<u32>) {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
@@ -971,31 +976,16 @@ fn create_procedural_sphere(device: &wgpu::Device, radius: f32, rings: u32, sect
         }
     }
 
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Procedural Sphere VB"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Procedural Sphere IB"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-
-    GpuMesh {
-        vertex_buffer,
-        index_buffer,
-        index_count: indices.len() as u32,
-        texture_bind_group: None,
-        skin_data: None,
-        physics_vertices: None,
-        physics_indices: None,
-    }
+    (vertices, indices)
 }
 
 /// Create a procedural unit cube as fallback.
 fn create_procedural_cube(device: &wgpu::Device) -> GpuMesh {
+    let (vertices, indices) = cube_geometry();
+    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Cube")
+}
+
+fn cube_geometry() -> (Vec<Vertex3D>, Vec<u32>) {
     let j = [0u32, 0, 0, 0];
     let w = [1.0f32, 0.0, 0.0, 0.0];
     #[rustfmt::skip]
@@ -1032,21 +1022,28 @@ fn create_procedural_cube(device: &wgpu::Device) -> GpuMesh {
         Vertex3D { position: [-0.5,  0.5, -0.5], normal: [-1.0,  0.0,  0.0], tex_coords: [0.0, 0.0], color: [1.0, 1.0, 1.0, 1.0], joint_indices: j, joint_weights: w },
     ];
 
+    // Counter-clockwise seen from outside, so back-face culling keeps the
+    // outer faces.
     #[rustfmt::skip]
     let indices: Vec<u32> = vec![
-        0,  2,  1,  0,  3,  2,   // front
-        4,  6,  5,  4,  7,  6,   // back
-        8,  10, 9,  8,  11, 10,  // top
-        12, 14, 13, 12, 15, 14,  // bottom
-        16, 18, 17, 16, 19, 18,  // right
-        20, 22, 21, 20, 23, 22,  // left
+        0,  1,  2,  0,  2,  3,   // front
+        4,  5,  6,  4,  6,  7,   // back
+        8,  9,  10, 8,  10, 11,  // top
+        12, 13, 14, 12, 14, 15,  // bottom
+        16, 17, 18, 16, 18, 19,  // right
+        20, 21, 22, 20, 22, 23,  // left
     ];
 
-    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Cube")
+    (vertices, indices)
 }
 
 /// Create a procedural XZ plane centered at the origin.
 fn create_procedural_plane(device: &wgpu::Device, width: f32, depth: f32, subdivisions: u32) -> GpuMesh {
+    let (vertices, indices) = plane_geometry(width, depth, subdivisions);
+    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Plane")
+}
+
+fn plane_geometry(width: f32, depth: f32, subdivisions: u32) -> (Vec<Vertex3D>, Vec<u32>) {
     let j = [0u32, 0, 0, 0];
     let w = [1.0f32, 0.0, 0.0, 0.0];
     let segs = subdivisions + 1;
@@ -1081,11 +1078,16 @@ fn create_procedural_plane(device: &wgpu::Device, width: f32, depth: f32, subdiv
         }
     }
 
-    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Plane")
+    (vertices, indices)
 }
 
 /// Create a procedural Y-axis aligned cylinder with caps.
 fn create_procedural_cylinder(device: &wgpu::Device, radius: f32, height: f32, segments: u32) -> GpuMesh {
+    let (vertices, indices) = cylinder_geometry(radius, height, segments);
+    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Cylinder")
+}
+
+fn cylinder_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>, Vec<u32>) {
     let j = [0u32, 0, 0, 0];
     let w = [1.0f32, 0.0, 0.0, 0.0];
     let half_h = height / 2.0;
@@ -1123,7 +1125,7 @@ fn create_procedural_cylinder(device: &wgpu::Device, radius: f32, height: f32, s
         let t0 = b0 + 1;
         let b1 = b0 + 2;
         let t1 = b0 + 3;
-        indices.extend_from_slice(&[b0, t1, t0, b0, b1, t1]);
+        indices.extend_from_slice(&[b0, t0, t1, b0, t1, b1]);
     }
 
     // Top cap
@@ -1143,7 +1145,7 @@ fn create_procedural_cylinder(device: &wgpu::Device, radius: f32, height: f32, s
         });
     }
     for i in 0..segments {
-        indices.extend_from_slice(&[top_center, top_center + 1 + i, top_center + 2 + i]);
+        indices.extend_from_slice(&[top_center, top_center + 2 + i, top_center + 1 + i]);
     }
 
     // Bottom cap
@@ -1163,14 +1165,19 @@ fn create_procedural_cylinder(device: &wgpu::Device, radius: f32, height: f32, s
         });
     }
     for i in 0..segments {
-        indices.extend_from_slice(&[bot_center, bot_center + 2 + i, bot_center + 1 + i]);
+        indices.extend_from_slice(&[bot_center, bot_center + 1 + i, bot_center + 2 + i]);
     }
 
-    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Cylinder")
+    (vertices, indices)
 }
 
 /// Create a procedural Y-axis cone with a base cap.
 fn create_procedural_cone(device: &wgpu::Device, radius: f32, height: f32, segments: u32) -> GpuMesh {
+    let (vertices, indices) = cone_geometry(radius, height, segments);
+    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Cone")
+}
+
+fn cone_geometry(radius: f32, height: f32, segments: u32) -> (Vec<Vertex3D>, Vec<u32>) {
     let j = [0u32, 0, 0, 0];
     let w = [1.0f32, 0.0, 0.0, 0.0];
     let half_h = height / 2.0;
@@ -1203,7 +1210,7 @@ fn create_procedural_cone(device: &wgpu::Device, radius: f32, height: f32, segme
 
     // Side triangles
     for i in 0..segments {
-        indices.extend_from_slice(&[tip_idx, 1 + i, 2 + i]);
+        indices.extend_from_slice(&[tip_idx, 2 + i, 1 + i]);
     }
 
     // Base cap
@@ -1223,10 +1230,10 @@ fn create_procedural_cone(device: &wgpu::Device, radius: f32, height: f32, segme
         });
     }
     for i in 0..segments {
-        indices.extend_from_slice(&[bot_center, bot_center + 2 + i, bot_center + 1 + i]);
+        indices.extend_from_slice(&[bot_center, bot_center + 1 + i, bot_center + 2 + i]);
     }
 
-    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Cone")
+    (vertices, indices)
 }
 
 /// Create a procedural torus (donut) centered at the origin in the XZ plane.
@@ -1237,6 +1244,17 @@ fn create_procedural_torus(
     major_segments: u32,
     minor_segments: u32,
 ) -> GpuMesh {
+    let (vertices, indices) =
+        torus_geometry(major_radius, minor_radius, major_segments, minor_segments);
+    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Torus")
+}
+
+fn torus_geometry(
+    major_radius: f32,
+    minor_radius: f32,
+    major_segments: u32,
+    minor_segments: u32,
+) -> (Vec<Vertex3D>, Vec<u32>) {
     let j = [0u32, 0, 0, 0];
     let w = [1.0f32, 0.0, 0.0, 0.0];
     let pi2 = 2.0 * std::f32::consts::PI;
@@ -1273,11 +1291,11 @@ fn create_procedural_torus(
             let b = a + 1;
             let c = (i + 1) * ring_size + k;
             let d = c + 1;
-            indices.extend_from_slice(&[a, d, b, a, c, d]);
+            indices.extend_from_slice(&[a, b, d, a, d, c]);
         }
     }
 
-    build_procedural_gpu_mesh(device, &vertices, &indices, "Procedural Torus")
+    (vertices, indices)
 }
 
 /// Helper to build a GpuMesh from vertex and index data.
@@ -1307,5 +1325,46 @@ fn build_procedural_gpu_mesh(
         skin_data: None,
         physics_vertices: None,
         physics_indices: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Vec3;
+
+    /// The mesh passes cull back faces with `FrontFace::Ccw`, so every
+    /// triangle must wind counter-clockwise seen from the side its normals
+    /// point to. One wound the other way is culled from outside and drawn
+    /// from inside, where its normals face away from the light.
+    fn assert_wound_outward(shape: &str, (vertices, indices): (Vec<Vertex3D>, Vec<u32>)) {
+        for tri in indices.chunks_exact(3) {
+            let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| &vertices[i as usize]);
+            let (pa, pb, pc) = (
+                Vec3::from(a.position),
+                Vec3::from(b.position),
+                Vec3::from(c.position),
+            );
+            let face_normal = (pb - pa).cross(pc - pa);
+            // Triangles that collapse at a pole have no winding.
+            if face_normal.length() < 1e-6 {
+                continue;
+            }
+            let vertex_normal = Vec3::from(a.normal) + Vec3::from(b.normal) + Vec3::from(c.normal);
+            assert!(
+                face_normal.dot(vertex_normal) > 0.0,
+                "procedural {shape}: triangle {tri:?} winds clockwise seen from outside"
+            );
+        }
+    }
+
+    #[test]
+    fn procedural_meshes_wind_counter_clockwise_seen_from_outside() {
+        assert_wound_outward("cube", cube_geometry());
+        assert_wound_outward("sphere", sphere_geometry(0.5, 32, 32));
+        assert_wound_outward("plane", plane_geometry(1.0, 1.0, 4));
+        assert_wound_outward("cylinder", cylinder_geometry(0.5, 1.0, 32));
+        assert_wound_outward("cone", cone_geometry(0.5, 1.0, 32));
+        assert_wound_outward("torus", torus_geometry(0.3, 0.1, 32, 16));
     }
 }

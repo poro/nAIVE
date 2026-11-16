@@ -731,7 +731,10 @@ fn sample_shadow_pcf(world_pos: vec3<f32>) -> f32 {
     let shadow_uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, -light_ndc.y * 0.5 + 0.5);
     let shadow_depth = light_ndc.z;
 
-    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0 {
+    // Nothing outside the shadow map, beside it or past its far plane, was
+    // drawn into it, so such points are lit.
+    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0
+        || shadow_depth > 1.0 {
         return 1.0;
     }
 
@@ -1072,7 +1075,10 @@ fn sample_shadow_pcf(world_pos: vec3<f32>) -> f32 {
     let shadow_uv = vec2<f32>(light_ndc.x * 0.5 + 0.5, -light_ndc.y * 0.5 + 0.5);
     let shadow_depth = light_ndc.z;
 
-    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0 {
+    // Nothing outside the shadow map, beside it or past its far plane, was
+    // drawn into it, so such points are lit.
+    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0
+        || shadow_depth > 1.0 {
         return 1.0;
     }
 
