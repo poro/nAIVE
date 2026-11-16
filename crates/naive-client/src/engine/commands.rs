@@ -803,6 +803,23 @@ impl Engine {
         let target = crate::capture::create_capture_target(gpu);
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         self.render_scene_to(gpu, &view, None);
+        let include_ui = req
+            .params
+            .get("include_ui")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if include_ui {
+            if let (Some(ui), Some(font)) = (&self.ui_renderer, &self.bitmap_font) {
+                let mut encoder =
+                    gpu.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Capture UI Encoder"),
+                        });
+                ui.borrow()
+                    .render_last(&gpu.queue, &mut encoder, &view, &font.borrow());
+                gpu.queue.submit(std::iter::once(encoder.finish()));
+            }
+        }
         match crate::capture::save_texture_png(gpu, &target, &path) {
             Ok((width, height)) => {
                 tracing::info!("Frame captured to {:?}", path);

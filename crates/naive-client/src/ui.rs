@@ -116,6 +116,18 @@ pub struct UiRenderer {
     flash_color: [f32; 4],
     flash_remaining: f32,
     flash_duration: f32,
+    /// What the last `render` drew, so a frame capture can include the HUD.
+    last_frame: DrawnUi,
+}
+
+/// The geometry of one drawn UI frame: colored quads first, then text.
+#[derive(Default)]
+struct DrawnUi {
+    verts: Vec<Vertex2D>,
+    idx: Vec<u16>,
+    col_idx_count: usize,
+    width: u32,
+    height: u32,
 }
 
 fn alpha_blend_state() -> wgpu::BlendState {
@@ -282,6 +294,7 @@ impl UiRenderer {
             flash_color: [0.0; 4],
             flash_remaining: 0.0,
             flash_duration: 0.0,
+            last_frame: DrawnUi::default(),
         }
     }
 
@@ -386,17 +399,59 @@ impl UiRenderer {
 
         let col_vert_count = self.col_verts.len();
         let col_idx_count = self.col_idx.len();
-        let tex_idx_count = self.tex_idx.len();
-        let total_idx = col_idx_count + tex_idx_count;
+        let total_idx = col_idx_count + self.tex_idx.len();
 
-        if total_idx == 0 {
-            self.clear();
+        // Merge vertices: colored first, then textured (with offset indices)
+        let offset = col_vert_count as u16;
+        let mut verts = Vec::with_capacity(col_vert_count + self.tex_verts.len());
+        verts.extend_from_slice(&self.col_verts);
+        verts.extend_from_slice(&self.tex_verts);
+        let mut idx = Vec::with_capacity(total_idx);
+        idx.extend_from_slice(&self.col_idx);
+        idx.extend(self.tex_idx.iter().map(|&i| i + offset));
+        // Clamp to buffer capacity
+        verts.truncate(MAX_VERTICES);
+        idx.truncate(MAX_INDICES);
+
+        self.last_frame = DrawnUi {
+            verts,
+            idx,
+            col_idx_count: col_idx_count.min(MAX_INDICES),
+            width,
+            height,
+        };
+        self.draw(&self.last_frame, queue, encoder, view, font);
+        self.clear();
+    }
+
+    /// Draw the UI that the last `render` drew again, on top of `view`, for
+    /// a frame capture that includes the HUD. Draw commands queued since are
+    /// not included.
+    pub fn render_last(
+        &self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        font: &BitmapFont,
+    ) {
+        self.draw(&self.last_frame, queue, encoder, view, font);
+    }
+
+    fn draw(
+        &self,
+        frame: &DrawnUi,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        font: &BitmapFont,
+    ) {
+        if frame.idx.is_empty() {
             return;
         }
 
-        // Upload orthographic projection: (0,0) top-left, (w,h) bottom-right
-        let w = width as f32;
-        let h = height as f32;
+        // Orthographic projection: (0,0) top-left, (w,h) bottom-right
+        let w = frame.width.max(1) as f32;
+        let h = frame.height.max(1) as f32;
         #[rustfmt::skip]
         let proj: [f32; 16] = [
             2.0 / w,  0.0,      0.0, 0.0,
@@ -405,66 +460,43 @@ impl UiRenderer {
            -1.0,      1.0,      0.0, 1.0,
         ];
         queue.write_buffer(&self.proj_buffer, 0, bytemuck::cast_slice(&proj));
-
-        // Merge vertices: colored first, then textured (with offset indices)
-        let offset = col_vert_count as u16;
-        let mut all_verts = Vec::with_capacity(col_vert_count + self.tex_verts.len());
-        all_verts.extend_from_slice(&self.col_verts);
-        all_verts.extend_from_slice(&self.tex_verts);
-
-        let mut all_idx = Vec::with_capacity(total_idx);
-        all_idx.extend_from_slice(&self.col_idx);
-        for &i in &self.tex_idx {
-            all_idx.push(i + offset);
-        }
-
-        // Clamp to buffer capacity
-        let max_v = all_verts.len().min(MAX_VERTICES);
-        let max_i = all_idx.len().min(MAX_INDICES);
-        let all_verts = &all_verts[..max_v];
-        let all_idx = &all_idx[..max_i];
-
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(all_verts));
-        queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(all_idx));
+        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&frame.verts));
+        queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&frame.idx));
 
         // Render pass — LoadOp::Load preserves the 3D scene underneath
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("UI Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    depth_slice: None,
-                    view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                ..Default::default()
-            });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("UI Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            ..Default::default()
+        });
 
-            pass.set_bind_group(0, &self.proj_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        pass.set_bind_group(0, &self.proj_bind_group, &[]);
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            // Draw colored rectangles
-            let col_idx_count = col_idx_count.min(max_i) as u32;
-            if col_idx_count > 0 {
-                pass.set_pipeline(&self.colored_pipeline);
-                pass.draw_indexed(0..col_idx_count, 0, 0..1);
-            }
-
-            // Draw textured text
-            let tex_end = max_i as u32;
-            if tex_end > col_idx_count {
-                pass.set_pipeline(&self.textured_pipeline);
-                pass.set_bind_group(1, &font.bind_group, &[]);
-                pass.draw_indexed(col_idx_count..tex_end, 0, 0..1);
-            }
+        // Draw colored rectangles
+        let col_idx_count = frame.col_idx_count as u32;
+        if col_idx_count > 0 {
+            pass.set_pipeline(&self.colored_pipeline);
+            pass.draw_indexed(0..col_idx_count, 0, 0..1);
         }
 
-        self.clear();
+        // Draw textured text
+        let tex_end = frame.idx.len() as u32;
+        if tex_end > col_idx_count {
+            pass.set_pipeline(&self.textured_pipeline);
+            pass.set_bind_group(1, &font.bind_group, &[]);
+            pass.draw_indexed(col_idx_count..tex_end, 0, 0..1);
+        }
     }
 
     /// Clear per-frame draw state. Called automatically by `render()`.

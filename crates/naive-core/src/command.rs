@@ -157,8 +157,9 @@ commands! {
         look_at: Option<[f32; 3]> => "Point the camera at this world position [x, y, z]"
     };
     EditorStatus => "editor_status", "Get editor status: mode, entity count, camera position and scene path.", {};
-    CaptureFrame => "capture_frame", "Render the current frame to a PNG inside the project and return its path, so you can look at what the scene actually shows. The image is the 3D scene without the UI overlay.", {
-        path: Option<String> => "Where to write the PNG, relative to the project root (default captures/frame.png)"
+    CaptureFrame => "capture_frame", "Render the current frame to a PNG inside the project and return its path, so you can look at what the scene actually shows. By default the image is the 3D scene only; set include_ui to see the HUD as well.", {
+        path: Option<String> => "Where to write the PNG, relative to the project root (default captures/frame.png)",
+        include_ui: Option<bool> => "Also draw the HUD (what Lua drew with ui.text and ui.rect in the last frame) over the scene. Default false."
     };
     Benchmark => "benchmark", "Measure what the engine sustains: run whole frames back to back (simulation, swarms and every render pass) into an offscreen target without presenting, then report frames per second, milliseconds per frame and GPU time per pass. Unaffected by vsync or by the window being in the background. The simulation really advances.", {
         frames: Option<u32> => "Frames to run (default 240)"

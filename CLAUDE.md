@@ -150,7 +150,7 @@ When the editor is running, Claude Code can use these MCP tools via `naive_mcp`:
 | `naive_get_scene_yaml` | Get current scene as YAML string (for understanding context) |
 | `naive_set_camera` | Move/orient the editor camera (position, yaw, pitch, look_at) |
 | `naive_editor_status` | Get editor mode info, entity count, camera position |
-| `naive_capture_frame` | Render the current frame to a PNG inside the project (default `captures/frame.png`) so the agent can look at the scene. No UI overlay. |
+| `naive_capture_frame` | Render the current frame to a PNG inside the project (default `captures/frame.png`) so the agent can look at the scene. `include_ui: true` also draws the HUD as the last frame drew it (while paused, scripts draw no HUD). |
 | `naive_benchmark` | Run N whole frames back to back offscreen (no vsync, no window throttling) and report fps, ms per frame and GPU time per pass. The simulation advances. Use this, not the on-screen frame rate, to measure performance |
 | `naive_run_tests` | Run the project's Lua tests headlessly inside the running engine (one file or all from `naive.yaml`) and get each result; the scene on screen is untouched |
 | `naive_screenshot_diff` | Compare two PNG captures in the project: changed pixels, max and mean difference, and a diff image (changes in red) |
