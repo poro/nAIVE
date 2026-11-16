@@ -83,6 +83,17 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace --exclude naive-web --locked
 
+      # Game bundles ship naive-player, which must run without the Slang SDK.
+      # It is built on its own: building it with the workspace would unify
+      # naive-runtime's default slang feature into it.
+      - name: naive-player links no Slang library
+        run: |
+          cargo build --locked -p naive-player
+          if otool -L target/debug/naive-player | grep -i slang; then
+            echo "naive-player links a Slang library"
+            exit 1
+          fi
+
       # Headless Lua tests of the demo scenes. They need no GPU or window.
       - name: Scene tests
         working-directory: project

@@ -24,10 +24,21 @@ and transitions scenes through an `on_destroy` hook that edits its entity.
 Linux CI uses Xvfb and Mesa software
 Vulkan so this path is exercised without a physical display. Failed runs must
 fail CI rather than silently skip rendering. This proves the built-in WGSL
-distribution works independently of the source checkout and SDK. A default
-Slang-enabled bundle still needs Slang shared libraries installed on its target;
-it is not a self-contained SDK distribution. Use `--slang` for an additional
-SDK-enabled smoke run, or `--no-build` to exercise already-built release binaries.
+distribution works independently of the source checkout and SDK. Bundles ship
+`naive-player` rather than the `naive` binary that built them; the smoke test
+checks that it links no Slang library and starts it from another directory with
+no subcommand, so it must find the game packaged beside it. Use `--slang` to
+build the `naive` CLI with Slang as an additional run, or `--no-build` to
+exercise already-built release binaries.
+
+`naive-player` is the `naive` program built without the `slang` feature. Build
+it on its own (`cargo build --release -p naive-player`): cargo unifies features
+across packages built together, so building it in the same invocation as
+`naive-runtime`'s default features would link Slang into it. For that reason it
+is not a default workspace member. With Slang, `naive build` compiles each
+`shaders/**/*.slang` to WGSL and writes it next to the source as
+`<name>.slang.wgsl`; without Slang, the engine loads that file in place of
+compiling. Files with no entry points are imported modules and are skipped.
 
 The Slang-free job deliberately installs no SDK. It tests built-in WGSL and
 headless simulation; it does not validate runtime Slang compilation. The web
@@ -67,12 +78,33 @@ project. The command socket is local developer control: access is limited to
 the engine's user. Use a private directory and an explicit `--socket` for
 concurrent instances. Processes running as the same user remain trusted.
 
-The socket refuses every pre-existing path, including a socket left by a crash.
-Choose a new `--socket` path or explicitly remove a known stale socket before
-restarting. It limits connections to 16, queued commands to 64 and requests to
-1 MiB; waits for responses and client input have timeouts.
+An existing socket path is replaced only when it is a socket owned by the same
+user that refuses connections, which is what a crashed or killed engine leaves.
+A live engine, another user's socket, a symlink or any other file is never
+touched. The server limits connections to 16, queued commands to 64 and
+requests to 1 MiB; waits for responses and client input have timeouts. A game
+started from a bundle opens no socket unless `--socket` is given.
 
 glTF external resources currently require plain relative URIs; schemes and
 percent-encoded paths are rejected. Packaging refuses symlinks in content and
 output directories and requires a safe ASCII project name. Project confinement
 assumes an untrusted process is not simultaneously modifying the project tree.
+
+## Shipping a macOS app
+
+`naive build` produces `dist/<name>.app`, signed ad hoc so it runs on the Mac
+that built it. Gatekeeper blocks ad-hoc-signed apps downloaded from the
+internet, so an app for other people must be signed with a Developer ID
+Application certificate (Apple Developer Program) and notarized:
+
+```sh
+codesign --force --options runtime --timestamp \
+  --sign "Developer ID Application: <Name> (<TEAMID>)" dist/<name>.app
+ditto -c -k --keepParent dist/<name>.app <name>.zip
+xcrun notarytool submit <name>.zip --apple-id <id> --team-id <TEAMID> \
+  --password <app-specific-password> --wait
+xcrun stapler staple dist/<name>.app
+```
+
+Zip the stapled app again for distribution. The release workflow runs these
+steps when the signing secrets are configured.

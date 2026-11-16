@@ -457,7 +457,7 @@ fn compile_pass_shader(
     if shader_path.exists() {
         match crate::shader::compile_slang_to_wgsl_public(shader_path) {
             Ok(wgsl) => {
-                tracing::info!("SLANG compiled for pass '{}': {:?}", pass_name, shader_path);
+                tracing::info!("Shader for pass '{}': {:?}", pass_name, shader_path);
                 return Ok(wgsl);
             }
             Err(e) => {

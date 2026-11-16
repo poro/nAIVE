@@ -1,7 +1,8 @@
 //! The nAIVE command-line program. The `naive` and `naive-runtime` binaries
 //! are the same program under two names; both call [`run`].
 
-use clap::Parser;
+use clap::parser::ValueSource;
+use clap::{CommandFactory, FromArgMatches};
 use naive_client::cli::CliArgs;
 
 /// Parse the command line and run the requested subcommand.
@@ -13,8 +14,19 @@ pub fn run() {
         )
         .init();
 
-    let args = CliArgs::parse();
+    let matches = CliArgs::command().get_matches();
+    let args = CliArgs::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    let given = |id: &str| matches.value_source(id) == Some(ValueSource::CommandLine);
     tracing::info!("nAIVE runtime v{}", env!("CARGO_PKG_VERSION"));
+
+    // A player shipped in a game bundle runs that game when started without a
+    // subcommand or --project, as it is when the app is opened.
+    if args.command.is_none() && !given("project") {
+        if let Some(game) = naive_client::build::bundled_game_dir() {
+            run_bundled_game(&game, &args, given("socket"));
+            return;
+        }
+    }
 
     match &args.command {
         // naive init <name>
@@ -382,6 +394,30 @@ pub fn run() {
             run_engine(args);
         }
     }
+}
+
+/// Run the game a bundle was shipped with. It has no command socket unless
+/// --socket was given: a shipped game should not accept commands.
+fn run_bundled_game(game: &std::path::Path, args: &CliArgs, socket_given: bool) {
+    let config = match naive_client::project_config::load_config(&game.join("naive.yaml")) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+    tracing::info!("Bundled game: {} v{}", config.name, config.version);
+    let socket = if socket_given {
+        args.socket.clone()
+    } else {
+        String::new()
+    };
+    let mut cli_args = naive_client::project_config::to_cli_args(&config, game, &socket);
+    if args.scene.is_some() {
+        cli_args.scene = args.scene.clone();
+    }
+    cli_args.hud = args.hud;
+    run_engine(cli_args);
 }
 
 fn run_single_test(project_root: &std::path::Path, test_path: &std::path::Path) {

@@ -19,6 +19,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `naive-core` | Scene schema, shared types, typed command requests/responses and MCP tool schemas |
 | `naive-client` | Engine loop, renderer, physics, scripting, world management |
 | `naive-runtime` | CLI binary (`naive`, `naive-runtime`, `naive_mcp`) |
+| `naive-player` | `naive` built without Slang; `naive build` ships it in game bundles. Build it alone (`cargo build -p naive-player`) so feature unification cannot link Slang into it |
 | `naive-server` | Multiplayer server (stub — future) |
 | `naive-web` | Minimal WASM + WebGPU clear-canvas prototype (`crates/naive-web`, `cdylib`); not the native game runtime |
 

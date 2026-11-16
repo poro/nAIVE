@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build, bundle and exercise a release with a real display/GPU (or Xvfb + Vulkan).
 
-Default: builtin WGSL/no SDK, so the copied bundle must run independently of
-vendor/. Pass --slang to exercise a Slang-enabled build as a separate check.
+Default: builtin WGSL/no SDK. Pass --slang to build the `naive` CLI with Slang
+as a separate check. Either way the bundle ships naive-player, built without
+Slang, and must run independently of the source checkout and vendor/.
 Artifacts and logs are retained in the printed temporary directory on failure.
 """
 
@@ -117,6 +118,8 @@ def main():
         if not args.slang:
             build.append("--no-default-features")
         run(build, repo)
+        # Built on its own so feature unification cannot link Slang into it.
+        run(["cargo", "build", "--release", "--locked", "-p", "naive-player"], repo)
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--no-deps", "--format-version", "1"], cwd=repo))
     release = Path(metadata["target_directory"]) / "release"
@@ -130,10 +133,19 @@ def main():
         raise AssertionError("expected exactly one release bundle")
     # Move the bundle out of its source project to detect accidental relative
     # references to unpackaged project content.
-    bundle = temporary / "standalone"
+    bundle = temporary / bundles[0].name
     shutil.move(str(bundles[0]), bundle)
-    binary = bundle / "naive-runtime"
-    result = subprocess.run([binary, "test"], cwd=bundle, capture_output=True,
+    if bundle.suffix == ".app":
+        binary = bundle / "Contents" / "MacOS" / "release-smoke"
+        game = bundle / "Contents" / "Resources" / "game"
+    else:
+        binary = bundle / "release-smoke"
+        game = bundle / "game"
+    linker = ["otool", "-L"] if sys.platform == "darwin" else ["ldd"]
+    libraries = subprocess.check_output(linker + [str(binary)], text=True)
+    if "slang" in libraries.lower():
+        raise AssertionError(f"shipped player links Slang:\n{libraries}")
+    result = subprocess.run([binary, "test"], cwd=game, capture_output=True,
                             text=True, timeout=60, check=True)
     print(result.stdout, end="", flush=True)
     if "1 passed, 0 failed" not in result.stdout:
@@ -143,9 +155,11 @@ def main():
     socket_path = private / "runtime.sock"
     log_path = temporary / "runtime.log"
     with log_path.open("w") as log:
+        # Started from elsewhere with no subcommand, the player finds the game
+        # packaged beside it, as when the app is opened.
         process = subprocess.Popen(
-            [bundle / "launch.sh", "--socket", socket_path],
-            cwd=bundle, stdout=log, stderr=log)
+            [binary, "--socket", socket_path],
+            cwd=temporary, stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
@@ -165,19 +179,19 @@ def main():
                     'assert(entity.exists("smoke_cube")); '
                     'entity.set_position("smoke_cube", 0, 1, 0); return "release-ok"'}}}
             bridge = subprocess.run([release / "naive_mcp", socket_path],
-                input=json.dumps(request) + "\n", cwd=bundle,
+                input=json.dumps(request) + "\n", cwd=game,
                 capture_output=True, text=True, timeout=30, check=True)
             response = json.loads(bridge.stdout)
             assert not response["result"].get("isError"), response
             returned = json.loads(response["result"]["content"][0]["text"])
             assert returned["data"]["result"] == "release-ok", returned
             command(socket_path, "capture_frame", path="captures/release.png")
-            verify_png(bundle / "captures" / "release.png")
+            verify_png(game / "captures" / "release.png")
 
             # Authoring round trip: preserve script, health, physics and flags.
             command(socket_path, "run_lua", code='entity.set_health("smoke_cube", 73, 100)')
             command(socket_path, "save_scene", path="scenes/roundtrip.yaml")
-            roundtrip = subprocess.run([binary, "test", "tests/roundtrip.lua"], cwd=bundle,
+            roundtrip = subprocess.run([binary, "test", "tests/roundtrip.lua"], cwd=game,
                 capture_output=True, text=True, timeout=60)
             if roundtrip.returncode:
                 raise AssertionError(roundtrip.stdout + roundtrip.stderr)
@@ -245,7 +259,7 @@ def main():
                 with stream.makefile("rb") as reader:
                     refused = json.loads(reader.readline())
             assert refused["status"] == "error", refused
-            assert not (temporary / "escaped.yaml").exists()
+            assert not (game.parent / "escaped.yaml").exists()
         except Exception:
             # CI runners discard their temporary directories. Include the
             # actual engine error rather than only a path to an unavailable log.

@@ -695,25 +695,22 @@ Bundle your game into a standalone distributable:
 naive build
 ```
 
-The bundle contains the engine binary you are running, so `naive build` builds for the platform you run it on and cannot cross-compile. To ship for another platform, run it there. macOS is the supported platform; Linux compiles but is untested, and Windows is not supported yet.
+The bundle contains `naive-player`, the engine built without the Slang shader compiler, so it runs on machines with no SDK installed. Your Slang shaders are compiled to WGSL while bundling and saved beside each source as `<name>.slang.wgsl`; the player loads those. The player is built for the machine you bundle on, so `naive build` cannot cross-compile: to ship for another platform, run it there. macOS is the supported platform; Linux compiles but is untested, and Windows is not supported yet.
 
-This creates a `dist/` directory with:
+On macOS this creates an app:
 
 ```
-dist/my-game-macos/
-├── naive-runtime          # Engine binary
-├── naive.yaml             # Project config
-├── launch.sh              # Launcher script
-├── scenes/                # All game content
-├── logic/
-├── assets/
-├── shaders/
-├── pipelines/
-├── input/
-└── events/
+dist/my-game.app/Contents/
+├── Info.plist
+├── MacOS/my-game          # naive-player, named after your game
+└── Resources/game/        # naive.yaml and all game content
+    ├── scenes/  logic/  assets/  pipelines/  input/  events/  tests/
+    └── shaders/passes/bloom.slang + bloom.slang.wgsl ...
 ```
 
-Players run the game with `./launch.sh`.
+Players open `my-game.app`. On Linux the bundle is `dist/my-game-linux/` with the `my-game` binary next to a `game/` directory; players run `./my-game`. Started with no arguments, the player runs the game packaged beside it, opens no command socket, and loads the project's `default_scene`. Pass `--socket <path>` to control a bundled game over MCP while testing it.
+
+`naive build` signs the app ad hoc, which is enough to run it on your Mac. Other Macs will refuse an app downloaded from the internet unless it is signed with an Apple Developer ID and notarized; see [development and release checks](DEVELOPMENT.md#shipping-a-macos-app).
 
 ## 10. Publishing
 

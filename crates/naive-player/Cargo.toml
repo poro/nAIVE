@@ -1,0 +1,16 @@
+[package]
+name = "naive-player"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+description = "The naive program built without the Slang SDK, shipped inside game bundles by `naive build`"
+publish = false
+
+# Build this crate on its own (`cargo build --release -p naive-player`). Cargo
+# unifies features across packages built together, so building it alongside
+# naive-runtime's default features would link the Slang libraries into it.
+# That is why it is left out of the workspace's default members.
+
+[dependencies]
+naive-runtime = { path = "../naive-runtime", default-features = false }
