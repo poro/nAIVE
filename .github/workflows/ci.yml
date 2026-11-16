@@ -22,6 +22,9 @@ env:
   CARGO_TERM_COLOR: always
   # Keep in step with the README and the Homebrew formula.
   SLANG_VERSION: "2026.2.2"
+  # Pinned because clippy warnings fail the build: a newer clippy can add
+  # lints, and that should not break CI without a code change. Bump on purpose.
+  RUST_TOOLCHAIN: "1.100.0"
 
 jobs:
   test-macos:
@@ -30,6 +33,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          rustup default "$RUST_TOOLCHAIN"
 
       # .cargo/config.toml points SLANG_DIR and the runtime library path at vendor/.
       - name: Install SLANG SDK
@@ -48,9 +56,9 @@ jobs:
         working-directory: project
         run: cargo run --locked -p naive-runtime --bin naive -- test
 
-      # Fails on clippy errors only. The existing warnings are not denied yet.
+      # Any warning fails the build, in test code too.
       - name: Clippy
-        run: cargo clippy --workspace --exclude naive-web --locked
+        run: cargo clippy --workspace --exclude naive-web --all-targets --locked -- -D warnings
 
   check-linux:
     name: Check (Linux)
@@ -58,6 +66,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
 
       - name: Install system libraries
         run: |
@@ -83,8 +96,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Add the wasm target
-        run: rustup target add wasm32-unknown-unknown
+      - name: Install Rust with the wasm target
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+          rustup default "$RUST_TOOLCHAIN"
 
       - uses: Swatinem/rust-cache@v2
 
