@@ -97,13 +97,20 @@ events.on("swarm.player_hit", function(e) ... end)
 
 ### What has to be built in the engine
 
-- `PassType::Compute` in the pipeline. Today the compiler rejects it and the executor skips it.
-- Compute entry points in the shader path. Today only `vs_main` and `fs_main` are handled. Each compute shader also gets a hand-written WGSL fallback, as the other passes have, so it works without SLANG and on the web.
-- Instanced pipelines for the shadow and G-buffer passes. Done in milestone 1: both passes read per-entity data from a storage buffer indexed by instance. Swarm members will need their own buffer, since theirs is written by the compute pass.
+- Instanced pipelines for the shadow and G-buffer passes. Done in milestone 1: both passes read per-entity data from a storage buffer indexed by instance.
+- The swarm compute step. Done in milestone 2, differently from this plan's first draft: the swarm system (`crates/naive-client/src/swarm.rs`) owns its compute pipeline and dispatches it once per frame, before rendering, instead of being a `PassType::Compute` pass in the project's render pipeline file. Simulation is engine logic rather than a render pass a project should configure, existing projects need no pipeline changes, and a frame capture renders the scene again without stepping the swarm a second time. `PassType::Compute` stays unsupported until something needs it. The shader is hand-written WGSL; SLANG is not involved.
+- Each swarm writes its members' draw data (the same 256-byte entries the instanced shaders read) into its own buffer, and is drawn with one instanced draw per pass using that buffer. One binding holds at most the device's storage-binding size, 128 MB by default, so a swarm is capped at 524,288 members; larger counts are clamped with a warning.
 
 ### Testing
 
 The headless test runner has no GPU, so the compute path cannot run in `naive test` or in CI as it stands. The plan is a CPU reference implementation of one simulation step in Rust, with the same maths, covered by unit tests (separation keeps spacing, members converge along the flow field, damage volumes kill what they touch). The GPU path is checked by a benchmark scene and by eye.
+
+As built in milestone 2:
+
+- `swarm::step_member` is the CPU reference, with unit tests (members reach their slots, never exceed top speed, stay on their plane, face the way they move; spawning is deterministic).
+- A test parses and validates every built-in WGSL shader with naga, the compiler wgpu uses, and checks each shader's copy of `DrawUniforms` is 256 bytes. It runs in CI without a GPU, and caught a reserved word in the first swarm shader.
+- `gpu_step_matches_the_cpu_reference` runs the real compute shader and compares 300 members over 90 steps with the CPU reference. It needs a GPU, so it is `#[ignore]`d in CI: `cargo test -p naive-client --lib -- --ignored gpu_step`.
+- Claude can look at the result with `capture_frame`.
 
 ## Milestones
 
@@ -113,12 +120,25 @@ Each one ends with a number or a scene to look at.
 |---|---|---|---|
 | 0 | Stop the per-entity bone upload | Measured above. Pull request #11 | Done |
 | 1 | Instanced drawing for ECS entities that share a mesh and material | Measured above; regression captures pixel-identical | Done |
-| 2 | Compute pass plumbing and the `gpu_swarm` component: members move toward a target, drawn instanced | 50,000 moving cubes at 60 fps in a new `tier4_swarm` scene | Large |
+| 2 | Compute pass plumbing and the `gpu_swarm` component: members move toward a target, drawn instanced | `scenes/tier4_swarm.yaml`: 50,000 to 400,000 members at 120 fps (the display cap) | Done |
 | 3 | Neighbour grid and flow field | Members spread out instead of stacking and path around obstacles | Large |
 | 4 | Damage volumes, contact damage, death, spawn waves, the Lua API and events | A HAVOC wave 1 to 3 prototype: 1,000 to 5,000 members you can fight | Large |
 | 5 | Scale-up and tidy | 50,000 members at 60 fps on this MacBook; README's Tier 4 row marked done | Medium |
 
 Milestone 1 came before any compute work because swarms need instancing anyway, and it lifted the ceiling for ordinary entities on the way: from about 6,000 to about 100,000 static entities at 60 fps.
+
+Milestone 2 measured, release build, same MacBook, `tier4_swarm` scene with its member count changed:
+
+| Members | Frame rate |
+|---|---|
+| 50,000 | 119 fps |
+| 100,000 | 117 fps |
+| 200,000 | 118 fps |
+| 400,000 | 118 fps |
+
+All at the display's 120 Hz cap, so the real ceiling is higher; the 524,288-member limit per swarm comes first. Members in milestone 2 only steer toward slots around the target. Separation, the neighbour grid and the flow field (milestone 3) add the work that will actually cost frame time.
+
+In `gpu_swarm`, each member steers to its own slot on an even spiral around the target, `spacing` apart, so members keep apart without any neighbour checks. Milestone 3 replaces that with real separation.
 
 ## Not in Tier 4
 
@@ -129,11 +149,10 @@ Milestone 1 came before any compute work because swarms need instancing anyway, 
 
 ## Risks
 
-- **Nobody is looking at the screen but you.** I can measure frame rates and catch crashes, but each milestone needs you to run a scene for a minute and say it looks right.
-- **SLANG compute shaders are untried here.** If the compile path fights back, the WGSL fallback carries the work and SLANG support follows later.
-- **The GPU path is outside CI.** The CPU reference covers the maths, not the shader.
+- **Looking at the screen.** Since `capture_frame` (pull request #13) Claude can look at renders itself, but a capture is one still frame; motion and feel still want you to run a scene.
+- **The GPU path is outside CI.** CI validates the shaders and the CPU reference covers the maths; the GPU-versus-CPU test only runs by hand.
 - **Projectiles no longer "hit" horde members physically.** They become rays or small damage volumes. Anything that relied on a Rapier contact with a goblin has to be expressed that way.
-- **The 50,000 figure is a target, not a measurement.** The grid pass is the likely bottleneck, and its cost is unknown until milestone 3.
+- **The 50,000 figure is met for movement alone.** The grid pass is the likely bottleneck, and its cost is unknown until milestone 3.
 
 ## Decisions
 

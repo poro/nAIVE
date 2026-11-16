@@ -1614,3 +1614,69 @@ fn fs_main() {
 "#
     .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse and validate a WGSL source the way wgpu would, without a GPU.
+    fn validate(name: &str, source: &str) -> naga::Module {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{name} does not parse:\n{}", e.emit_to_string(source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name} does not validate:\n{}", e.emit_to_string(source)));
+        module
+    }
+
+    #[test]
+    fn built_in_shaders_are_valid_wgsl() {
+        let shaders: [(&str, String); 11] = [
+            ("triangle", get_triangle_wgsl()),
+            ("mesh forward", get_mesh_forward_wgsl()),
+            ("gbuffer", get_gbuffer_wgsl()),
+            ("deferred light", get_deferred_light_wgsl()),
+            ("splat render", get_splat_render_wgsl()),
+            ("deferred light with splats", get_deferred_light_with_splats_wgsl()),
+            ("bloom", get_bloom_wgsl()),
+            ("tonemap", get_tonemap_wgsl()),
+            ("fxaa", get_fxaa_wgsl()),
+            ("shadow depth", get_shadow_depth_wgsl()),
+            ("swarm compute", crate::swarm::SWARM_COMPUTE_WGSL.to_string()),
+        ];
+        for (name, source) in &shaders {
+            validate(name, source);
+        }
+    }
+
+    /// The instanced shaders and the swarm compute shader index arrays of
+    /// `DrawUniforms` written from the CPU struct, so every copy of the struct
+    /// must have the CPU struct's size.
+    #[test]
+    fn draw_uniforms_match_the_cpu_struct() {
+        let shaders = [
+            ("gbuffer", get_gbuffer_wgsl()),
+            ("shadow depth", get_shadow_depth_wgsl()),
+            ("swarm compute", crate::swarm::SWARM_COMPUTE_WGSL.to_string()),
+        ];
+        for (name, source) in &shaders {
+            let module = validate(name, source);
+            let span = module
+                .types
+                .iter()
+                .find_map(|(_, ty)| match (&ty.name, &ty.inner) {
+                    (Some(n), naga::TypeInner::Struct { span, .. }) if n == "DrawUniforms" => Some(*span),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{name} has no DrawUniforms struct"));
+            assert_eq!(
+                u64::from(span),
+                crate::renderer::DRAW_UNIFORM_SIZE,
+                "{name}'s DrawUniforms is {span} bytes"
+            );
+        }
+    }
+}

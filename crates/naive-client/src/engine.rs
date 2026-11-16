@@ -88,6 +88,9 @@ pub struct Engine {
     // Tier 2: Particle system
     pub particle_system: Rc<RefCell<crate::particles::ParticleSystem>>,
 
+    // Tier 4: GPU swarms (members simulated and drawn on the GPU)
+    pub swarm_system: crate::swarm::SwarmSystem,
+
     // Tier 2: Lua event listeners
     pub lua_event_listeners: Rc<RefCell<HashMap<String, Vec<mlua::RegistryKey>>>>,
     pub next_lua_listener_id: Rc<RefCell<u64>>,
@@ -161,6 +164,7 @@ impl Engine {
             entity_commands: Rc::new(RefCell::new(crate::world::EntityCommandQueue::new())),
             pool_manager: Rc::new(RefCell::new(crate::world::EntityPoolManager::new())),
             particle_system: Rc::new(RefCell::new(crate::particles::ParticleSystem::new())),
+            swarm_system: crate::swarm::SwarmSystem::new(),
             lua_event_listeners: Rc::new(RefCell::new(HashMap::new())),
             next_lua_listener_id: Rc::new(RefCell::new(0)),
             lua_listener_id_map: Rc::new(RefCell::new(HashMap::new())),
@@ -2677,6 +2681,11 @@ let mut scene_world = scene_world.borrow_mut();
                 });
             }
 
+            // GpuSwarm
+            if let Ok(swarm) = scene_world.world.get::<&crate::components::GpuSwarm>(entity) {
+                components.gpu_swarm = Some(swarm.def.clone());
+            }
+
             // Tags
             let tags = scene_world.world.get::<&Tags>(entity)
                 .map(|t| t.0.clone())
@@ -3070,6 +3079,22 @@ let input = input.borrow();
             draw_pool.ensure_capacity(&gpu.device, visible_count);
         }
 
+        // Tier 4: step GPU swarms once per frame (not again for captures).
+        // While paused they only rewrite their draw data.
+        if let (Some(gpu), Some(scene_world), Some(draw_pool)) =
+            (&self.gpu, &self.scene_world, &self.draw_pool)
+        {
+            let dt = if self.paused { 0.0 } else { self.delta_time };
+            self.swarm_system.update(
+                gpu,
+                &scene_world.borrow(),
+                &self.mesh_cache,
+                &self.material_cache,
+                draw_pool,
+                dt,
+            );
+        }
+
         // Sort splats for correct alpha blending (CPU back-to-front)
         if let (Some(gpu), Some(scene_world), Some(camera_state)) =
             (&self.gpu, &self.scene_world, &self.camera_state)
@@ -3125,6 +3150,7 @@ let input = input.borrow();
                     self.texture_resources.as_ref(),
                     &self.bone_palettes,
                     Some(&self.texture_cache),
+                    &self.swarm_system.draws(),
                 );
                 gpu.queue.submit(std::iter::once(encoder.finish()));
             }

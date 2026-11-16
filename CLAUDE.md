@@ -34,6 +34,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/scripting.rs` | Lua API registration (physics, entity, camera, scene, events) |
 | `crates/naive-client/src/renderer.rs` | wgpu render pipeline, instance buffers, particles |
 | `crates/naive-client/src/pipeline/` | CompiledPipeline — YAML render-pass DAG (split into `def`/`resource`/`compiler`/`executor`/`mod`) |
+| `crates/naive-client/src/swarm.rs` | GPU swarms (`gpu_swarm` component): compute shader moves members and writes their draw data, one instanced draw per swarm per pass; `step_member` is the CPU reference for tests. Plan: `docs/tier4-plan.md` |
 | `crates/naive-client/src/debug_draw.rs` | Wireframe physics collider visualization (toggle: H key) |
 | `crates/naive-client/src/command.rs` | Command socket — newline-delimited JSON over a Unix domain socket (default `/tmp/naive-runtime.sock`); `naive_mcp` bridges it to MCP |
 | `crates/naive-client/src/test_runner.rs` | Headless test runner for `naive test` CLI command |

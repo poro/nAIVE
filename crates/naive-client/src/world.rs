@@ -246,7 +246,7 @@ fn spawn_entity(
     splat_cache: &mut SplatCache,
     physics_world: Option<&mut PhysicsWorld>,
     texture_resources: Option<&crate::mesh::TextureResources>,
-    texture_cache: Option<&mut crate::texture_cache::TextureCache>,
+    mut texture_cache: Option<&mut crate::texture_cache::TextureCache>,
 ) {
     let entity_id = EntityId(entity_def.id.clone());
     let tags = Tags(entity_def.tags.clone());
@@ -291,7 +291,7 @@ fn spawn_entity(
             }
         };
         let tex_layout = texture_resources.map(|tr| &tr.bind_group_layout);
-        let material_handle = match material_cache.get_or_load(device, queue, project_root, &mr.material, texture_cache, tex_layout) {
+        let material_handle = match material_cache.get_or_load(device, queue, project_root, &mr.material, texture_cache.as_deref_mut(), tex_layout) {
             Ok(h) => h,
             Err(e) => {
                 tracing::error!("Failed to load material '{}' for entity '{}': {}", mr.material, entity_def.id, e);
@@ -413,6 +413,36 @@ fn spawn_entity(
             enabled: pe_def.enabled,
         };
         let _ = scene_world.world.insert_one(entity, emitter);
+    }
+
+    // Attach GpuSwarm if defined. The swarm system creates its GPU buffers.
+    if let Some(swarm_def) = &entity_def.components.gpu_swarm {
+        let mesh = mesh_cache.get_or_load(device, queue, project_root, &swarm_def.mesh, texture_resources);
+        let tex_layout = texture_resources.map(|tr| &tr.bind_group_layout);
+        let material = material_cache.get_or_load(
+            device,
+            queue,
+            project_root,
+            &swarm_def.material,
+            texture_cache,
+            tex_layout,
+        );
+        match (mesh, material) {
+            (Ok(mesh_handle), Ok(material_handle)) => {
+                let swarm = crate::components::GpuSwarm {
+                    def: swarm_def.clone(),
+                    mesh_handle,
+                    material_handle,
+                };
+                let _ = scene_world.world.insert_one(entity, swarm);
+            }
+            (Err(e), _) => {
+                tracing::error!("Failed to load swarm mesh '{}' for entity '{}': {}", swarm_def.mesh, entity_def.id, e);
+            }
+            (_, Err(e)) => {
+                tracing::error!("Failed to load swarm material '{}' for entity '{}': {}", swarm_def.material, entity_def.id, e);
+            }
+        }
     }
 
     // Attach CameraMode component if camera mode is third_person
@@ -1101,7 +1131,9 @@ fn patch_entity(
         || old_def.components.character_controller.is_some() != new_def.components.character_controller.is_some()
         || old_def.components.gaussian_splat.is_some() != new_def.components.gaussian_splat.is_some()
         || old_def.components.mesh_renderer.is_some() != new_def.components.mesh_renderer.is_some()
-        || old_def.components.script.is_some() != new_def.components.script.is_some();
+        || old_def.components.script.is_some() != new_def.components.script.is_some()
+        // Any swarm change rebuilds the swarm, which respawns its members.
+        || old_def.components.gpu_swarm != new_def.components.gpu_swarm;
 
     if structural_change {
         return true;
