@@ -17,7 +17,11 @@ struct LightingUniforms {
     float dir_light_intensity;
     float3 dir_light_color;
     float _pad_c;
-    float4x4 light_vp;
+    // Shadow cascades: each one's light view-projection, the view depth where
+    // each one ends and its depth bias. Cascade i uses tile (i % 2, i / 2).
+    float4x4 cascade_vp[4];
+    float4 cascade_splits;
+    float4 cascade_bias;
     PointLight lights[32];
 };
 
@@ -75,26 +79,43 @@ float3 fresnelSchlick(float cosTheta, float3 F0) {
 }
 
 float sampleShadowPCF(float3 worldPos) {
-    float4 lightClip = mul(lighting.light_vp, float4(worldPos, 1.0));
+    // The nearest cascade that reaches this point's distance from the camera.
+    float viewDepth = -mul(camera.view, float4(worldPos, 1.0)).z;
+    int cascade = 4;
+    for (int i = 0; i < 4; i++) {
+        if (viewDepth <= lighting.cascade_splits[i]) {
+            cascade = i;
+            break;
+        }
+    }
+    // Beyond the last cascade shadows end.
+    if (cascade >= 4)
+        return 1.0;
+
+    float4 lightClip = mul(lighting.cascade_vp[cascade], float4(worldPos, 1.0));
     float3 lightNdc = lightClip.xyz / lightClip.w;
-    float2 shadowUV = float2(lightNdc.x * 0.5 + 0.5, -lightNdc.y * 0.5 + 0.5);
+    float2 localUV = float2(lightNdc.x * 0.5 + 0.5, -lightNdc.y * 0.5 + 0.5);
     float shadowDepth = lightNdc.z;
 
-    // Nothing outside the shadow map, beside it or past its far plane, was
+    // Nothing outside the cascade, beside it or past its far plane, was
     // drawn into it, so such points are lit.
-    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0
+    if (localUV.x < 0.0 || localUV.x > 1.0 || localUV.y < 0.0 || localUV.y > 1.0
         || shadowDepth > 1.0)
         return 1.0;
 
     uint w, h;
     shadow_map.GetDimensions(w, h);
     float2 texelSize = 1.0 / float2(w, h);
+    float2 tile = float2(float(cascade % 2), float(cascade / 2)) * 0.5;
+    // Keep the 5x5 filter inside this cascade's tile.
+    float2 shadowUV = clamp(tile + localUV * 0.5, tile + texelSize * 2.5,
+                            tile + float2(0.5, 0.5) - texelSize * 2.5);
 
     float shadow = 0.0;
     for (int y = -2; y <= 2; y++) {
         for (int x = -2; x <= 2; x++) {
             float2 offset = float2(x, y) * texelSize;
-            shadow += shadow_map.SampleCmpLevelZero(shadow_sampler, shadowUV + offset, shadowDepth - 0.005);
+            shadow += shadow_map.SampleCmpLevelZero(shadow_sampler, shadowUV + offset, shadowDepth - lighting.cascade_bias[cascade]);
         }
     }
     return shadow / 25.0;

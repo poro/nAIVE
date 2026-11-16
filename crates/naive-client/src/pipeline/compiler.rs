@@ -10,6 +10,7 @@ use crate::renderer::DrawUniformPool;
 use super::def::{PipelineError, PipelineFile};
 use super::resource::{
     allocate_resources, GpuResource, LightingUniforms, PassType, ShadowUniforms,
+    SHADOW_UNIFORM_STRIDE,
 };
 use super::{CompiledPass, CompiledPipeline};
 
@@ -334,14 +335,14 @@ pub fn compile_pipeline(
             }
             PassType::Shadow => {
                 // Create shadow pass resources
-                let shadow_uniform_data = ShadowUniforms {
-                    light_view_projection: [[0.0; 4]; 4],
-                };
-                let shadow_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                // One slot per cascade, picked with a dynamic offset.
+                let shadow_buf = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Shadow Uniform Buffer"),
-                    contents: bytemuck::cast_slice(&[shadow_uniform_data]),
+                    size: SHADOW_UNIFORM_STRIDE * crate::shadows::CASCADES as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
                 });
+                let slot_size = wgpu::BufferSize::new(std::mem::size_of::<ShadowUniforms>() as u64);
 
                 let shadow_bg_layout =
                     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -351,8 +352,8 @@ pub fn compile_pipeline(
                             visibility: wgpu::ShaderStages::VERTEX,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
+                                has_dynamic_offset: true,
+                                min_binding_size: slot_size,
                             },
                             count: None,
                         }],
@@ -363,7 +364,11 @@ pub fn compile_pipeline(
                     layout: &shadow_bg_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: shadow_buf.as_entire_binding(),
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &shadow_buf,
+                            offset: 0,
+                            size: slot_size,
+                        }),
                     }],
                 });
 

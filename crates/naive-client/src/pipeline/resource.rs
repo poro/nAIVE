@@ -199,12 +199,18 @@ pub struct PointLightUniform {
     pub intensity: f32,
 }
 
-/// Shadow pass uniforms (light view-projection matrix).
+/// Shadow pass uniforms: one cascade's light view-projection matrix. The
+/// buffer holds one per cascade, `SHADOW_UNIFORM_STRIDE` bytes apart, selected
+/// with a dynamic offset.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ShadowUniforms {
     pub light_view_projection: [[f32; 4]; 4],
 }
+
+/// Distance between cascades in the shadow uniform buffer: the minimum
+/// dynamic uniform offset alignment wgpu guarantees.
+pub const SHADOW_UNIFORM_STRIDE: u64 = 256;
 
 /// Light data buffer header + array.
 pub const MAX_LIGHTS: usize = 32;
@@ -220,9 +226,13 @@ pub struct LightingUniforms {
     pub dir_light_intensity: f32,
     pub dir_light_color: [f32; 3],
     pub _pad2: f32,
-    // Shadow light VP matrix (offset 64)
-    pub light_vp: [[f32; 4]; 4],
-    // Point lights (offset 128)
+    // Shadow cascades (offset 64): each one's light view-projection, the view
+    // depth where each one ends (offset 320) and its depth bias (offset 336).
+    // See `crate::shadows`.
+    pub cascade_vp: [[[f32; 4]; 4]; crate::shadows::CASCADES],
+    pub cascade_splits: [f32; crate::shadows::CASCADES],
+    pub cascade_bias: [f32; crate::shadows::CASCADES],
+    // Point lights (offset 352)
     pub lights: [PointLightUniform; MAX_LIGHTS],
 }
 
@@ -236,7 +246,9 @@ impl Default for LightingUniforms {
             dir_light_intensity: 0.0,
             dir_light_color: [1.0, 1.0, 1.0],
             _pad2: 0.0,
-            light_vp: [[0.0; 4]; 4],
+            cascade_vp: [[[0.0; 4]; 4]; crate::shadows::CASCADES],
+            cascade_splits: [0.0; crate::shadows::CASCADES],
+            cascade_bias: [0.0; crate::shadows::CASCADES],
             lights: [PointLightUniform {
                 position: [0.0; 3],
                 range: 0.0,

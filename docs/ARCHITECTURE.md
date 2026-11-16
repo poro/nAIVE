@@ -149,7 +149,7 @@ Shaders are written in NVIDIA SLANG (`.slang` files), compiled through the SLANG
 
 ### Implemented, Experimental: Deferred PBR Pipeline
 
-The `pipeline/` module is split across `def`, `resource`, `compiler`, `executor` and `mod`. The supplied `project/pipelines/render.yaml` defines shadow mapping, G-buffer generation, deferred lighting, splat compositing, bloom, ACES tonemapping and FXAA. `Engine::try_load_pipeline` activates it when available; failed compilation falls back to forward rendering. Runtime Slang compilation requires the SDK.
+The `pipeline/` module is split across `def`, `resource`, `compiler`, `executor` and `mod`. The supplied `project/pipelines/render.yaml` defines cascaded shadow mapping (`shadows.rs` fits four cascades to the camera each frame; they share one shadow map as a 2 by 2 grid of tiles), G-buffer generation, deferred lighting, splat compositing, bloom, ACES tonemapping and FXAA. `Engine::try_load_pipeline` activates it when available; failed compilation falls back to forward rendering. Runtime Slang compilation requires the SDK.
 
 ---
 

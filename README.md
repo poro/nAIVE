@@ -123,7 +123,8 @@ my-game/
 ### Rendering
 - Deferred PBR pipeline (shadow, G-buffer, lighting, bloom, tonemap, FXAA)
 - Native Gaussian splatting with depth compositing
-- Shadow mapping with PCF filtering
+- Cascaded shadow maps (four cascades fitted to the camera) with PCF filtering
+- Frustum culling of the camera passes
 - HDR + bloom + ACES tonemapping
 - SLANG shaders that cross-compile to WGSL for all GPU backends
 - YAML-defined render pipeline DAG — add passes without recompiling
