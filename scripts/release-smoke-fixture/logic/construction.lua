@@ -1,5 +1,6 @@
 -- The same hooks run in the packaged headless test, game, and editor.
 local checked = false
+local stepped = false
 
 function init()
     local expected_health = _entity_string_id == "initial_controller" and 55 or 33
@@ -14,12 +15,16 @@ function init()
     end
 end
 
+function fixed_update(dt)
+    stepped = true
+end
+
 function update(dt)
-    if checked then return end
+    if checked or not stepped then return end
     local x, y, z = entity.get_position("initial_trimesh")
     local hit, distance = physics.raycast(x + 1.5, y + 3, z, 0, -1, 0, 5)
     assert(hit and math.abs(distance - 3) < 0.01,
-        "scaled trimesh was unavailable to the first update")
+        "scaled trimesh was unavailable after the first physics step")
     local named_hit, id, named_distance = physics.hitscan(x + 1.5, y + 3, z, 0, -1, 0, 5)
     assert(named_hit and id == "initial_trimesh" and math.abs(named_distance - 3) < 0.01,
         "scaled trimesh hit the wrong entity")
@@ -29,7 +34,7 @@ function update(dt)
         physics.hitscan(cx + 1, cy, cz, -1, 0, 0, 2)
     assert(controller_hit and controller_id == "initial_controller"
         and math.abs(controller_distance - 0.7) < 0.01,
-        "character capsule was unavailable to the first update")
+        "character capsule was unavailable after the first physics step")
     events.emit("release.construction_checked." .. _entity_string_id,
         {id = _entity_string_id})
     checked = true
