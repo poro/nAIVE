@@ -6,6 +6,11 @@ use rapier3d::prelude::*;
 
 use crate::components::Transform;
 
+mod cooking;
+#[cfg(test)]
+mod cooking_tests;
+pub use cooking::ColliderCookingStats;
+
 // rapier does its math with its own copy of glam (`rapier3d::math`), a
 // different version from the engine's, so values cross over through these.
 
@@ -163,6 +168,8 @@ pub struct PhysicsWorld {
 
     // Character controller
     pub character_controller: KinematicCharacterController,
+
+    cooked_shapes: cooking::ColliderShapeCache,
 }
 
 impl PhysicsWorld {
@@ -203,6 +210,7 @@ impl PhysicsWorld {
             // step too few and one too many.
             accumulator: FIXED_TIMESTEP * 0.5,
             character_controller,
+            cooked_shapes: cooking::ColliderShapeCache::default(),
         }
     }
 
@@ -224,7 +232,8 @@ impl PhysicsWorld {
             .build();
         let rb_handle = self.rigid_body_set.insert(rb);
 
-        let collider_builder = shape_to_collider(&shape)
+        let collider_builder = self
+            .shape_to_collider(&shape)
             .restitution(restitution)
             .friction(friction);
         let collider = if is_trigger {
@@ -263,7 +272,8 @@ impl PhysicsWorld {
             .build();
         let rb_handle = self.rigid_body_set.insert(rb);
 
-        let collider_builder = shape_to_collider(&shape)
+        let collider_builder = self
+            .shape_to_collider(&shape)
             .restitution(restitution)
             .friction(friction);
         let collider = if is_trigger {
@@ -333,7 +343,8 @@ impl PhysicsWorld {
         let rb = rb_builder.build();
         let rb_handle = self.rigid_body_set.insert(rb);
 
-        let collider_builder = shape_to_collider(&shape)
+        let collider_builder = self
+            .shape_to_collider(&shape)
             .mass(mass)
             .restitution(restitution)
             .friction(friction);
@@ -717,25 +728,27 @@ impl PhysicsWorld {
     }
 }
 
-fn shape_to_collider(shape: &PhysicsShape) -> ColliderBuilder {
-    match shape {
-        PhysicsShape::Box { half_extents } => {
-            ColliderBuilder::cuboid(half_extents.x, half_extents.y, half_extents.z)
-        }
-        PhysicsShape::Sphere { radius } => ColliderBuilder::ball(*radius),
-        PhysicsShape::Capsule {
-            half_height,
-            radius,
-        } => ColliderBuilder::capsule_y(*half_height, *radius),
-        PhysicsShape::Trimesh { vertices, indices } => {
-            // Use convex decomposition for proper two-sided collisions.
-            // Raw trimesh is one-sided (designed for static terrain).
-            let params = rapier3d::parry::transformation::vhacd::VHACDParameters {
-                resolution: 256,
-                concavity: 0.002,
-                ..Default::default()
-            };
-            ColliderBuilder::convex_decomposition_with_params(vertices, indices, &params)
+impl PhysicsWorld {
+    /// Cooking counts and cache occupancy for triangle-mesh colliders.
+    /// Removing a body keeps its geometry available for future spawns;
+    /// replacing the physics world drops the cache.
+    pub fn collider_cooking_stats(&self) -> ColliderCookingStats {
+        self.cooked_shapes.stats()
+    }
+
+    fn shape_to_collider(&mut self, shape: &PhysicsShape) -> ColliderBuilder {
+        match shape {
+            PhysicsShape::Box { half_extents } => {
+                ColliderBuilder::cuboid(half_extents.x, half_extents.y, half_extents.z)
+            }
+            PhysicsShape::Sphere { radius } => ColliderBuilder::ball(*radius),
+            PhysicsShape::Capsule {
+                half_height,
+                radius,
+            } => ColliderBuilder::capsule_y(*half_height, *radius),
+            PhysicsShape::Trimesh { vertices, indices } => {
+                ColliderBuilder::new(self.cooked_shapes.get_or_cook(vertices, indices))
+            }
         }
     }
 }

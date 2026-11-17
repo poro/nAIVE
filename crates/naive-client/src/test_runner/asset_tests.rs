@@ -115,3 +115,72 @@ fn stl_mesh_data_is_decoded_and_invalid_gltf_buffers_are_rejected() {
         "{error}"
     );
 }
+
+#[test]
+fn headless_deferred_spawns_reuse_cooking_and_respect_mesh_scale_and_world_reset() {
+    let project = Project::new();
+    project.scene("procedural:plane", "procedural:default");
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    assert_eq!(
+        runner
+            .physics_world
+            .borrow()
+            .collider_cooking_stats()
+            .mesh_cooks,
+        1
+    );
+
+    runner
+        .script_runtime
+        .lua
+        .load(
+            r#"
+        entity.spawn_ex({id='same', mesh='procedural:plane', material='procedural:default',
+            position={10,0,0}, scale={4,1,4}, collider={shape='trimesh'}})
+        entity.spawn_ex({id='larger', mesh='procedural:plane', material='procedural:default',
+            position={20,0,0}, scale={8,1,8}, collider={shape='trimesh'}})
+    "#,
+        )
+        .exec()
+        .unwrap();
+    runner.step_frame();
+    let stats = runner.physics_world.borrow().collider_cooking_stats();
+    assert_eq!(
+        (stats.mesh_cooks, stats.cache_hits, stats.cached_meshes),
+        (2, 1, 2)
+    );
+    assert!(runner.take_errors().is_empty());
+
+    runner
+        .script_runtime
+        .lua
+        .load("entity.destroy('same')")
+        .exec()
+        .unwrap();
+    runner.step_frame();
+    runner
+        .script_runtime
+        .lua
+        .load(
+            r#"
+        entity.spawn_ex({id='replacement', mesh='procedural:plane', material='procedural:default',
+            position={10,0,0}, scale={4,1,4}, collider={shape='trimesh'}})
+    "#,
+        )
+        .exec()
+        .unwrap();
+    runner.step_frame();
+    let stats = runner.physics_world.borrow().collider_cooking_stats();
+    assert_eq!((stats.mesh_cooks, stats.cache_hits), (2, 2));
+    assert!(runner.take_errors().is_empty());
+
+    runner.load_scene("scene.yaml").unwrap();
+    let physics = runner.physics_world.borrow();
+    let stats = physics.collider_cooking_stats();
+    assert_eq!(
+        (stats.mesh_cooks, stats.cache_hits, stats.cached_meshes),
+        (1, 0, 1)
+    );
+    assert_eq!(physics.collider_set.len(), 1);
+}
