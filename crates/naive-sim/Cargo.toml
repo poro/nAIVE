@@ -13,7 +13,7 @@ description = "nAIVE CPU simulation, asset decoding and presentation contracts w
 [features]
 default = []
 # Native Lua VM and headless runner; keep the default CPU library usable on wasm.
-scripting = ["dep:mlua"]
+scripting = ["dep:mlua", "dep:memchr"]
 # Asset-free schema fixtures used by cross-crate unit tests, never runtime loads.
 test-support = []
 
@@ -32,3 +32,5 @@ tracing = { workspace = true }
 serde_json = { workspace = true }
 bytemuck = { workspace = true }
 mlua = { workspace = true, optional = true }
+# Linear-time plain substring search for the Lua sandbox.
+memchr = { workspace = true, optional = true }

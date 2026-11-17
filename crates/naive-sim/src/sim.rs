@@ -952,6 +952,7 @@ mod tests {
         let runtime = ScriptRuntime::with_limits(ScriptLimits {
             instructions_per_call: 200_000,
             memory_bytes: 16 * 1024 * 1024,
+            ..ScriptLimits::default()
         });
         runtime
             .register_event_api(
@@ -993,6 +994,7 @@ mod tests {
             let runtime = ScriptRuntime::with_limits(ScriptLimits {
                 instructions_per_call: 200_000,
                 memory_bytes: 16 * 1024 * 1024,
+                ..ScriptLimits::default()
             });
             runtime
                 .register_event_api(

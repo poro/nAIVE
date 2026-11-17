@@ -734,9 +734,32 @@ impl PhysicsWorld {
 impl PhysicsWorld {
     /// Cooking counts and cache occupancy for triangle-mesh colliders.
     /// Removing a body keeps its geometry available for future spawns;
-    /// replacing the physics world drops the cache.
+    /// [`PhysicsWorld::reset`] keeps it too, while a new world starts empty.
     pub fn collider_cooking_stats(&self) -> ColliderCookingStats {
         self.cooked_shapes.stats()
+    }
+
+    /// Validate and cook a triangle-mesh collider ahead of construction.
+    /// Scene preflight calls this before tearing anything down, so a mesh
+    /// that cannot be cooked (zero scale, extreme coordinates) rejects the
+    /// load instead of failing halfway through it.
+    pub fn prepare_trimesh(
+        &mut self,
+        vertices: &[Vector],
+        indices: &[[u32; 3]],
+    ) -> Result<(), String> {
+        self.cooked_shapes
+            .try_get_or_cook(vertices, indices)
+            .map(|_| ())
+    }
+
+    /// Replace every body and collider with an empty world under `gravity`,
+    /// keeping the cooked trimesh shapes that preflight prepared for the next
+    /// scene.
+    pub fn reset(&mut self, gravity: Vec3) {
+        let cooked_shapes = std::mem::take(&mut self.cooked_shapes);
+        *self = Self::new(gravity);
+        self.cooked_shapes = cooked_shapes;
     }
 
     fn shape_to_collider(&mut self, shape: &PhysicsShape) -> ColliderBuilder {

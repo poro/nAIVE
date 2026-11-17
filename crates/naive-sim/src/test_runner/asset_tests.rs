@@ -117,7 +117,7 @@ fn stl_mesh_data_is_decoded_and_invalid_gltf_buffers_are_rejected() {
 }
 
 #[test]
-fn headless_deferred_spawns_reuse_cooking_and_respect_mesh_scale_and_world_reset() {
+fn headless_deferred_spawns_reuse_cooking_and_respect_mesh_scale_across_scene_reloads() {
     let project = Project::new();
     project.scene("procedural:plane", "procedural:default");
     let mut runner = TestRunner::new(&project.0);
@@ -146,10 +146,9 @@ fn headless_deferred_spawns_reuse_cooking_and_respect_mesh_scale_and_world_reset
         .unwrap();
     runner.step_frame();
     let stats = runner.physics_world.borrow().collider_cooking_stats();
-    assert_eq!(
-        (stats.mesh_cooks, stats.cache_hits, stats.cached_meshes),
-        (2, 1, 2)
-    );
+    // Preparation cooks or finds each shape; construction then finds it.
+    assert_eq!((stats.mesh_cooks, stats.cached_meshes), (2, 2));
+    assert!(stats.cache_hits >= 3, "{stats:?}");
     assert!(runner.take_errors().is_empty());
 
     runner
@@ -172,17 +171,67 @@ fn headless_deferred_spawns_reuse_cooking_and_respect_mesh_scale_and_world_reset
         .unwrap();
     runner.step_frame();
     let stats = runner.physics_world.borrow().collider_cooking_stats();
-    assert_eq!((stats.mesh_cooks, stats.cache_hits), (2, 2));
+    assert_eq!(stats.mesh_cooks, 2);
     assert!(runner.take_errors().is_empty());
 
+    // Reloading resets the bodies but keeps the shapes preflight cooked.
     runner.load_scene("scene.yaml").unwrap();
     let physics = runner.physics_world.borrow();
     let stats = physics.collider_cooking_stats();
-    assert_eq!(
-        (stats.mesh_cooks, stats.cache_hits, stats.cached_meshes),
-        (1, 0, 1)
-    );
+    assert_eq!((stats.mesh_cooks, stats.cached_meshes), (2, 2));
     assert_eq!(physics.collider_set.len(), 1);
+}
+
+#[test]
+fn uncookable_trimesh_colliders_reject_the_load_and_keep_the_current_scene() {
+    let project = Project::new();
+    project.scene("procedural:plane", "procedural:default");
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    for scale in ["[0, 0, 0]", "[1, 0, 0]", "[1e30, 1e30, 1e30]"] {
+        project.write(
+            "bad.yaml",
+            &format!(
+                "name: Bad\nentities:\n  - id: wall\n    components:\n      transform: {{position: [0,0,0], scale: {scale}}}\n      mesh_renderer: {{mesh: 'procedural:cube', material: 'procedural:default'}}\n      collider: {{shape: trimesh}}\n"
+            ),
+        );
+        let started = std::time::Instant::now();
+        let error = runner.load_scene("bad.yaml").unwrap_err();
+        assert!(
+            error.contains("wall") && error.contains("trimesh"),
+            "{error}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{scale}"
+        );
+        // Rejected before teardown: the current scene and its body remain.
+        assert!(runner
+            .scene_world
+            .borrow()
+            .entity_registry
+            .contains_key("floor"));
+        assert_eq!(runner.physics_world.borrow().collider_set.len(), 1);
+    }
+
+    // A runtime spawn fails on its own instead of crashing the host.
+    runner
+        .script_runtime
+        .lua
+        .load(
+            "entity.spawn_ex({id='flat', mesh='procedural:cube', material='procedural:default', \
+             position={0,0,0}, scale={0,0,0}, collider={shape='trimesh'}})",
+        )
+        .exec()
+        .unwrap();
+    runner.step_frame();
+    assert!(!runner
+        .scene_world
+        .borrow()
+        .entity_registry
+        .contains_key("flat"));
+    let errors = runner.take_errors();
+    assert!(errors.iter().any(|e| e.contains("trimesh")), "{errors:?}");
 }
 
 /// A wedge whose slanted face no stock shape has: a ray down at (0.25, 0.25)

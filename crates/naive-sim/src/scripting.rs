@@ -24,7 +24,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use mlua::prelude::*;
-use mlua::{HookTriggers, LuaOptions, StdLib, VmState};
+use mlua::{HookTriggers, VmState};
 
 use crate::events::EventBus;
 use crate::input::InputState;
@@ -67,6 +67,10 @@ pub struct ScriptLimits {
     pub instructions_per_call: u64,
     /// Memory the Lua state may hold, in bytes.
     pub memory_bytes: usize,
+    /// Wall-clock time one call may take. A backstop for work the instruction
+    /// count cannot see (see `crate::sandbox`); checked whenever the budget
+    /// is charged, so a stop can come up to one hook interval late.
+    pub wall_time_per_call: std::time::Duration,
 }
 
 impl Default for ScriptLimits {
@@ -74,6 +78,7 @@ impl Default for ScriptLimits {
         Self {
             instructions_per_call: 50_000_000,
             memory_bytes: 256 * 1024 * 1024,
+            wall_time_per_call: std::time::Duration::from_secs(4),
         }
     }
 }
@@ -94,6 +99,61 @@ struct CallBudget {
     /// How many `run_limited` calls are on the stack. Zero means no script
     /// call is in progress.
     depth: Cell<u32>,
+    /// Instructions run outside any script call (metamethods the engine
+    /// triggers, its own setup code) since the last call began. They get the
+    /// same limit, so no path into Lua is unlimited.
+    host_used: Cell<u64>,
+    /// Set once code outside a call has gone over the limit. Kept apart from
+    /// `exhausted`, which callers read after a call returns.
+    host_exhausted: Cell<bool>,
+    wall_time: std::time::Duration,
+    /// When the outermost call in progress began.
+    started: Cell<std::time::Instant>,
+    /// The call in progress ran out of wall-clock time.
+    timed_out: Cell<bool>,
+}
+
+impl CallBudget {
+    /// Charge `units` of work: VM instructions from the hook, or library
+    /// work from the sandbox (`crate::sandbox`).
+    fn charge(self: &Rc<Self>, lua: &Lua, units: u64) -> LuaResult<()> {
+        let in_call = self.depth.get() > 0;
+        let (counter, stopped) = if in_call {
+            (&self.used, &self.exhausted)
+        } else {
+            (&self.host_used, &self.host_exhausted)
+        };
+        if !stopped.get() {
+            let used = counter.get().saturating_add(units);
+            counter.set(used);
+            let late = in_call && self.started.get().elapsed() > self.wall_time;
+            if used <= self.limit && !late {
+                return Ok(());
+            }
+            stopped.set(true);
+            self.timed_out.set(late && used <= self.limit);
+            // Check before every instruction from here on. With a wider
+            // interval, a script that catches the error with `pcall`
+            // inside a loop would keep running between checks.
+            install_cpu_hook(lua, self.clone(), 1)?;
+        }
+        Err(LuaError::RuntimeError(if !in_call {
+            format!(
+                "Lua code run outside a script call exceeded the CPU limit of {} instructions",
+                self.limit
+            )
+        } else if self.timed_out.get() {
+            format!(
+                "script exceeded its CPU limit of {:.1} s in one call",
+                self.wall_time.as_secs_f64()
+            )
+        } else {
+            format!(
+                "script exceeded its CPU limit of {} instructions in one call",
+                self.limit
+            )
+        }))
+    }
 }
 
 /// Install the VM hook that enforces the CPU limit, checking every
@@ -102,26 +162,8 @@ fn install_cpu_hook(lua: &Lua, budget: Rc<CallBudget>, interval: u32) -> LuaResu
     lua.set_hook(
         HookTriggers::new().every_nth_instruction(interval),
         move |lua, _debug| {
-            if budget.depth.get() == 0 {
-                // Engine setup code, not a script call.
-                return Ok(VmState::Continue);
-            }
-            if !budget.exhausted.get() {
-                let used = budget.used.get() + u64::from(interval);
-                budget.used.set(used);
-                if used <= budget.limit {
-                    return Ok(VmState::Continue);
-                }
-                budget.exhausted.set(true);
-                // Check before every instruction from here on. With a wider
-                // interval, a script that catches the error with `pcall`
-                // inside a loop would keep running between checks.
-                install_cpu_hook(lua, budget.clone(), 1)?;
-            }
-            Err(LuaError::RuntimeError(format!(
-                "script exceeded its CPU limit of {} instructions in one call",
-                budget.limit
-            )))
+            budget.charge(lua, u64::from(interval))?;
+            Ok(VmState::Continue)
         },
     )
 }
@@ -204,29 +246,34 @@ impl ScriptRuntime {
 
     /// Create a runtime with specific CPU and memory limits.
     pub fn with_limits(limits: ScriptLimits) -> Self {
-        // Load only the libraries scripts need. `os` and `io` would give
-        // scripts the shell and the filesystem, and `package` would hand both
-        // back through `require` and `package.loaded`. `coroutine` is left out
-        // because the CPU hook only covers the main thread, so a loop inside
-        // a coroutine would escape the limit. `debug` could remove the hook.
-        let libs = StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH;
-        let lua =
-            Lua::new_with(libs, LuaOptions::default()).expect("failed to create the Lua state");
-
-        // The base library is always loaded; drop its file loaders.
-        lua.globals().set("loadfile", LuaNil).unwrap_or(());
-        lua.globals().set("dofile", LuaNil).unwrap_or(());
-
-        if let Err(e) = lua.set_memory_limit(limits.memory_bytes) {
-            tracing::warn!("Could not set the Lua memory limit: {}", e);
-        }
-
+        // The sandbox (`crate::sandbox`) loads only `table`, `string`, `utf8`
+        // and `math`, charges library work to this budget, and refuses
+        // finalizers and binary chunks. `os`, `io`, `package`, `debug` and
+        // `coroutine` are absent: the hook only covers the main thread.
         let budget = Rc::new(CallBudget {
             limit: limits.instructions_per_call,
             used: Cell::new(0),
             exhausted: Cell::new(false),
             depth: Cell::new(0),
+            host_used: Cell::new(0),
+            host_exhausted: Cell::new(false),
+            wall_time: limits.wall_time_per_call,
+            started: Cell::new(std::time::Instant::now()),
+            timed_out: Cell::new(false),
         });
+        let charge: crate::sandbox::Charge = {
+            let budget = budget.clone();
+            Rc::new(move |lua, units| budget.charge(lua, units))
+        };
+        let lua = crate::sandbox::create_lua(
+            crate::sandbox::SandboxOptions {
+                memory_bytes: limits.memory_bytes,
+                allow_load: true,
+            },
+            charge,
+        )
+        .expect("failed to create the sandboxed Lua state");
+
         // Without the hook scripts would run with no CPU limit, so this is
         // not recoverable. It cannot fail on a fresh state.
         install_cpu_hook(&lua, budget.clone(), HOOK_INTERVAL)
@@ -262,8 +309,19 @@ impl ScriptRuntime {
 
         let budget = &self.budget;
         if budget.depth.get() == 0 {
+            if budget.exhausted.get() || budget.host_exhausted.get() {
+                // Something hit the limit since the last call; go back to the
+                // normal interval for this call.
+                if let Err(e) = install_cpu_hook(&self.lua, budget.clone(), HOOK_INTERVAL) {
+                    tracing::warn!("Could not restore the Lua CPU hook interval: {}", e);
+                }
+            }
             budget.used.set(0);
+            budget.host_used.set(0);
             budget.exhausted.set(false);
+            budget.host_exhausted.set(false);
+            budget.timed_out.set(false);
+            budget.started.set(std::time::Instant::now());
         }
         budget.depth.set(budget.depth.get() + 1);
         let result = {
@@ -595,7 +653,9 @@ impl ScriptRuntime {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
-        let func: LuaFunction = match env.get(name) {
+        // Raw lookups: an `__index` on the environment or on `_G` would
+        // otherwise run script code here, outside the CPU limit.
+        let func: LuaFunction = match env.raw_get(name) {
             Ok(f) => f,
             Err(_) => return Ok(()), // Hook not defined, that's fine
         };
@@ -711,7 +771,7 @@ impl ScriptRuntime {
                 env.set("_entity_string_id", id)
                     .map_err(|error| error.to_string())?;
             }
-            if let Ok(hook) = env.get::<LuaFunction>("on_reload") {
+            if let Ok(hook) = env.raw_get::<LuaFunction>("on_reload") {
                 let result = self.run_as_entity(entity, || hook.call::<()>(()));
                 if let Some(limit) = self.limit_exceeded(result.as_ref().err()) {
                     return Err(format!(
@@ -734,7 +794,7 @@ impl ScriptRuntime {
             .owned_listener_ids(entity)
             .iter()
             .any(|id| !old_listeners.contains(id));
-        let state = env.get::<LuaTable>("self").ok();
+        let state = env.raw_get::<LuaTable>("self").ok();
         self.commit_script(entity, env, code, &old_listeners, replace_listeners)?;
         if !replace_listeners {
             if let Some(state) = state {

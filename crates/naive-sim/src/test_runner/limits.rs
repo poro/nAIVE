@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use mlua::prelude::*;
-use mlua::{HookTriggers, LuaOptions, StdLib, VmState};
+use mlua::{HookTriggers, VmState};
 
 const HOOK_INTERVAL: u32 = 10_000;
 
@@ -101,38 +101,55 @@ fn is_memory_error(error: &LuaError) -> bool {
     }
 }
 
+impl TestBudget {
+    /// Charge `units` of work: VM instructions from the hook, or library work
+    /// from the sandbox (`crate::sandbox`).
+    fn charge(self: &Rc<Self>, lua: &Lua, units: u64, interval: u32) -> LuaResult<()> {
+        let used = self.used.get().saturating_add(units);
+        self.used.set(used);
+        if used > self.limits.instructions {
+            self.record(Exceeded::Instructions);
+        }
+        if let Err(error) = self.check() {
+            // A retry loop around pcall must not execute between limit errors.
+            if interval != 1 {
+                install_hook(lua, self.clone(), 1)?;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
 fn install_hook(lua: &Lua, budget: Rc<TestBudget>, interval: u32) -> LuaResult<()> {
     lua.set_hook(
         HookTriggers::new().every_nth_instruction(interval),
         move |lua, _| {
-            let used = budget.used.get().saturating_add(u64::from(interval));
-            budget.used.set(used);
-            if used > budget.limits.instructions {
-                budget.record(Exceeded::Instructions);
-            }
-            if let Err(error) = budget.check() {
-                // A retry loop around pcall must not execute between limit errors.
-                if interval != 1 {
-                    install_hook(lua, budget.clone(), 1)?;
-                }
-                return Err(error);
-            }
+            budget.charge(lua, u64::from(interval), interval)?;
             Ok(VmState::Continue)
         },
     )
 }
 
 pub(super) fn create_lua(budget: Rc<TestBudget>) -> LuaResult<Lua> {
-    // The hook covers the main Lua thread. Omit coroutine and debug, which
-    // could otherwise escape or remove it, and filesystem/process libraries.
-    // Runtime code generation is unavailable: load(reader) can swallow a
-    // compiler allocation failure by returning nil instead of raising it.
-    let libs = StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH;
-    let lua = Lua::new_with(libs, LuaOptions::default())?;
-    lua.globals().set("loadfile", LuaNil)?;
-    lua.globals().set("dofile", LuaNil)?;
-    lua.globals().set("load", LuaNil)?;
-    lua.set_memory_limit(budget.limits.memory_bytes)?;
+    // The shared sandbox (`crate::sandbox`) omits coroutine, debug and the
+    // filesystem/process libraries, refuses finalizers and charges library
+    // work to this budget. Runtime code generation is unavailable here:
+    // load(reader) can swallow a compiler allocation failure by returning nil
+    // instead of raising it.
+    let charge: crate::sandbox::Charge = {
+        let budget = budget.clone();
+        // Library charges always switch to per-instruction checks once the
+        // budget is gone, like the hook.
+        Rc::new(move |lua, units| budget.charge(lua, units, HOOK_INTERVAL))
+    };
+    let lua = crate::sandbox::create_lua(
+        crate::sandbox::SandboxOptions {
+            memory_bytes: budget.limits.memory_bytes,
+            allow_load: false,
+        },
+        charge,
+    )?;
 
     let observed_budget = budget.clone();
     let observe_error = lua.create_function(move |_, error: LuaValue| {
@@ -157,18 +174,7 @@ pub(super) fn create_lua(budget: Rc<TestBudget>) -> LuaResult<Lua> {
             r#"
             local protected_call, protected_xcall = pcall, xpcall
             local pack, unpack = table.pack, table.unpack
-            local set_meta, raw_get, value_type, raise = setmetatable, rawget, type, error
             return function(observe)
-                setmetatable = function(value, metatable)
-                    -- Lua disables hooks and suppresses errors in finalizers.
-                    -- It marks an object for finalization only when assigning
-                    -- its metatable, so checking the raw field here also blocks
-                    -- metatables that gained __gc after an earlier assignment.
-                    if value_type(metatable) == 'table' and raw_get(metatable, '__gc') ~= nil then
-                        raise('test VM does not support __gc finalizers', 2)
-                    end
-                    return set_meta(value, metatable)
-                end
                 pcall = function(...)
                     local result = pack(protected_call(...))
                     if not result[1] then observe(result[2]) end

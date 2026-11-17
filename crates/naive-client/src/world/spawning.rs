@@ -55,6 +55,7 @@ pub(crate) fn preflight_scene_native(
     splat_cache: &mut SplatCache,
     texture_resources: Option<&TextureResources>,
     texture_cache: Option<&mut TextureCache>,
+    physics: Option<&mut PhysicsWorld>,
 ) -> Result<(), String> {
     let mut resolver = NativeAssetResolver {
         device,
@@ -66,7 +67,7 @@ pub(crate) fn preflight_scene_native(
         textures: texture_cache,
         texture_resources,
     };
-    preflight_scene(scene, &mut resolver)
+    preflight_scene(scene, &mut resolver, physics)
 }
 
 /// Logging compatibility wrapper for authored native scene spawning.

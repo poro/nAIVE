@@ -130,7 +130,11 @@ impl TestRunner {
         let scene_path = crate::project_path::resolve(&self.project_root, scene_rel)?;
         let scene = crate::scene::load_scene(&scene_path)
             .map_err(|e| format!("Failed to load scene: {:?}", e))?;
-        crate::world::preflight_scene(&scene, &mut *self.asset_catalog.borrow_mut())?;
+        crate::world::preflight_scene(
+            &scene,
+            &mut *self.asset_catalog.borrow_mut(),
+            Some(&mut self.physics_world.borrow_mut()),
+        )?;
 
         // Use the same teardown as live destruction, without holding a world
         // borrow while callbacks run. Preserve failures before replacing the VM.
@@ -159,7 +163,8 @@ impl TestRunner {
 
         // Set gravity from scene settings
         let gravity = glam::Vec3::from(scene.settings.gravity);
-        *self.physics_world.borrow_mut() = PhysicsWorld::new(gravity);
+        // Keep the colliders preflight cooked for this scene.
+        self.physics_world.borrow_mut().reset(gravity);
 
         // Spawn entities headlessly (no GPU)
         *self.scene_world.borrow_mut() = SceneWorld::new();
@@ -1452,6 +1457,30 @@ entities:
             assert!(!result.passed, "test accepted {body}");
             assert!(result.error.unwrap().contains("wall-clock deadline"));
             assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        }
+    }
+
+    #[test]
+    fn native_string_functions_cannot_outrun_the_test_budget() {
+        let project = Project::new("");
+        for body in [
+            "string.rep('a', 4000):find('.-.-.-.-.-b')",
+            "local t = {} for i = 1, 200000 do table.insert(t, 1, i) end",
+        ] {
+            let started = std::time::Instant::now();
+            let result = run_single_test_with_limits(
+                &project.0,
+                &format!("function test_regression()\n{body}\nend"),
+                "test_regression",
+                tight_limits(),
+            );
+            assert!(!result.passed, "{body}");
+            let error = result.error.unwrap();
+            assert!(error.contains("CPU limit"), "{body}: {error}");
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(2),
+                "{body}"
+            );
         }
     }
 

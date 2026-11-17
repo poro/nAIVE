@@ -305,6 +305,7 @@ fn tight_limits() -> ScriptLimits {
     ScriptLimits {
         instructions_per_call: 200_000,
         memory_bytes: 16 * 1024 * 1024,
+        ..ScriptLimits::default()
     }
 }
 
@@ -822,4 +823,140 @@ fn deeply_nested_state_rejects_reload_without_losing_live_environment() {
     assert!(state.get::<LuaTable>("chain").is_ok());
     assert!(runtime.take_errors().is_empty());
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// Paths the review found that ran script code with no CPU limit. Each must
+/// return promptly.
+#[test]
+fn finalizers_cannot_run_unlimited_code_in_the_game_vm() {
+    let mut runtime = ScriptRuntime::with_limits(tight_limits());
+    let entity = hecs::World::new().reserve_entity();
+    load(
+        &mut runtime,
+        entity,
+        "gc_escape",
+        r#"
+        function update()
+            setmetatable({}, {__gc = function() while true do end end})
+            collectgarbage()
+        end
+    "#,
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    runtime.call_update(entity, 0.016);
+    let errors = runtime.take_errors();
+    assert!(
+        errors.iter().any(|e| e.contains("__gc finalizers")),
+        "{errors:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}
+
+#[test]
+fn metamethods_on_globals_cannot_run_outside_a_limited_call() {
+    let mut runtime = ScriptRuntime::with_limits(tight_limits());
+    let entity = hecs::World::new().reserve_entity();
+    load(
+        &mut runtime,
+        entity,
+        "global_index_escape",
+        r#"
+        function init()
+            setmetatable(_G, {__index = function() while true do end end})
+        end
+    "#,
+    )
+    .unwrap();
+    runtime.call_init(entity);
+    let started = std::time::Instant::now();
+    // Hook lookups are raw, so a missing fixed_update runs no script code.
+    runtime.call_fixed_update(entity, 1.0 / 60.0);
+    runtime.call_update(entity, 0.016);
+    // Any other engine access to the globals is still limited.
+    let lookup = runtime.lua.globals().get::<LuaValue>("missing");
+    let error = lookup.unwrap_err().to_string();
+    assert!(error.contains("outside a script call"), "{error}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    // The next script call starts with a fresh budget.
+    runtime
+        .run_limited(|| runtime.lua.load("local x = 1 + 1").exec())
+        .unwrap();
+}
+
+#[test]
+fn backtracking_patterns_hit_the_cpu_limit() {
+    let mut runtime = ScriptRuntime::with_limits(tight_limits());
+    let entity = hecs::World::new().reserve_entity();
+    load(
+        &mut runtime,
+        entity,
+        "pattern_escape",
+        r#"
+        function update()
+            string.rep('a', 4000):find('.-.-.-.-.-b')
+        end
+    "#,
+    )
+    .unwrap();
+    runtime.set_entity_string_id(entity, "matcher").unwrap();
+    let started = std::time::Instant::now();
+    runtime.call_update(entity, 0.016);
+    let reports = runtime.take_limit_reports();
+    assert!(
+        reports.len() == 1 && reports[0].contains("CPU"),
+        "{reports:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}
+
+#[test]
+fn work_the_instruction_count_cannot_see_hits_the_time_limit() {
+    let mut runtime = ScriptRuntime::with_limits(ScriptLimits {
+        wall_time_per_call: std::time::Duration::from_millis(200),
+        ..ScriptLimits::default()
+    });
+    let entity = hecs::World::new().reserve_entity();
+    // `next` on an emptied table scans its free slots: little VM work per call.
+    load(
+        &mut runtime,
+        entity,
+        "sparse_next",
+        r#"
+        local t = {}
+        for i = 1, 200000 do t[i] = i end
+        for i = 1, 200000 do t[i] = nil end
+        function update()
+            while true do next(t) end
+        end
+    "#,
+    )
+    .unwrap();
+    runtime.set_entity_string_id(entity, "scanner").unwrap();
+    let started = std::time::Instant::now();
+    runtime.call_update(entity, 0.016);
+    let reports = runtime.take_limit_reports();
+    assert!(
+        reports.len() == 1 && reports[0].contains("CPU"),
+        "{reports:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn a_call_over_its_limit_does_not_block_engine_lua_afterwards() {
+    let mut runtime = ScriptRuntime::with_limits(tight_limits());
+    let entity = hecs::World::new().reserve_entity();
+    load(
+        &mut runtime,
+        entity,
+        "then_host",
+        "function update() while true do end end",
+    )
+    .unwrap();
+    runtime.call_update(entity, 0.016);
+    assert_eq!(runtime.take_limit_reports().len(), 1);
+    // Lua the engine runs outside a call still has its own budget.
+    let value: i64 = runtime.lua.load("return 40 + 2").eval().unwrap();
+    assert_eq!(value, 42);
 }

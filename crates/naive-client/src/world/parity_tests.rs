@@ -486,7 +486,9 @@ fn scaled_trimeshes_use_resolver_geometry_and_share_cooking_for_repeated_instanc
     pair.spawn(&definition);
     for physics in [&mut pair.native_physics, &mut pair.headless_physics] {
         assert_eq!(physics.collider_cooking_stats().mesh_cooks, 1);
-        assert_eq!(physics.collider_cooking_stats().cache_hits, 1);
+        // Preparation and construction each find the shape cooked for the
+        // first instance.
+        assert_eq!(physics.collider_cooking_stats().cache_hits, 3);
         physics.step_fixed();
         let (_, distance, _) = physics
             .raycast(Vec3::new(11.5, 2.0, 0.0), Vec3::NEG_Y, 4.0)
@@ -746,7 +748,9 @@ fn lifecycle_trace(mut assets: impl SpawnAssetResolver, root: &Path) -> Value {
         assert_eq!(state["point_light"][1], json!(8.0 + generation as f32));
         let stats = physics.borrow().collider_cooking_stats();
         assert_eq!(stats.mesh_cooks, 1);
-        assert_eq!(stats.cache_hits, u64::from(generation == 1));
+        // Preparation cooks (or finds) the shape and construction finds it; a
+        // new physics world starts with an empty cache.
+        assert_eq!(stats.cache_hits, if generation == 1 { 3 } else { 1 });
         trace.push(json!({"state": state, "cooks": stats.mesh_cooks, "hits": stats.cache_hits}));
         assert!(crate::sim::destroy_entity(
             &scene,
@@ -816,10 +820,10 @@ fn whole_scene_preflight_checks_duplicates_before_assets_and_rejects_late_asset_
     second.id = "broken".into();
     second.components.mesh_renderer.as_mut().unwrap().material = "missing.yaml".into();
     let invalid_asset = replacement_scene(vec![first.clone(), second]);
-    let native_error = preflight_scene(&invalid_asset, &mut pair.native_assets)
+    let native_error = preflight_scene(&invalid_asset, &mut pair.native_assets, None)
         .err()
         .unwrap();
-    let headless_error = preflight_scene(&invalid_asset, &mut pair.headless_assets)
+    let headless_error = preflight_scene(&invalid_asset, &mut pair.headless_assets, None)
         .err()
         .unwrap();
     assert!(native_error.contains("broken"), "{native_error}");
@@ -836,10 +840,10 @@ fn whole_scene_preflight_checks_duplicates_before_assets_and_rejects_late_asset_
     let duplicate_scene = replacement_scene(vec![duplicate_first, first]);
     let calls = pair.native_assets.calls.len();
     for error in [
-        preflight_scene(&duplicate_scene, &mut pair.native_assets)
+        preflight_scene(&duplicate_scene, &mut pair.native_assets, None)
             .err()
             .unwrap(),
-        preflight_scene(&duplicate_scene, &mut pair.headless_assets)
+        preflight_scene(&duplicate_scene, &mut pair.headless_assets, None)
             .err()
             .unwrap(),
     ] {

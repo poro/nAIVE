@@ -62,9 +62,12 @@ impl PreparedSpawnAssets {
 }
 
 /// Resolve every required asset before allocating an entity or physics body.
+/// With a physics world, trimesh colliders are also cooked into its cache, so
+/// construction cannot fail on them.
 pub(crate) fn prepare_spawn_assets<R: SpawnAssetResolver>(
     definition: &EntityDef,
     resolver: &mut R,
+    physics: Option<&mut PhysicsWorld>,
 ) -> Result<PreparedSpawnAssets, String> {
     let prepare = |resolver: &mut R| -> Result<PreparedSpawnAssets, String> {
         let splat = definition
@@ -123,6 +126,9 @@ pub(crate) fn prepare_spawn_assets<R: SpawnAssetResolver>(
                 .unwrap_or(glam::Vec3::ONE);
             let geometry = resolver.trimesh(mesh.mesh_handle, scale)?;
             validate_trimesh(&geometry)?;
+            if let Some(physics) = physics {
+                physics.prepare_trimesh(&geometry.0, &geometry.1)?;
+            }
             Some(geometry)
         } else {
             None
@@ -154,10 +160,14 @@ fn validate_trimesh((vertices, indices): &PhysicsTrimesh) -> Result<(), String> 
 }
 
 /// Validate a complete scene before tearing down or populating live state.
-/// Prepared geometry is ephemeral; resolvers retain only their asset caches.
+/// Trimesh colliders are cooked into `physics`, whose cache survives
+/// [`PhysicsWorld::reset`], so construction reuses them; other prepared data
+/// is ephemeral and resolvers retain only their asset caches. Pass `None`
+/// only where the scene will be built without physics.
 pub fn preflight_scene(
     scene: &SceneFile,
     resolver: &mut impl SpawnAssetResolver,
+    mut physics: Option<&mut PhysicsWorld>,
 ) -> Result<(), String> {
     let mut ids = std::collections::HashSet::with_capacity(scene.entities.len());
     for definition in &scene.entities {
@@ -169,7 +179,7 @@ pub fn preflight_scene(
         }
     }
     for definition in &scene.entities {
-        prepare_spawn_assets(definition, resolver)?;
+        prepare_spawn_assets(definition, resolver, physics.as_deref_mut())?;
     }
     Ok(())
 }
@@ -184,7 +194,8 @@ pub fn spawn_entity_with_resolver(
     if scene_world.entity_registry.contains_key(&definition.id) {
         return Err(format!("Entity '{}' already exists", definition.id));
     }
-    let prepared = prepare_spawn_assets(definition, resolver)?;
+    let mut physics_world = physics_world;
+    let prepared = prepare_spawn_assets(definition, resolver, physics_world.as_deref_mut())?;
     construct_entity(scene_world, definition, prepared, physics_world)
 }
 
