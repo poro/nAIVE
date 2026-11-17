@@ -1,5 +1,6 @@
 #!/bin/sh
-# Prepare a release: set the workspace version and the "current version" lines.
+# Prepare a release: set the workspace version, the "current version" lines and
+# the version on the naive.dev home page (site/index.html).
 #
 #   scripts/bump-version.sh 0.1.22
 #
@@ -21,7 +22,9 @@ sed -i.bak "s/^version = \"$old\"$/version = \"$version\"/" Cargo.toml
 sed -i.bak "s/^- \*\*Current version:\*\* $old$/- **Current version:** $version/" CLAUDE.md
 sed -i.bak "s/^\*\*Current version:\*\* $old$/**Current version:** $version/" README.md
 sed -i.bak "s/^\*\*Version:\*\* $old$/**Version:** $version/" docs/ARCHITECTURE.md
-rm -f Cargo.toml.bak CLAUDE.md.bak README.md.bak docs/ARCHITECTURE.md.bak
+# The naive.dev hero badge (site/ publishes itself from master).
+sed -i.bak "s/Open Source Game Engine · v$old</Open Source Game Engine · v$version</" site/index.html
+rm -f Cargo.toml.bak CLAUDE.md.bak README.md.bak docs/ARCHITECTURE.md.bak site/index.html.bak
 
 # Refresh the workspace crates' versions in the lockfile without upgrading
 # any dependency.
