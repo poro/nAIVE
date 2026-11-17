@@ -45,7 +45,7 @@ pub struct SceneFile {
     pub entities: Vec<EntityDef>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SceneSettings {
     #[serde(default = "default_ambient")]
     pub ambient_light: [f32; 3],
@@ -57,6 +57,17 @@ pub struct SceneSettings {
     /// Without one the background is black and ambient light is minimal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sky: Option<SkyDef>,
+}
+
+impl Default for SceneSettings {
+    fn default() -> Self {
+        Self {
+            ambient_light: default_ambient(),
+            fog: None,
+            gravity: default_gravity(),
+            sky: None,
+        }
+    }
 }
 
 /// A sky: a gradient, or an equirectangular image from the project. It is
@@ -690,6 +701,30 @@ fn merge_entity(parent: &EntityDef, child: &EntityDef) -> EntityDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scene_settings_defaults_match_omitted_empty_and_partial_yaml() {
+        let defaults = SceneSettings::default();
+        for yaml in [
+            "name: omitted\n",
+            "name: empty\nsettings: {}\n",
+            "name: partial\nsettings: {fog: {enabled: true}}\n",
+        ] {
+            let settings = parse_scene(yaml).unwrap().settings;
+            assert_eq!(settings.gravity, defaults.gravity, "{yaml}");
+            assert_eq!(settings.ambient_light, defaults.ambient_light, "{yaml}");
+            assert_eq!(settings.sky, defaults.sky, "{yaml}");
+        }
+        assert_eq!(defaults.gravity, [0.0, -9.81, 0.0]);
+        assert_eq!(defaults.ambient_light, [0.1; 3]);
+        assert!(defaults.fog.is_none());
+        let partial = parse_scene(
+            "name: explicit\nsettings: {gravity: [1, 2, 3], ambient_light: [0.4, 0.5, 0.6]}\n",
+        )
+        .unwrap();
+        assert_eq!(partial.settings.gravity, [1.0, 2.0, 3.0]);
+        assert_eq!(partial.settings.ambient_light, [0.4, 0.5, 0.6]);
+    }
 
     #[test]
     fn scene_files_carry_a_format_version() {

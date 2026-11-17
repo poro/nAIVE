@@ -154,6 +154,10 @@ pub struct PhysicsWorld {
     // Track active contact pairs from the previous step to detect new-only contacts
     active_contact_pairs: HashSet<[ColliderHandle; 2]>,
 
+    // Directed sensor/other pairs, retaining entity handles until exit even
+    // when a collider has been removed. Two sensors produce two directed pairs.
+    active_trigger_pairs: HashMap<[ColliderHandle; 2], (hecs::Entity, hecs::Entity)>,
+
     // Frame time not yet consumed by fixed steps
     accumulator: f32,
 
@@ -193,6 +197,7 @@ impl PhysicsWorld {
             collision_events: Vec::new(),
             trigger_events: Vec::new(),
             active_contact_pairs: HashSet::new(),
+            active_trigger_pairs: HashMap::new(),
             // Start half a step in. When frames arrive at a whole number of
             // steps apart, timing jitter then cannot flip a frame between one
             // step too few and one too many.
@@ -223,7 +228,10 @@ impl PhysicsWorld {
             .restitution(restitution)
             .friction(friction);
         let collider = if is_trigger {
-            collider_builder.sensor(true).build()
+            collider_builder
+                .sensor(true)
+                .active_collision_types(ActiveCollisionTypes::all())
+                .build()
         } else {
             collider_builder.build()
         };
@@ -259,7 +267,10 @@ impl PhysicsWorld {
             .restitution(restitution)
             .friction(friction);
         let collider = if is_trigger {
-            collider_builder.sensor(true).build()
+            collider_builder
+                .sensor(true)
+                .active_collision_types(ActiveCollisionTypes::all())
+                .build()
         } else {
             collider_builder.build()
         };
@@ -286,6 +297,33 @@ impl PhysicsWorld {
         friction: f32,
         ccd: bool,
     ) -> (RigidBodyHandle, ColliderHandle) {
+        self.add_dynamic_body_with_sensor(
+            entity,
+            position,
+            rotation,
+            shape,
+            mass,
+            restitution,
+            friction,
+            ccd,
+            false,
+        )
+    }
+
+    /// Add a dynamic body, optionally using a nonblocking trigger collider.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_dynamic_body_with_sensor(
+        &mut self,
+        entity: hecs::Entity,
+        position: Vec3,
+        rotation: Quat,
+        shape: PhysicsShape,
+        mass: f32,
+        restitution: f32,
+        friction: f32,
+        ccd: bool,
+        is_trigger: bool,
+    ) -> (RigidBodyHandle, ColliderHandle) {
         let mut rb_builder = RigidBodyBuilder::dynamic()
             .translation(to_rapier_vec(position))
             .rotation(quat_to_angvector(rotation));
@@ -295,11 +333,18 @@ impl PhysicsWorld {
         let rb = rb_builder.build();
         let rb_handle = self.rigid_body_set.insert(rb);
 
-        let collider = shape_to_collider(&shape)
+        let collider_builder = shape_to_collider(&shape)
             .mass(mass)
             .restitution(restitution)
-            .friction(friction)
-            .build();
+            .friction(friction);
+        let collider = if is_trigger {
+            collider_builder
+                .sensor(true)
+                .active_collision_types(ActiveCollisionTypes::all())
+                .build()
+        } else {
+            collider_builder.build()
+        };
         let col_handle =
             self.collider_set
                 .insert_with_parent(collider, rb_handle, &mut self.rigid_body_set);
@@ -394,6 +439,43 @@ impl PhysicsWorld {
             }
         }
         self.active_contact_pairs = current_pairs;
+
+        let mut current_triggers = HashMap::new();
+        for (a, b, intersecting) in self.narrow_phase.intersection_pairs() {
+            if !intersecting {
+                continue;
+            }
+            for (sensor, other) in [(a, b), (b, a)] {
+                if !self.collider_set[sensor].is_sensor() {
+                    continue;
+                }
+                let (Some(&trigger_entity), Some(&other_entity)) = (
+                    self.collider_to_entity.get(&sensor),
+                    self.collider_to_entity.get(&other),
+                ) else {
+                    continue;
+                };
+                let key = [sensor, other];
+                current_triggers.insert(key, (trigger_entity, other_entity));
+                if !self.active_trigger_pairs.contains_key(&key) {
+                    self.trigger_events.push(TriggerEvent {
+                        trigger_entity,
+                        other_entity,
+                        entered: true,
+                    });
+                }
+            }
+        }
+        for (key, &(trigger_entity, other_entity)) in &self.active_trigger_pairs {
+            if !current_triggers.contains_key(key) {
+                self.trigger_events.push(TriggerEvent {
+                    trigger_entity,
+                    other_entity,
+                    entered: false,
+                });
+            }
+        }
+        self.active_trigger_pairs = current_triggers;
     }
 
     /// Move a character controller and return the effective movement.
@@ -411,7 +493,11 @@ impl PhysicsWorld {
         let start = *self.rigid_body_set[rb_handle].next_position();
 
         let movement = {
-            let queries = self.query_pipeline(QueryFilter::default().exclude_rigid_body(rb_handle));
+            let queries = self.query_pipeline(
+                QueryFilter::default()
+                    .exclude_rigid_body(rb_handle)
+                    .exclude_sensors(),
+            );
             self.character_controller.move_shape(
                 dt,
                 &queries,
@@ -593,10 +679,25 @@ impl PhysicsWorld {
         )
     }
 
-    /// Remove a body and its colliders.
+    /// Remove a body and its colliders, emitting one exit for each active sensor
+    /// overlap. Repeated removals do not emit repeated exits.
     pub fn remove_body(&mut self, rb_handle: RigidBodyHandle) {
         if let Some(body) = self.rigid_body_set.get(rb_handle) {
-            for handle in body.colliders() {
+            let removed = body.colliders();
+            self.active_trigger_pairs.retain(|pair, entities| {
+                let (trigger_entity, other_entity) = *entities;
+                if removed.contains(&pair[0]) || removed.contains(&pair[1]) {
+                    self.trigger_events.push(TriggerEvent {
+                        trigger_entity,
+                        other_entity,
+                        entered: false,
+                    });
+                    false
+                } else {
+                    true
+                }
+            });
+            for handle in removed {
                 self.collider_to_entity.remove(handle);
             }
         }
@@ -680,6 +781,187 @@ mod tests {
         assert_eq!(physics.body_to_entity[&retained_body], retained);
         assert_eq!(physics.collider_to_entity[&retained_collider], retained);
         assert_eq!(physics.collider_set.len(), 1);
+    }
+
+    fn add_test_body(
+        physics: &mut PhysicsWorld,
+        entity: hecs::Entity,
+        body_type: PhysicsBodyType,
+        sensor: bool,
+    ) -> (RigidBodyHandle, ColliderHandle) {
+        let shape = PhysicsShape::Sphere { radius: 1.0 };
+        match body_type {
+            PhysicsBodyType::Static => {
+                physics.add_static_body(entity, Vec3::ZERO, Quat::IDENTITY, shape, sensor, 0.0, 0.5)
+            }
+            PhysicsBodyType::Kinematic => physics.add_kinematic_body(
+                entity,
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                shape,
+                sensor,
+                0.0,
+                0.5,
+            ),
+            PhysicsBodyType::Dynamic => physics.add_dynamic_body_with_sensor(
+                entity,
+                Vec3::ZERO,
+                Quat::IDENTITY,
+                shape,
+                1.0,
+                0.0,
+                0.5,
+                false,
+                sensor,
+            ),
+        }
+    }
+
+    fn trigger_tuples(physics: &PhysicsWorld) -> HashSet<(hecs::Entity, hecs::Entity, bool)> {
+        physics
+            .trigger_events
+            .iter()
+            .map(|event| (event.trigger_entity, event.other_entity, event.entered))
+            .collect()
+    }
+
+    #[test]
+    fn every_sensor_body_type_enters_and_exits_each_body_type_once() {
+        for sensor_type in [
+            PhysicsBodyType::Static,
+            PhysicsBodyType::Kinematic,
+            PhysicsBodyType::Dynamic,
+        ] {
+            for other_type in [
+                PhysicsBodyType::Static,
+                PhysicsBodyType::Kinematic,
+                PhysicsBodyType::Dynamic,
+            ] {
+                let mut world = hecs::World::new();
+                let sensor = world.spawn(());
+                let other = world.spawn(());
+                let mut physics = PhysicsWorld::new(Vec3::ZERO);
+                let (sensor_body, collider) =
+                    add_test_body(&mut physics, sensor, sensor_type.clone(), true);
+                add_test_body(&mut physics, other, other_type.clone(), false);
+                assert!(physics.collider_set[collider].is_sensor());
+                physics.begin_frame(FIXED_TIMESTEP);
+                physics.step_fixed();
+                assert_eq!(
+                    trigger_tuples(&physics),
+                    HashSet::from([(sensor, other, true)]),
+                    "sensor {sensor_type:?}, other {other_type:?}"
+                );
+                assert!(
+                    physics.collision_events.is_empty(),
+                    "sensors must not cause contact damage"
+                );
+                physics.begin_frame(FIXED_TIMESTEP);
+                physics.step_fixed();
+                assert!(
+                    physics.trigger_events.is_empty(),
+                    "a continuing overlap is not a new enter"
+                );
+                physics.rigid_body_set[sensor_body]
+                    .set_translation(to_rapier_vec(Vec3::X * 10.0), true);
+                physics.begin_frame(FIXED_TIMESTEP);
+                physics.step_fixed();
+                assert_eq!(
+                    trigger_tuples(&physics),
+                    HashSet::from([(sensor, other, false)])
+                );
+                physics.begin_frame(FIXED_TIMESTEP);
+                physics.step_fixed();
+                assert!(
+                    physics.trigger_events.is_empty(),
+                    "exit must be emitted only once"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn overlapping_sensors_each_receive_their_own_events_and_removal_exits() {
+        let mut world = hecs::World::new();
+        let a = world.spawn(());
+        let b = world.spawn(());
+        let other = world.spawn(());
+        let mut physics = PhysicsWorld::new(Vec3::ZERO);
+        let (body_a, _) = add_test_body(&mut physics, a, PhysicsBodyType::Static, true);
+        add_test_body(&mut physics, b, PhysicsBodyType::Kinematic, true);
+        let (other_body, _) = add_test_body(&mut physics, other, PhysicsBodyType::Dynamic, false);
+        physics.begin_frame(FIXED_TIMESTEP);
+        physics.step_fixed();
+        assert_eq!(
+            trigger_tuples(&physics),
+            HashSet::from([
+                (a, b, true),
+                (b, a, true),
+                (a, other, true),
+                (b, other, true),
+            ])
+        );
+        assert_eq!(physics.trigger_events.len(), 4);
+        physics.begin_frame(0.0);
+        physics.remove_body(other_body);
+        physics.remove_body(other_body);
+        assert_eq!(
+            trigger_tuples(&physics),
+            HashSet::from([(a, other, false), (b, other, false)])
+        );
+        assert_eq!(physics.trigger_events.len(), 2);
+        assert_eq!(physics.active_trigger_pairs.len(), 2);
+        physics.begin_frame(0.0);
+        physics.remove_body(body_a);
+        assert_eq!(
+            trigger_tuples(&physics),
+            HashSet::from([(a, b, false), (b, a, false)])
+        );
+        assert!(physics.active_trigger_pairs.is_empty());
+        physics.begin_frame(FIXED_TIMESTEP);
+        physics.step_fixed();
+        assert!(physics.trigger_events.is_empty());
+    }
+
+    #[test]
+    fn trigger_enter_and_exit_accumulate_across_fixed_steps_in_one_frame() {
+        let mut world = hecs::World::new();
+        let sensor = world.spawn(());
+        let other = world.spawn(());
+        let mut physics = PhysicsWorld::new(Vec3::ZERO);
+        add_test_body(&mut physics, sensor, PhysicsBodyType::Static, true);
+        let (body, _) = add_test_body(&mut physics, other, PhysicsBodyType::Dynamic, false);
+        assert_eq!(physics.begin_frame(2.0 * FIXED_TIMESTEP), 2);
+        physics.step_fixed();
+        physics.rigid_body_set[body].set_translation(to_rapier_vec(Vec3::X * 10.0), true);
+        physics.step_fixed();
+        assert_eq!(physics.trigger_events.len(), 2);
+        assert!(physics.trigger_events[0].entered);
+        assert!(!physics.trigger_events[1].entered);
+        assert_eq!(physics.begin_frame(0.0), 0);
+        assert!(physics.trigger_events.is_empty());
+    }
+
+    #[test]
+    fn character_controller_passes_through_sensors() {
+        let mut world = hecs::World::new();
+        let mut physics = PhysicsWorld::new(Vec3::ZERO);
+        physics.add_static_body(
+            world.spawn(()),
+            Vec3::X,
+            Quat::IDENTITY,
+            PhysicsShape::Sphere { radius: 0.5 },
+            true,
+            0.0,
+            0.5,
+        );
+        let (body, collider) = physics.add_character_body(world.spawn(()), Vec3::ZERO, 0.5, 0.3);
+        physics.step_fixed();
+        let (movement, _) = physics.move_character(body, collider, Vec3::X * 2.0, FIXED_TIMESTEP);
+        assert!(
+            (movement.x - 2.0).abs() < 1e-4,
+            "sensor blocked movement: {movement:?}"
+        );
     }
 
     #[test]
