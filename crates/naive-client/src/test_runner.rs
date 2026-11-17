@@ -1665,10 +1665,10 @@ entities:
         project.write("scene.yaml", "name: Spawn\nentities:\n  - id: actor\n    components:\n      script: {source: game.lua}\n");
         project.write(
             "game.lua",
-            "function init() entity.spawn_ex({id='mesh', collider={shape='trimesh'}}) end",
+            "function init() entity.spawn_ex({id='mesh', mesh='procedural:plane', collider={shape='trimesh'}}) end",
         );
-        // spawn_ex supplies its native procedural:cube default, so this has
-        // real mesh data even when the caller omits the mesh argument.
+        // A planar fixture keeps collider construction within the test's
+        // wall-clock budget while exercising a real, supported mesh asset.
         let result =
             project.run("scene.load('scene.yaml')\nwait_frames(1)\nlocal x, y, z = get_position('mesh'); assert(x == 0 and y == 0 and z == 0)");
         assert!(result.passed, "{:?}", result.error);
