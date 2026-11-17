@@ -1,5 +1,6 @@
 name: release-smoke
 version: "0.1.0"
 default_scene: scenes/main.yaml
+default_pipeline: pipelines/render.yaml
 test:
   directory: tests

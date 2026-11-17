@@ -10,6 +10,7 @@
 //! `dist/<name>-linux`. Either way, starting the player with no arguments runs
 //! the game packaged beside it.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -113,6 +114,10 @@ fn bundle_with_player(
         validate_content_tree(&config_src)?;
     }
 
+    // Compile required entry points before touching an existing good bundle.
+    // Import-only modules are dependencies of these files, not entry points.
+    let shaders = prepare_shaders(config, &project_root)?;
+
     println!("Building {} for {}...", config.name, target_name);
 
     // Clean and create dist directory
@@ -157,23 +162,30 @@ fn bundle_with_player(
         }
     }
 
-    let shaders = precompile_shaders(&project_root.join("shaders"), &game_dir.join("shaders"))?;
-    if shaders.found > 0 {
-        if cfg!(feature = "slang") {
-            println!(
-                "  Slang shaders compiled to WGSL: {} ({} imported modules skipped)",
-                shaders.compiled, shaders.modules
-            );
-        } else {
-            println!(
-                "  Note: this naive was built without Slang, so {} Slang shader(s) were not \
-                 compiled; the bundle uses the engine's built-in WGSL for those passes.",
-                shaders.found
-            );
+    for pipeline in &shaders.pipelines {
+        let relative = pipeline
+            .strip_prefix(&project_root)
+            .map_err(|e| e.to_string())?;
+        total_size += copy_project_file(pipeline, &game_dir.join(relative))?;
+    }
+    for (relative, shader) in &shaders.artifacts {
+        // Keep sources for inspection, including shaders outside CONTENT_DIRS.
+        if shader.source.is_file() {
+            total_size +=
+                copy_project_file(&shader.source, &game_dir.join(&shader.relative_source))?;
         }
-        for failure in &shaders.failed {
-            println!("  Warning: {failure} (the bundle will use built-in WGSL for it)");
-        }
+        let out = game_dir.join(relative);
+        fs::create_dir_all(out.parent().ok_or("Shader has no parent directory")?)
+            .map_err(|e| e.to_string())?;
+        fs::write(&out, &shader.wgsl)
+            .map_err(|e| format!("Failed to write {}: {e}", out.display()))?;
+        total_size += shader.wgsl.len() as u64;
+    }
+    if !shaders.artifacts.is_empty() {
+        println!(
+            "  Required project shaders packaged as WGSL: {}",
+            shaders.artifacts.len()
+        );
     }
 
     if macos {
@@ -196,44 +208,128 @@ fn bundle_with_player(
     Ok(dist_dir)
 }
 
-#[derive(Default)]
-struct ShaderReport {
-    found: usize,
-    compiled: usize,
-    modules: usize,
-    failed: Vec<String>,
+struct PackagedShader {
+    source: PathBuf,
+    relative_source: PathBuf,
+    wgsl: String,
 }
 
-/// Compile every Slang shader under `source` and write the WGSL into `dest`
-/// at the same relative path, as `<name>.slang.wgsl`. Files with no entry
-/// points are imported modules: they are compiled as part of the shaders that
-/// import them.
-fn precompile_shaders(source: &Path, dest: &Path) -> Result<ShaderReport, String> {
-    let mut report = ShaderReport::default();
-    if !source.is_dir() {
-        return Ok(report);
+#[derive(Default)]
+struct ShaderPackage {
+    pipelines: BTreeSet<PathBuf>,
+    artifacts: BTreeMap<PathBuf, PackagedShader>,
+}
+
+/// Discover pipeline YAML in packaged content, plus an explicitly configured
+/// pipeline anywhere inside the project. Compile only referenced entry points;
+/// Slang itself loads their imports. A missing vs_main/fs_main on a referenced
+/// file is a broken pass, never evidence that it was merely an import module.
+fn prepare_shaders(config: &NaiveConfig, project_root: &Path) -> Result<ShaderPackage, String> {
+    let canonical_root = project_root.canonicalize().map_err(|e| e.to_string())?;
+    let project_root = canonical_root.as_path();
+    let mut package = ShaderPackage::default();
+    let configured = config
+        .default_pipeline
+        .as_ref()
+        .map(|relative| validate_packaged_reference(project_root, Path::new(relative)))
+        .transpose()?;
+    let mut candidates = BTreeSet::new();
+    for directory in CONTENT_DIRS {
+        let directory = project_root.join(directory);
+        if directory.is_dir() {
+            let mut files = Vec::new();
+            collect_files(&directory, "yaml", &mut files)?;
+            collect_files(&directory, "yml", &mut files)?;
+            candidates.extend(files);
+        }
     }
-    let mut slang_files = Vec::new();
-    collect_files(source, "slang", &mut slang_files)?;
-    slang_files.sort();
-    for slang in slang_files {
-        report.found += 1;
-        if !cfg!(feature = "slang") {
+    if let Some(path) = &configured {
+        validate_content_tree(path)?;
+        candidates.insert(path.clone());
+    }
+    for path in candidates {
+        let contents = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+        let required_pipeline =
+            path.starts_with(project_root.join("pipelines")) || configured.as_ref() == Some(&path);
+        // Other packaged YAML may contain scenes, materials or input maps.
+        let has_passes = serde_norway::from_str::<serde_norway::Value>(&contents)
+            .ok()
+            .is_some_and(|value| value.get("passes").is_some());
+        if !required_pipeline && !has_passes {
             continue;
         }
-        let relative = slang.strip_prefix(source).map_err(|e| e.to_string())?;
-        match crate::shader::compile_slang_to_wgsl_public(&slang) {
-            Ok(wgsl) => {
-                let out = crate::shader::precompiled_wgsl_path(&dest.join(relative));
-                fs::write(&out, wgsl)
-                    .map_err(|e| format!("Failed to write {}: {}", out.display(), e))?;
-                report.compiled += 1;
+        let pipeline: crate::pipeline::PipelineFile = serde_norway::from_str(&contents)
+            .map_err(|e| format!("Invalid packaged pipeline {}: {e}", path.display()))?;
+        let has_splats = pipeline.resources.iter().any(|r| r.name == "splat_color")
+            && pipeline.resources.iter().any(|r| r.name == "splat_depth");
+        for pass in pipeline.passes {
+            if !pass.shader.starts_with("builtin:") {
+                let reference = Path::new(&pass.shader);
+                validate_packaged_reference(project_root, reference)?;
+                if reference.extension().is_some_and(|ext| ext == "slang") {
+                    validate_packaged_reference(
+                        project_root,
+                        &crate::shader::precompiled_wgsl_path(reference),
+                    )?;
+                }
             }
-            Err(e) if e.to_string().contains("entry point") => report.modules += 1,
-            Err(e) => report.failed.push(format!("{}: {}", relative.display(), e)),
+            let (source, wgsl) =
+                crate::pipeline::shader_source::load_pass_shader(project_root, &pass, has_splats)
+                    .map_err(|e| format!("Packaged pipeline {}: {e}", path.display()))?;
+            if pass.shader.starts_with("builtin:") {
+                continue;
+            }
+            let relative_source = source
+                .strip_prefix(project_root)
+                .map_err(|error| error.to_string())?
+                .to_path_buf();
+            let relative_artifact = if source.extension().is_some_and(|ext| ext == "wgsl") {
+                relative_source.clone()
+            } else {
+                crate::shader::precompiled_wgsl_path(&relative_source)
+            };
+            if let Some(existing) = package.artifacts.get(&relative_artifact) {
+                if existing.wgsl != wgsl {
+                    return Err(format!(
+                        "Conflicting required shaders write different WGSL to {} (pass '{}')",
+                        relative_artifact.display(),
+                        pass.name
+                    ));
+                }
+            }
+            package.artifacts.insert(
+                relative_artifact,
+                PackagedShader {
+                    source,
+                    relative_source,
+                    wgsl,
+                },
+            );
+        }
+        package.pipelines.insert(path);
+    }
+    Ok(package)
+}
+
+/// Check the authored path before canonicalization erases internal symlink
+/// aliases. The bundle retains naive.yaml and pipeline references verbatim.
+fn validate_packaged_reference(project_root: &Path, relative: &Path) -> Result<PathBuf, String> {
+    let resolved = crate::project_path::resolve(project_root, relative)?;
+    let mut authored = project_root.to_path_buf();
+    for component in relative.components() {
+        if let std::path::Component::Normal(name) = component {
+            authored.push(name);
+            reject_symlink(&authored)?;
         }
     }
-    Ok(report)
+    Ok(resolved)
+}
+
+fn copy_project_file(source: &Path, destination: &Path) -> Result<u64, String> {
+    fs::create_dir_all(destination.parent().ok_or("File has no parent directory")?)
+        .map_err(|e| e.to_string())?;
+    fs::copy(source, destination).map_err(|e| format!("Failed to copy {}: {e}", source.display()))
 }
 
 fn collect_files(dir: &Path, extension: &str, out: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -527,36 +623,198 @@ mod tests {
         fs::remove_dir_all(project).unwrap();
     }
 
+    fn shader_config(project: &Path, shader: &str) -> NaiveConfig {
+        fs::create_dir_all(project.join("effects")).unwrap();
+        fs::write(
+            project.join("effects/render.yaml"),
+            format!("version: 1\npasses:\n  - name: fxaa_custom\n    type: fullscreen\n    shader: {shader}\n"),
+        ).unwrap();
+        let yaml = "name: shader-test\nversion: '1'\ndefault_pipeline: effects/render.yaml\n";
+        fs::write(project.join("naive.yaml"), yaml).unwrap();
+        serde_norway::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn artifact_only_shader_and_pipeline_outside_standard_directories_are_packaged() {
+        let project = temp_project("artifact");
+        let config = shader_config(&project, "effects/custom.slang");
+        let wgsl = crate::shader::get_triangle_wgsl();
+        fs::write(project.join("effects/custom.slang.wgsl"), &wgsl).unwrap();
+        let player = project.join("player");
+        fs::write(&player, "player").unwrap();
+        let bundle = bundle_with_player(&config, &project, "linux", &player).unwrap();
+        let game = bundle.join("game");
+        assert!(game.join("effects/render.yaml").is_file());
+        assert!(!game.join("effects/custom.slang").exists());
+        assert_eq!(
+            fs::read_to_string(game.join("effects/custom.slang.wgsl")).unwrap(),
+            wgsl
+        );
+        let pipeline = crate::pipeline::load_pipeline(&game.join("effects/render.yaml")).unwrap();
+        let (_, loaded) =
+            crate::pipeline::shader_source::load_pass_shader(&game, &pipeline.passes[0], false)
+                .unwrap();
+        assert_eq!(loaded, wgsl);
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn missing_or_invalid_required_shader_cannot_replace_a_good_bundle() {
+        let project = temp_project("required");
+        let config = shader_config(&project, "effects/custom.slang");
+        let previous = project.join("dist/shader-test-linux/previous");
+        fs::create_dir_all(previous.parent().unwrap()).unwrap();
+        fs::write(&previous, "good bundle").unwrap();
+        let player = project.join("player");
+        fs::write(&player, "player").unwrap();
+        for content in [None, Some("invalid WGSL"), Some("fn helper() {}")] {
+            if let Some(content) = content {
+                fs::write(project.join("effects/custom.slang.wgsl"), content).unwrap();
+            }
+            let error = bundle_with_player(&config, &project, "linux", &player).unwrap_err();
+            assert!(
+                error.contains("Required shader 'effects/custom.slang' for pass 'fxaa_custom'"),
+                "{error}"
+            );
+            assert_eq!(fs::read_to_string(&previous).unwrap(), "good bundle");
+        }
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn every_packaged_pipeline_is_checked_even_when_not_the_default() {
+        let project = temp_project("other-pipelines");
+        let config: NaiveConfig = serde_norway::from_str("name: demo\nversion: '1'\n").unwrap();
+        for directory in ["pipelines", "assets/effects"] {
+            fs::create_dir_all(project.join(directory)).unwrap();
+            let pipeline = project.join(directory).join("unused.yml");
+            fs::write(&pipeline, "version: 1\npasses:\n - {name: bloom_custom, type: fullscreen, shader: effects/missing.slang}\n").unwrap();
+            let error = prepare_shaders(&config, &project).err().unwrap();
+            assert!(error.contains("bloom_custom"), "{error}");
+            fs::remove_file(pipeline).unwrap();
+        }
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn current_demo_and_new_projects_explicitly_use_engine_shaders() {
+        let demo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../project")
+            .canonicalize()
+            .unwrap();
+        let config = crate::project_config::load_config(&demo.join("naive.yaml")).unwrap();
+        let prepared = prepare_shaders(&config, &demo).unwrap();
+        assert_eq!(prepared.pipelines.len(), 1);
+        assert!(prepared.artifacts.is_empty());
+
+        let project = temp_project("init");
+        let generated = project.join("generated");
+        crate::init::create_project(generated.to_str().unwrap()).unwrap();
+        let config = crate::project_config::load_config(&generated.join("naive.yaml")).unwrap();
+        let prepared = prepare_shaders(&config, &generated).unwrap();
+        assert_eq!(prepared.pipelines.len(), 1);
+        assert!(prepared.artifacts.is_empty());
+        fs::remove_dir_all(project).unwrap();
+    }
+
     #[cfg(feature = "slang")]
     #[test]
-    fn slang_shaders_are_compiled_to_wgsl_in_the_bundle() {
-        let repo_shaders = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../project/shaders");
-        let project = temp_project("shaders");
-        let source = project.join("shaders");
-        fs::create_dir_all(source.join("passes")).unwrap();
-        fs::create_dir_all(source.join("modules")).unwrap();
+    fn referenced_entrypoints_compile_imports_and_unreferenced_modules_are_not_passes() {
+        let project = temp_project("slang-imports");
+        let config = shader_config(&project, "effects/custom.slang");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/release-smoke-fixture/assets/effects");
         fs::copy(
-            repo_shaders.join("passes/tonemap.slang"),
-            source.join("passes/tonemap.slang"),
+            fixture.join("release_marker.slang"),
+            project.join("effects/custom.slang"),
         )
         .unwrap();
         fs::copy(
-            repo_shaders.join("modules/camera.slang"),
-            source.join("modules/camera.slang"),
+            fixture.join("release_palette.slang"),
+            project.join("effects/release_palette.slang"),
         )
         .unwrap();
-        let dest = project.join("out");
-        copy_dir_recursive(&source, &dest).unwrap();
-        let report = precompile_shaders(&source, &dest).unwrap();
-        assert_eq!(
-            (report.found, report.compiled),
-            (2, 1),
-            "{:?}",
-            report.failed
+        fs::create_dir(project.join("shaders")).unwrap();
+        fs::write(
+            project.join("shaders/unreferenced.slang"),
+            "not a valid standalone shader",
+        )
+        .unwrap();
+        let prepared = prepare_shaders(&config, &project).unwrap();
+        assert_eq!(prepared.artifacts.len(), 1);
+        let wgsl = &prepared.artifacts[Path::new("effects/custom.slang.wgsl")].wgsl;
+        naga::front::wgsl::parse_str(wgsl).unwrap();
+
+        // The same import-only module becomes an error if a pass references it.
+        shader_config(&project, "effects/release_palette.slang");
+        let error = prepare_shaders(&config, &project).err().unwrap();
+        assert!(
+            error.contains("Required shader 'effects/release_palette.slang'"),
+            "{error}"
         );
-        assert_eq!(report.modules, 1);
-        let wgsl = fs::read_to_string(dest.join("passes/tonemap.slang.wgsl")).unwrap();
-        naga::front::wgsl::parse_str(&wgsl).expect("precompiled WGSL parses");
+        assert!(error.contains("entry point"), "{error}");
+
+        // A stale good artifact must not hide broken source from the compiler.
+        shader_config(&project, "effects/custom.slang");
+        fs::write(project.join("effects/custom.slang.wgsl"), wgsl).unwrap();
+        fs::write(project.join("effects/custom.slang"), "broken source").unwrap();
+        assert!(prepare_shaders(&config, &project).is_err());
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    #[cfg(feature = "slang")]
+    #[test]
+    fn direct_and_compiled_shaders_cannot_silently_overwrite_each_other() {
+        let project = temp_project("artifact-collision");
+        let config = shader_config(&project, "effects/custom.slang");
+        fs::write(
+            project.join("effects/custom.slang"),
+            include_str!("../../../project/shaders/passes/triangle.slang"),
+        )
+        .unwrap();
+        fs::write(
+            project.join("effects/custom.slang.wgsl"),
+            crate::shader::get_triangle_wgsl(),
+        )
+        .unwrap();
+        let first = fs::read_to_string(project.join("effects/render.yaml")).unwrap();
+        let second =
+            "  - name: second_pass\n    type: fullscreen\n    shader: ./effects/custom.slang.wgsl\n";
+        for pipeline in [
+            format!("{first}{second}"),
+            format!(
+                "version: 1\npasses:\n{second}{}",
+                first.split("passes:\n").nth(1).unwrap()
+            ),
+        ] {
+            fs::write(project.join("effects/render.yaml"), pipeline).unwrap();
+            let error = prepare_shaders(&config, &project).err().unwrap();
+            assert!(error.contains("Conflicting required shaders"), "{error}");
+        }
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_pipeline_and_shader_aliases_outside_content_directories_are_rejected() {
+        let project = temp_project("shader-aliases");
+        let config = shader_config(&project, "effects/custom.slang");
+        fs::rename(project.join("effects"), project.join("actual-effects")).unwrap();
+        std::os::unix::fs::symlink("actual-effects", project.join("effects")).unwrap();
+        let error = prepare_shaders(&config, &project).err().unwrap();
+        assert!(error.contains("symlink"), "{error}");
+        fs::remove_file(project.join("effects")).unwrap();
+        fs::rename(project.join("actual-effects"), project.join("effects")).unwrap();
+        fs::write(project.join("source.slang"), "source").unwrap();
+        std::os::unix::fs::symlink("../source.slang", project.join("effects/custom.slang"))
+            .unwrap();
+        let error = prepare_shaders(&config, &project).err().unwrap();
+        assert!(error.contains("symlink"), "{error}");
+        fs::remove_file(project.join("effects/custom.slang")).unwrap();
+        std::os::unix::fs::symlink("../source.slang", project.join("effects/custom.slang.wgsl"))
+            .unwrap();
+        let error = prepare_shaders(&config, &project).err().unwrap();
+        assert!(error.contains("symlink"), "{error}");
         fs::remove_dir_all(project).unwrap();
     }
 }

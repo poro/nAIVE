@@ -2,6 +2,7 @@ pub mod compiler;
 pub mod def;
 pub mod executor;
 pub mod resource;
+pub(crate) mod shader_source;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -105,6 +106,12 @@ pub struct CompiledPass {
     pub depth_target: Option<String>,
     pub wgsl_source: String,
     pub shader_path: PathBuf,
+}
+
+impl CompiledPass {
+    pub(crate) fn fullscreen_role(&self) -> shader_source::FullscreenRole {
+        shader_source::fullscreen_role(self.shader_path.to_str().unwrap_or_default(), &self.name)
+    }
 }
 
 // ---------------------------------------------------------------------------

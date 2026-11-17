@@ -77,6 +77,51 @@ pub fn compile_slang_to_wgsl_public(path: &Path) -> Result<String, ShaderError> 
     compile_slang_to_wgsl(path)
 }
 
+/// Load an explicitly referenced project shader. Compilation and artifact
+/// failures are errors; only `builtin:` pipeline references use engine WGSL.
+pub(crate) fn load_required_shader(path: &Path) -> Result<String, ShaderError> {
+    let source = if path.extension().is_some_and(|ext| ext == "wgsl") {
+        std::fs::read_to_string(path).map_err(ShaderError::IoError)?
+    } else if path.extension().is_some_and(|ext| ext == "slang") {
+        // An artifact-only project can be repackaged even by a Slang-enabled
+        // tool. When source exists, compile it and report any failure.
+        if cfg!(feature = "slang") && !path.exists() {
+            std::fs::read_to_string(precompiled_wgsl_path(path)).map_err(ShaderError::IoError)?
+        } else {
+            compile_slang_to_wgsl(path)?
+        }
+    } else {
+        return Err(ShaderError::SlangCompilationFailed(format!(
+            "Expected a .slang or .wgsl shader: {}",
+            path.display()
+        )));
+    };
+    let module = wgpu::naga::front::wgsl::parse_str(&source)
+        .map_err(|error| ShaderError::SlangCompilationFailed(error.emit_to_string(&source)))?;
+    wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .map_err(|error| ShaderError::SlangCompilationFailed(error.emit_to_string(&source)))?;
+    for (name, stage) in [
+        ("vs_main", wgpu::naga::ShaderStage::Vertex),
+        ("fs_main", wgpu::naga::ShaderStage::Fragment),
+    ] {
+        if !module
+            .entry_points
+            .iter()
+            .any(|entry| entry.name == name && entry.stage == stage)
+        {
+            return Err(ShaderError::SlangCompilationFailed(format!(
+                "Required entry point '{name}' not found in {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(source)
+}
+
 /// Actual SLANG-to-WGSL compilation using shader-slang crate.
 #[cfg(feature = "slang")]
 fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {

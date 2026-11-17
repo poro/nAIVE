@@ -105,6 +105,9 @@ jobs:
           curl -fsSL "https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-macos-aarch64.tar.gz" \
             | tar xz -C vendor
 
+      - name: Verify workspace tests
+        run: cargo test --workspace --exclude naive-web --locked
+
       - name: Build naive (with Slang)
         run: cargo build --release --locked -p naive-runtime --bins
 
@@ -116,6 +119,9 @@ jobs:
             echo "::error::naive-player links a Slang library"
             exit 1
           fi
+
+      - name: Verify Slang to standalone player rendering
+        run: python3 scripts/release-smoke.py --no-build --slang
 
       - name: Bundle the demo project
         working-directory: project
@@ -141,6 +147,13 @@ jobs:
           xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
           xcrun stapler staple "$app"
+
+      # Publish depends on this job: exercise the final app after signing and
+      # notarization, away from the source project, before attaching any assets.
+      - name: Launch and verify relocated release app
+        run: |
+          app=$(ls -d project/dist/*.app)
+          python3 scripts/release-smoke.py --bundle "$app"
 
       - name: Package
         run: |

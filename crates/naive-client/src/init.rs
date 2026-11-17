@@ -96,6 +96,8 @@ YAML scenes + Lua scripts + assets, run by the `naive` binary.
 - Write Lua scripts for game logic (attached via `script` component)
 - The engine hot-reloads scenes, scripts, materials, and shaders on file save
 - Use `naive test` to verify gameplay logic in headless mode
+- Pipeline `builtin:` shaders are provided by the engine; custom `.slang` passes must compile successfully for `naive build`
+- Without the Slang SDK, custom passes need a precompiled `<name>.slang.wgsl` artifact (or a direct `.wgsl` reference)
 - Each entity has a unique string `id` in the scene YAML — this is how Lua references entities
 
 ## Scene Format (YAML)
@@ -779,7 +781,7 @@ resources:
 passes:
   - name: shadow_pass
     type: shadow
-    shader: shaders/passes/shadow.slang
+    shader: builtin:shadow
     inputs:
       scene_meshes: auto
     outputs:
@@ -787,7 +789,7 @@ passes:
 
   - name: geometry_pass
     type: rasterize
-    shader: shaders/passes/gbuffer.slang
+    shader: builtin:gbuffer
     inputs:
       scene_meshes: auto
       scene_materials: auto
@@ -799,7 +801,7 @@ passes:
 
   - name: lighting_pass
     type: fullscreen
-    shader: shaders/passes/deferred_light.slang
+    shader: builtin:deferred_light
     inputs:
       gbuffer_albedo: gbuffer_albedo
       gbuffer_normal: gbuffer_normal
@@ -812,7 +814,7 @@ passes:
 
   - name: bloom_pass
     type: fullscreen
-    shader: shaders/passes/bloom.slang
+    shader: builtin:bloom
     inputs:
       hdr: hdr_buffer
     outputs:
@@ -820,7 +822,7 @@ passes:
 
   - name: tonemap_pass
     type: fullscreen
-    shader: shaders/passes/tonemap.slang
+    shader: builtin:tonemap
     inputs:
       hdr: hdr_buffer
       bloom: bloom_buffer
@@ -829,7 +831,7 @@ passes:
 
   - name: fxaa_pass
     type: fullscreen
-    shader: shaders/passes/fxaa.slang
+    shader: builtin:fxaa
     inputs:
       ldr: ldr_buffer
     outputs:
