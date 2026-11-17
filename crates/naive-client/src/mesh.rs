@@ -295,46 +295,39 @@ impl MeshCache {
         &self.meshes[handle.0]
     }
 
-    /// Insert a runtime mesh built from raw vertex data (from Lua mesh.create).
+    /// Insert a runtime mesh created by Lua `mesh.create`, keeping its
+    /// triangles for trimesh colliders like any loaded mesh. The first
+    /// definition of a name is kept.
     pub fn insert_runtime_mesh(
         &mut self,
         device: &wgpu::Device,
         name: &str,
-        positions: &[[f32; 3]],
-        normals: &[[f32; 3]],
-        uvs: &[[f32; 2]],
-        indices: &[u32],
+        cpu: &naive_sim::assets::CpuMesh,
     ) -> MeshHandle {
-        let key = PathBuf::from(format!("runtime:{}", name));
+        let key = PathBuf::from(format!("{}{name}", naive_sim::assets::RUNTIME_MESH_PREFIX));
         if let Some(&handle) = self.path_to_handle.get(&key) {
             return handle;
         }
-
-        let j = [0u32, 0, 0, 0];
-        let w = [1.0f32, 0.0, 0.0, 0.0];
-        let vertices: Vec<Vertex3D> = positions
-            .iter()
-            .enumerate()
-            .map(|(i, pos)| Vertex3D {
-                position: *pos,
-                normal: normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
-                tex_coords: uvs.get(i).copied().unwrap_or([0.0, 0.0]),
-                color: [1.0, 1.0, 1.0, 1.0],
-                joint_indices: j,
-                joint_weights: w,
-            })
-            .collect();
-
-        let gpu_mesh =
-            build_procedural_gpu_mesh(device, &vertices, indices, &format!("Runtime: {}", name));
+        let vertices: Vec<Vertex3D> = cpu.vertices.iter().copied().map(Vertex3D::from).collect();
+        let mut gpu_mesh =
+            build_procedural_gpu_mesh(device, &vertices, &cpu.indices, &format!("Runtime: {name}"));
+        gpu_mesh.physics_vertices = Some(cpu.vertices.iter().map(|v| v.position).collect());
+        gpu_mesh.physics_indices = Some(
+            cpu.indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|v| [v[0], v[1], v[2]])
+                .collect(),
+        );
         let handle = MeshHandle(self.meshes.len());
         self.meshes.push(gpu_mesh);
         self.path_to_handle.insert(key, handle);
         tracing::info!(
             "Created runtime mesh '{}': {} vertices, {} indices",
             name,
-            positions.len(),
-            indices.len()
+            cpu.vertices.len(),
+            cpu.indices.len()
         );
         handle
     }

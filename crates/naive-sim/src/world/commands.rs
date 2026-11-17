@@ -31,13 +31,22 @@ pub struct TextureSwapCommand {
     pub texture_path: String,
 }
 
-/// Deferred mesh creation from Lua vertex/index data.
+/// Deferred mesh creation from Lua vertex/index data. Both runners apply
+/// these before the same frame's spawns, so a script can create a mesh and
+/// spawn it in one call.
 pub struct MeshCreateCommand {
     pub name: String,
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
+}
+
+impl MeshCreateCommand {
+    /// The validated CPU mesh the renderer and physics share.
+    pub fn cpu_mesh(&self) -> Result<crate::assets::CpuMesh, crate::assets::AssetError> {
+        crate::assets::runtime_mesh(&self.positions, &self.normals, &self.uvs, &self.indices)
+    }
 }
 
 pub struct SpawnCommand {

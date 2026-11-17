@@ -1,0 +1,7 @@
+dist/
+*.log
+!dev.log
+.DS_Store
+*.swp
+*.swo
+*~

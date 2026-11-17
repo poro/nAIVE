@@ -49,12 +49,19 @@ entry points; they are not guessed from compiler error messages.
 Pipelines select engine shaders explicitly with `shader: builtin:gbuffer`,
 `builtin:shadow`, `builtin:gaussian_splat`, `builtin:deferred_light`,
 `builtin:bloom`, `builtin:tonemap`, or `builtin:fxaa`. New projects and the demo
-use these declarations and can be bundled without the SDK. To migrate an older
-pipeline that intended the stock engine shaders, replace its corresponding
-`shaders/passes/<name>.slang` references with these `builtin:` references.
-Keep filesystem references for custom shaders and supply compiled artifacts
-when building without Slang. A familiar pass name no longer permits a failed
-custom shader to fall back silently to engine WGSL. Mesh shaders must use the
+write `version: 2` and use these declarations, and can be bundled without the
+SDK. In a version 2 pipeline every other reference is a project shader that
+must exist and compile; a familiar pass name never lets a missing or failed
+custom shader fall back to engine WGSL.
+
+Pipelines written up to 0.1.22 say `version: 1`, and keep their 0.1.22
+meaning: rasterize and shadow passes use `builtin:gbuffer` and
+`builtin:shadow` whatever file they name (0.1.22 never read those files), and
+a fullscreen or splat pass whose shader file does not exist uses the engine
+shader its name matches (`splat`, `light`, `bloom`, `tonemap`, `fxaa`). A
+version 1 shader file that does exist is used and must compile. The engine and
+`naive build` log each pass they map; to make the mapping explicit, write the
+logged `builtin:` references and `version: 2`. Mesh shaders must use the
 engine's instanced storage-buffer layout; `builtin:gbuffer` and
 `builtin:shadow` provide that layout. Built-in fullscreen shaders select their
 binding layout independently of the pass name. Custom fullscreen passes retain
