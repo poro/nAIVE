@@ -198,6 +198,76 @@ pub fn run_fixed_steps(
     steps
 }
 
+/// Deliver physics hooks through the same path in native and headless runs.
+pub fn dispatch_physics_events(
+    scene_world: &SharedSceneWorld,
+    physics_world: &SharedPhysicsWorld,
+    script_runtime: &ScriptRuntime,
+) {
+    dispatch_collision_events(scene_world, physics_world, script_runtime);
+    dispatch_trigger_events(scene_world, physics_world, script_runtime);
+}
+
+/// Deliver each sensor's enter/exit hook once, without holding engine borrows.
+/// Sensors receive their own callbacks; two overlapping sensors each receive one.
+pub fn dispatch_trigger_events(
+    scene_world: &SharedSceneWorld,
+    physics_world: &SharedPhysicsWorld,
+    script_runtime: &ScriptRuntime,
+) {
+    dispatch_trigger_events_with_retired_ids(
+        scene_world,
+        physics_world,
+        script_runtime,
+        &HashMap::new(),
+    );
+}
+
+/// Hot reload removes entities before hooks can run. Retain their previous
+/// names only for exits; live handles always resolve through the current world.
+pub(crate) fn dispatch_trigger_events_with_retired_ids(
+    scene_world: &SharedSceneWorld,
+    physics_world: &SharedPhysicsWorld,
+    script_runtime: &ScriptRuntime,
+    retired_ids: &HashMap<hecs::Entity, String>,
+) {
+    let events = std::mem::take(&mut physics_world.borrow_mut().trigger_events);
+    if events.is_empty() {
+        return;
+    }
+    let callbacks: Vec<_> = {
+        let sw = scene_world.borrow();
+        let entity_to_id: HashMap<_, _> = sw
+            .entity_registry
+            .iter()
+            .map(|(id, &entity)| (entity, id.as_str()))
+            .collect();
+        events
+            .into_iter()
+            .filter_map(|event| {
+                // A stale event must never address a replacement entity that
+                // happens to reuse its string ID after destruction or reload.
+                if !sw.world.contains(event.trigger_entity) {
+                    return None;
+                }
+                let id = entity_to_id.get(&event.other_entity).copied().or_else(|| {
+                    (!event.entered)
+                        .then(|| retired_ids.get(&event.other_entity).map(String::as_str))
+                        .flatten()
+                })?;
+                Some((event.trigger_entity, id.to_string(), event.entered))
+            })
+            .collect()
+    };
+    for (sensor, other_id, entered) in callbacks {
+        if entered {
+            script_runtime.call_on_trigger_enter(sensor, &other_id);
+        } else {
+            script_runtime.call_on_trigger_exit(sensor, &other_id);
+        }
+    }
+}
+
 /// Call `on_collision` on both scripts for each contact that began this frame.
 pub fn dispatch_collision_events(
     scene_world: &SharedSceneWorld,
@@ -471,13 +541,13 @@ pub fn process_destroys(
 pub fn destroy_entity(
     scene_world: &SharedSceneWorld,
     physics_world: Option<&SharedPhysicsWorld>,
-    script_runtime: Option<&mut ScriptRuntime>,
+    mut script_runtime: Option<&mut ScriptRuntime>,
     id: &str,
 ) -> bool {
     let Some(entity) = scene_world.borrow().entity_registry.get(id).copied() else {
         return false;
     };
-    if let Some(runtime) = script_runtime {
+    if let Some(runtime) = script_runtime.as_deref_mut() {
         runtime.remove_entity(entity);
     }
     let body = scene_world
@@ -488,6 +558,11 @@ pub fn destroy_entity(
         .map(|rb| rb.handle);
     if let (Some(handle), Some(physics)) = (body, physics_world) {
         physics.borrow_mut().remove_body(handle);
+        // The removed entity's name remains available to surviving sensors,
+        // while its own script has already completed teardown.
+        if let Some(runtime) = script_runtime {
+            dispatch_trigger_events(scene_world, physics, runtime);
+        }
     }
     crate::world::destroy_runtime_entity(&mut scene_world.borrow_mut(), id)
 }

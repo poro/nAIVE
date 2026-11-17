@@ -274,11 +274,11 @@ end
 function on_collision(other_entity_id)
 end
 
--- Called when another entity enters this trigger volume
+-- Called once when another entity enters this trigger volume
 function on_trigger_enter(other_entity_id)
 end
 
--- Called when another entity exits this trigger volume
+-- Called once when another entity exits this trigger volume
 function on_trigger_exit(other_entity_id)
 end
 
@@ -294,6 +294,13 @@ end
 function on_reload()
 end
 ```
+
+Set `collider.is_trigger: true` to make a nonblocking trigger on a static,
+kinematic, or dynamic body. Trigger hooks run on the trigger's script and receive
+the other entity's string ID. Two overlapping triggers each receive their own
+hooks. An overlap produces one enter and one exit, including when the other entity
+is destroyed; continuing overlaps do not repeat enters. Events from every fixed
+physics step are delivered in both native play and `naive test`.
 
 **Note:** Scripts do not receive an `entity` object. Instead, the variable `_entity_string_id` contains the entity's YAML `id` string. Use it with the `entity.*` API functions below. Per-script state can be stored on the `self` table.
 

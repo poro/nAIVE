@@ -558,16 +558,18 @@ impl Engine {
                                         .as_ref()
                                         .map(|rb| rb.ccd)
                                         .unwrap_or(false);
-                                    let (rb_handle, col_handle) = physics_world.add_dynamic_body(
-                                        entity,
-                                        pos,
-                                        rot,
-                                        shape.clone(),
-                                        mass,
-                                        restitution,
-                                        friction,
-                                        ccd,
-                                    );
+                                    let (rb_handle, col_handle) = physics_world
+                                        .add_dynamic_body_with_sensor(
+                                            entity,
+                                            pos,
+                                            rot,
+                                            shape.clone(),
+                                            mass,
+                                            restitution,
+                                            friction,
+                                            ccd,
+                                            is_trigger,
+                                        );
                                     let rb_comp = crate::physics::RigidBody {
                                         handle: rb_handle,
                                         body_type: crate::physics::PhysicsBodyType::Dynamic,
@@ -847,16 +849,18 @@ impl Engine {
                                     .as_ref()
                                     .map(|rb| rb.ccd)
                                     .unwrap_or(false);
-                                let (rb_handle, col_handle) = physics_world.add_dynamic_body(
-                                    entity,
-                                    pos,
-                                    rot,
-                                    shape.clone(),
-                                    mass,
-                                    restitution,
-                                    friction,
-                                    ccd,
-                                );
+                                let (rb_handle, col_handle) = physics_world
+                                    .add_dynamic_body_with_sensor(
+                                        entity,
+                                        pos,
+                                        rot,
+                                        shape.clone(),
+                                        mass,
+                                        restitution,
+                                        friction,
+                                        ccd,
+                                        is_trigger,
+                                    );
                                 let _ = sw.world.insert(
                                     entity,
                                     (
@@ -1363,6 +1367,15 @@ impl Engine {
             }
         };
 
+        // Reconciliation removes old handles before callbacks can run; keep
+        // their names until surviving sensors have received their exit hooks.
+        let previous_ids = scene_world
+            .borrow()
+            .entity_registry
+            .iter()
+            .map(|(id, &entity)| (entity, id.clone()))
+            .collect();
+
         // Run destroy hooks while removed/replaced entities can still access
         // their components, and before reconciliation borrows either world.
         let retiring: Vec<_> = {
@@ -1506,7 +1519,7 @@ impl Engine {
                                                     .as_ref()
                                                     .map(|rb| rb.ccd)
                                                     .unwrap_or(false);
-                                                pw.add_dynamic_body(
+                                                pw.add_dynamic_body_with_sensor(
                                                     entity,
                                                     pos,
                                                     rot,
@@ -1515,6 +1528,7 @@ impl Engine {
                                                     restitution,
                                                     friction,
                                                     ccd,
+                                                    is_trigger,
                                                 )
                                             }
                                             crate::physics::PhysicsBodyType::Kinematic => pw
@@ -1563,6 +1577,16 @@ impl Engine {
 
         drop(pw_borrow);
         drop(scene_world);
+        if let (Some(world), Some(physics), Some(runtime)) =
+            (&self.scene_world, &self.physics_world, &self.script_runtime)
+        {
+            crate::sim::dispatch_trigger_events_with_retired_ids(
+                world,
+                physics,
+                runtime,
+                &previous_ids,
+            );
+        }
         self.register_skeletons();
         if let (Some(world), Some(runtime)) = (&self.scene_world, self.script_runtime.as_mut()) {
             let stale: Vec<_> = runtime
@@ -2266,7 +2290,7 @@ impl Engine {
                                         .as_ref()
                                         .map(|rb| rb.ccd)
                                         .unwrap_or(false);
-                                    let (rb_handle, col_handle) = pw.add_dynamic_body(
+                                    let (rb_handle, col_handle) = pw.add_dynamic_body_with_sensor(
                                         entity,
                                         pos,
                                         rot,
@@ -2275,6 +2299,7 @@ impl Engine {
                                         restitution,
                                         friction,
                                         ccd,
+                                        is_trigger,
                                     );
                                     let rb_comp = crate::physics::RigidBody {
                                         handle: rb_handle,
@@ -2853,7 +2878,7 @@ impl Engine {
             );
         }
 
-        self.dispatch_collision_events();
+        self.dispatch_physics_events();
 
         // Tier 1: Process collision damage (auto-damage + projectile hits)
         self.process_collision_damage();
@@ -2926,12 +2951,12 @@ impl Engine {
         }
     }
 
-    /// Call `on_collision` on both scripts for each contact that began this frame.
-    fn dispatch_collision_events(&self) {
+    /// Deliver contact and trigger hooks accumulated by the fixed steps.
+    fn dispatch_physics_events(&self) {
         if let (Some(scene_world), Some(physics_world), Some(script_runtime)) =
             (&self.scene_world, &self.physics_world, &self.script_runtime)
         {
-            crate::sim::dispatch_collision_events(scene_world, physics_world, script_runtime);
+            crate::sim::dispatch_physics_events(scene_world, physics_world, script_runtime);
         }
     }
 

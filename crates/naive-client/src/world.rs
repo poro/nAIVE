@@ -691,7 +691,7 @@ pub fn spawn_entity(
                         .as_ref()
                         .map(|rb| rb.ccd)
                         .unwrap_or(false);
-                    let (rb_handle, col_handle) = pw.add_dynamic_body(
+                    let (rb_handle, col_handle) = pw.add_dynamic_body_with_sensor(
                         entity,
                         pos,
                         rot,
@@ -700,6 +700,7 @@ pub fn spawn_entity(
                         restitution,
                         friction,
                         ccd,
+                        is_trigger,
                     );
                     let rb_comp = physics::RigidBody {
                         handle: rb_handle,
@@ -1153,7 +1154,7 @@ pub fn spawn_entity_headless(
                     .as_ref()
                     .map(|rb| rb.ccd)
                     .unwrap_or(false);
-                let (rb_handle, col_handle) = physics_world.add_dynamic_body(
+                let (rb_handle, col_handle) = physics_world.add_dynamic_body_with_sensor(
                     entity,
                     pos,
                     rot,
@@ -1162,6 +1163,7 @@ pub fn spawn_entity_headless(
                     restitution,
                     friction,
                     ccd,
+                    is_trigger,
                 );
                 let rb_comp = physics::RigidBody {
                     handle: rb_handle,
@@ -1612,6 +1614,115 @@ impl Default for EntityPoolManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structural_replacement_exits_surviving_sensors_with_the_retired_name() {
+        let root = std::env::temp_dir().join(format!(
+            "naive-trigger-structural-reload-{}",
+            std::process::id(),
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("sensor.lua"),
+            r#"
+            enters = 0
+            exits = {}
+            function on_trigger_enter(other)
+                enters = enters + 1
+                physics.set_velocity(_entity_string_id, 0, 0, 0)
+            end
+            function on_trigger_exit(other)
+                exits[#exits + 1] = other
+                physics.set_velocity(_entity_string_id, 0, 0, 0)
+            end
+        "#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("scene.yaml"),
+            r#"
+name: Reload
+settings: {gravity: [0, 0, 0]}
+entities:
+  - id: survivor
+    components:
+      collider: {shape: sphere, radius: 1, is_trigger: true}
+      script: {source: sensor.lua}
+  - id: replaced
+    components:
+      collider: {shape: sphere, radius: 1, is_trigger: true}
+      script: {source: sensor.lua}
+"#,
+        )
+        .unwrap();
+        let mut runner = crate::test_runner::TestRunner::new(&root);
+        runner.load_scene("scene.yaml").unwrap();
+        runner.step_frame();
+        let (survivor, retired) = {
+            let world = runner.scene_world.borrow();
+            (
+                world.entity_registry["survivor"],
+                world.entity_registry["replaced"],
+            )
+        };
+        let survivor_env: mlua::Table = runner
+            .script_runtime
+            .lua
+            .registry_value(&runner.script_runtime.entity_envs[&survivor])
+            .unwrap();
+        let retired_env: mlua::Table = runner
+            .script_runtime
+            .lua
+            .registry_value(&runner.script_runtime.entity_envs[&retired])
+            .unwrap();
+        let previous_ids = runner
+            .scene_world
+            .borrow()
+            .entity_registry
+            .iter()
+            .map(|(id, &entity)| (entity, id.clone()))
+            .collect();
+        runner.script_runtime.remove_entity(retired);
+        {
+            let mut world = runner.scene_world.borrow_mut();
+            let mut physics = runner.physics_world.borrow_mut();
+            let mut replacement = world.current_scene.as_ref().unwrap().entities[1].clone();
+            replacement.components.collider.as_mut().unwrap().radius = Some(2.0);
+            assert!(despawn_scene_entity(
+                &mut world,
+                "replaced",
+                Some(&mut physics)
+            ));
+            spawn_entity_headless(&mut world, &replacement, &mut physics);
+            assert_ne!(world.entity_registry["replaced"], retired);
+        }
+        crate::sim::dispatch_trigger_events_with_retired_ids(
+            &runner.scene_world,
+            &runner.physics_world,
+            &runner.script_runtime,
+            &previous_ids,
+        );
+        let exits: mlua::Table = survivor_env.get("exits").unwrap();
+        assert_eq!(exits.raw_len(), 1);
+        assert_eq!(exits.get::<String>(1).unwrap(), "replaced");
+        assert_eq!(
+            retired_env.get::<mlua::Table>("exits").unwrap().raw_len(),
+            0
+        );
+        assert!(!runner.script_runtime.entity_envs.contains_key(&retired));
+        crate::sim::initialize_pending_scripts(
+            &runner.scene_world,
+            &mut runner.script_runtime,
+            &root,
+        )
+        .unwrap();
+        runner.step_frame();
+        runner.step_frame();
+        assert_eq!(survivor_env.get::<i64>("enters").unwrap(), 2);
+        assert_eq!(exits.raw_len(), 1);
+        assert!(runner.take_errors().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn structural_replacement_removes_old_physics_and_authoring_state() {
