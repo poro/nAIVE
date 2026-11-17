@@ -251,8 +251,10 @@ the pull request.
 
 1. `scripts/bump-version.sh X.Y.Z`, then a pull request with the result.
 2. When it merges, `.github/workflows/release.yml` sees the new version on master,
-   tags the merge commit `vX.Y.Z` and releases it (pushing such a tag by hand
-   releases too). It builds `naive` and `naive-player`, bundles the
+   builds and checks it, and only then tags the merge commit `vX.Y.Z` and
+   releases it (pushing such a tag by hand releases too). If a check fails,
+   nothing is tagged: re-run the workflow for a flaky failure, or merge the fix
+   and push `vX.Y.Z` on that master commit by hand. It builds `naive` and `naive-player`, bundles the
    demo project as an app (notarized when the Developer ID secrets are set),
    attaches `nAIVE-X.Y.Z-source.tar.gz` (the source with the Git LFS files, which
    GitHub's own archives may lack), publishes the release and prints that

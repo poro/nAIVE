@@ -89,12 +89,15 @@ function init()
 end
 
 function on_trigger_enter(other)
-    assert(_entity_string_id == 'sensor' and other == 'actor')
+    -- Both sides of the overlap hear about it.
+    assert((_entity_string_id == 'sensor' and other == 'actor')
+        or (_entity_string_id == 'actor' and other == 'sensor'))
     assert(entity.exists(other))
     record('enter:' .. other)
 end
 
 function on_trigger_exit(other)
+    -- The actor leaves by being destroyed, so only the sensor hears it.
     assert(_entity_string_id == 'sensor' and other == 'actor')
     assert(entity.exists(other), 'removed actor ID unavailable during exit')
     assert(entity.get_health(other) == 57, 'exit preceded on_destroy')
@@ -290,7 +293,7 @@ fn native_lifecycle_matches_headless_runner() {
     lua(&runner.script_runtime, "events.emit('ping', {})");
     runner.step_frame();
     let before_destroy = json!({
-        "actor": ["init", "ping"],
+        "actor": ["init", "enter:sensor", "ping"],
         "sensor": ["init", "enter:actor", "ping"]
     });
     assert_eq!(trace(&runtime), before_destroy);
@@ -323,7 +326,7 @@ fn native_lifecycle_matches_headless_runner() {
     );
     runner.step_frame();
     let expected = json!({
-        "actor": ["init", "ping", "destroy"],
+        "actor": ["init", "enter:sensor", "ping", "destroy"],
         "sensor": ["init", "enter:actor", "ping", "exit:actor", "ping"]
     });
     assert_eq!(trace(&runtime), expected);

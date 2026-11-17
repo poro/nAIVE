@@ -115,16 +115,20 @@ pub(crate) fn prepare_spawn_assets<R: SpawnAssetResolver>(
                 .as_ref()
                 .is_some_and(|collider| collider.shape == "trimesh")
         {
-            let mesh = mesh
-                .as_ref()
-                .ok_or("trimesh collider requires a mesh_renderer")?;
+            // A splat replaces the mesh for drawing, but the authored mesh
+            // still gives the collider its shape.
+            let mesh_handle = match (&mesh, &definition.components.mesh_renderer) {
+                (Some(mesh), _) => mesh.mesh_handle,
+                (None, Some(authored)) => resolver.mesh(&authored.mesh)?,
+                (None, None) => return Err("trimesh collider requires a mesh_renderer".into()),
+            };
             let scale = definition
                 .components
                 .transform
                 .as_ref()
                 .map(|transform| glam::Vec3::from(transform.scale))
                 .unwrap_or(glam::Vec3::ONE);
-            let geometry = resolver.trimesh(mesh.mesh_handle, scale)?;
+            let geometry = resolver.trimesh(mesh_handle, scale)?;
             validate_trimesh(&geometry)?;
             if let Some(physics) = physics {
                 physics.prepare_trimesh(&geometry.0, &geometry.1)?;

@@ -375,3 +375,131 @@ fn demo_runtime_meshes_come_from_their_scripts() {
     assert_eq!((mesh.vertices.len(), mesh.indices.len()), (26, 72));
     assert_eq!(mesh.vertices[0].position, [-4.0, 0.0, -0.75]);
 }
+
+#[test]
+fn splat_entities_with_trimesh_colliders_take_their_shape_from_the_authored_mesh() {
+    let project = Project::new();
+    project.write(
+        "cloud.ply",
+        "ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n",
+    );
+    project.write(
+        "scene.yaml",
+        "name: Splat\nentities:\n  - id: statue\n    components:\n      transform: {position: [0,0,0], scale: [4,1,4]}\n      gaussian_splat: {source: cloud.ply}\n      mesh_renderer: {mesh: 'procedural:plane', material: 'procedural:default'}\n      collider: {shape: trimesh}\n",
+    );
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    {
+        let world = runner.scene_world.borrow();
+        let entity = world.entity_registry["statue"];
+        // The splat draws; the mesh only shapes the collider.
+        assert!(world
+            .world
+            .get::<&crate::components::GaussianSplat>(entity)
+            .is_ok());
+        assert!(world
+            .world
+            .get::<&crate::components::MeshRenderer>(entity)
+            .is_err());
+    }
+    let (_, distance, _) = runner
+        .physics_world
+        .borrow()
+        .raycast(glam::Vec3::new(1.5, 2.0, 0.0), glam::Vec3::NEG_Y, 5.0)
+        .expect("the scaled plane collider is there before any physics step");
+    assert!((distance - 2.0).abs() < 1e-3, "{distance}");
+}
+
+#[test]
+fn init_can_raycast_against_the_scene_it_belongs_to() {
+    let project = Project::new();
+    project.write(
+        "probe.lua",
+        "function init()\n  local hit, distance = physics.raycast(0, 5, 0, 0, -1, 0, 10)\n  _G.probe = {hit = hit, distance = distance}\nend\n",
+    );
+    project.write(
+        "scene.yaml",
+        "name: Probe\nentities:\n  - id: floor\n    components:\n      transform: {position: [0, 0, 0]}\n      collider: {shape: box, half_extents: [5, 0.5, 5]}\n  - id: probe\n    components:\n      transform: {}\n      script: {source: probe.lua}\n",
+    );
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    let probe: mlua::Table = runner.script_runtime.lua.globals().get("probe").unwrap();
+    assert!(probe.get::<bool>("hit").unwrap());
+    assert!((probe.get::<f32>("distance").unwrap() - 4.5).abs() < 1e-4);
+}
+
+#[test]
+fn both_sides_of_a_trigger_overlap_hear_about_it() {
+    let project = Project::new();
+    project.write(
+        "log.lua",
+        "local function log(kind, other)\n  _G.trigger_log = _G.trigger_log or {}\n  table.insert(_G.trigger_log, _entity_string_id .. ' ' .. kind .. ' ' .. other)\nend\nfunction on_trigger_enter(other) log('enter', other) end\nfunction on_trigger_exit(other) log('exit', other) end\n",
+    );
+    project.write(
+        "scene.yaml",
+        "name: Portal\nentities:\n  - id: portal\n    components:\n      transform: {position: [0, 0, 0]}\n      collider: {shape: box, half_extents: [1, 0.25, 1], is_trigger: true}\n      script: {source: log.lua}\n  - id: player\n    components:\n      transform: {position: [0, 2, 0]}\n      rigid_body: {type: dynamic}\n      collider: {shape: sphere, radius: 0.25}\n      script: {source: log.lua}\n",
+    );
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    runner.step_seconds(1.5);
+    assert!(runner.take_errors().is_empty());
+    let log: Vec<String> = runner
+        .script_runtime
+        .lua
+        .globals()
+        .get::<mlua::Table>("trigger_log")
+        .unwrap()
+        .sequence_values()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        log,
+        [
+            "portal enter player",
+            "player enter portal",
+            "portal exit player",
+            "player exit portal",
+        ]
+    );
+}
+
+#[test]
+fn entities_inside_a_sensor_hear_it_leave_when_hot_reload_drops_it() {
+    let project = Project::new();
+    project.write(
+        "log.lua",
+        "function on_trigger_enter(other) _G.trace = (_G.trace or '') .. 'enter ' .. other .. ';' end\nfunction on_trigger_exit(other) _G.trace = (_G.trace or '') .. 'exit ' .. other .. ';' end\n",
+    );
+    project.write(
+        "scene.yaml",
+        "name: Reload\nsettings: {gravity: [0, 0, 0]}\nentities:\n  - id: portal\n    components:\n      collider: {shape: box, half_extents: [1, 1, 1], is_trigger: true}\n  - id: player\n    components:\n      rigid_body: {type: dynamic}\n      collider: {shape: sphere, radius: 0.25}\n      script: {source: log.lua}\n",
+    );
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    runner.step_frame();
+    // What a hot reload does to a removed sensor: drop its body and entity,
+    // keeping its old name for exits.
+    let portal = runner.scene_world.borrow().entity_registry["portal"];
+    let body = runner
+        .scene_world
+        .borrow()
+        .world
+        .get::<&crate::physics::RigidBody>(portal)
+        .unwrap()
+        .handle;
+    runner.physics_world.borrow_mut().remove_body(body);
+    {
+        let mut world = runner.scene_world.borrow_mut();
+        world.entity_registry.remove("portal");
+        world.world.despawn(portal).unwrap();
+    }
+    let retired = std::collections::HashMap::from([(portal, "portal".to_string())]);
+    crate::sim::dispatch_trigger_events_with_retired_ids(
+        &runner.scene_world,
+        &runner.physics_world,
+        &runner.script_runtime,
+        &retired,
+    );
+    let trace: String = runner.script_runtime.lua.globals().get("trace").unwrap();
+    assert_eq!(trace, "enter portal;exit portal;");
+}

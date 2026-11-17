@@ -185,8 +185,13 @@ def run_benchmark(args, work):
                                        and result.get("is_error") is False)
             current = authoring_snapshot(project)
             # Test diagnostics are useful even after an unsuccessful agent run.
-            tests = run_command("tests", [str(bin_dir / "naive"), "test"], project, env,
-                                args.test_timeout, work)
+            # naive test enforces its own suite deadline (1-300 s, default 30);
+            # pass ours so a slow suite is not cut short at 30 seconds, and keep
+            # a short outer margin so its own timeout report usually wins.
+            suite_deadline = str(max(1, min(300, int(args.test_timeout))))
+            tests = run_command("tests", [str(bin_dir / "naive"), "test", "--timeout-seconds",
+                                          suite_deadline], project, env,
+                                args.test_timeout + 2, work)
             report["stages"]["tests"] = tests
             report["test_success"] = command_succeeded(tests)
             if not report["test_success"]:

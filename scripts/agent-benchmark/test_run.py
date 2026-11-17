@@ -39,6 +39,9 @@ if Path(sys.argv[0]).name == "naive":
             path.write_text(text)
         sys.exit(0)
     print("test diagnostic", file=sys.stderr, flush=True)
+    if "--timeout-seconds" in sys.argv:
+        deadline = sys.argv[sys.argv.index("--timeout-seconds") + 1]
+        print(f"suite deadline {deadline}", file=sys.stderr, flush=True)
     if mode == "test_timeout":
         os.write(2, b"partial test stderr\xff\n")
         time.sleep(5)
@@ -121,6 +124,8 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(report["agent_success"])
         self.assertTrue(report["test_success"])
         self.assertEqual(report["task_acceptance"]["status"], "unverified")
+        # naive test gets the benchmark's deadline instead of its 30 s default.
+        self.assertIn("suite deadline 3", report["stages"]["tests"]["stderr_tail"])
         self.assertEqual(report["input_tokens"], 12)
         changes = report["authored_changes"]
         self.assertEqual(changes["modified"], ["scenes/main.yaml"])

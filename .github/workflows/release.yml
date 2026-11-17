@@ -1,8 +1,10 @@
 name: Release
 
 # Bump the version in a pull request (scripts/bump-version.sh). When it merges,
-# this workflow sees the new version on master, tags the commit vX.Y.Z and
-# releases it. Pushing a vX.Y.Z tag on master by hand also releases.
+# this workflow sees the new version on master, builds and checks it, and only
+# then tags the commit vX.Y.Z and releases it. A failed check leaves no tag:
+# re-run the workflow if the failure was flaky; otherwise merge the fix and
+# push the vX.Y.Z tag on that master commit by hand, which also releases.
 
 on:
   push:
@@ -14,6 +16,12 @@ on:
 
 permissions:
   contents: read
+
+# One release at a time: a second push touching Cargo.toml while a release is
+# building waits instead of racing it for the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -27,11 +35,11 @@ env:
 
 jobs:
   verify:
-    name: Decide and tag
+    name: Decide
     runs-on: ubuntu-latest
-    # Creates the tag when a version bump lands on master.
+    # Tagging waits for the build and checks (publish job).
     permissions:
-      contents: write
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -53,10 +61,6 @@ jobs:
               echo "release=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            git tag "$tag" "$GITHUB_SHA"
-            # Pushed with the workflow token, so it does not start this
-            # workflow again; this run carries on with the release.
-            git push origin "refs/tags/${tag}"
           else
             if [ "$GITHUB_REF_NAME" != "$tag" ]; then
               echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
@@ -215,6 +219,14 @@ jobs:
           (cd release && sha256sum -- *) > SHA256SUMS && mv SHA256SUMS release/
           echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${tarball}" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "release/${tarball}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Tag the release commit
+        if: github.ref_type == 'branch'
+        run: |
+          # Only now that every check passed. Pushed with the workflow token,
+          # so it does not start this workflow again.
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/${TAG}"
 
       - name: Create release
         run: |

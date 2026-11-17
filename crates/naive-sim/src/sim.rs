@@ -208,8 +208,13 @@ pub fn dispatch_physics_events(
     dispatch_trigger_events(scene_world, physics_world, script_runtime);
 }
 
-/// Deliver each sensor's enter/exit hook once, without holding engine borrows.
-/// Sensors receive their own callbacks; two overlapping sensors each receive one.
+/// Deliver trigger enter/exit hooks once, without holding engine borrows.
+/// Both sides hear about an overlap: the sensor's script gets the other
+/// entity's ID, and the other entity's script gets the sensor's (so a player
+/// script can react to `on_trigger_enter("portal")`). Two overlapping sensors
+/// each receive exactly one call per change, from their own sensor events.
+/// When a sensor is removed (destroyed or dropped by a hot reload), entities
+/// inside it get their exit with the sensor's last ID.
 pub fn dispatch_trigger_events(
     scene_world: &SharedSceneWorld,
     physics_world: &SharedPhysicsWorld,
@@ -236,6 +241,16 @@ pub fn dispatch_trigger_events_with_retired_ids(
     if events.is_empty() {
         return;
     }
+    // A sensor already receives its own directed event for every overlap.
+    let sensors: std::collections::HashSet<hecs::Entity> = {
+        let physics = physics_world.borrow();
+        physics
+            .collider_set
+            .iter()
+            .filter(|(_, collider)| collider.is_sensor())
+            .filter_map(|(handle, _)| physics.collider_to_entity.get(&handle).copied())
+            .collect()
+    };
     let callbacks: Vec<_> = {
         let sw = scene_world.borrow();
         let entity_to_id: HashMap<_, _> = sw
@@ -248,23 +263,39 @@ pub fn dispatch_trigger_events_with_retired_ids(
             .filter_map(|event| {
                 // A stale event must never address a replacement entity that
                 // happens to reuse its string ID after destruction or reload.
-                if !sw.world.contains(event.trigger_entity) {
-                    return None;
-                }
-                let id = entity_to_id.get(&event.other_entity).copied().or_else(|| {
-                    (!event.entered)
-                        .then(|| retired_ids.get(&event.other_entity).map(String::as_str))
-                        .flatten()
-                })?;
-                Some((event.trigger_entity, id.to_string(), event.entered))
+                // Removed entities keep their previous names, for exits only.
+                let name = |entity: hecs::Entity| {
+                    entity_to_id.get(&entity).copied().or_else(|| {
+                        (!event.entered)
+                            .then(|| retired_ids.get(&entity).map(String::as_str))
+                            .flatten()
+                    })
+                };
+                let sensor_alive = sw.world.contains(event.trigger_entity);
+                let sensor_call = sensor_alive
+                    .then(|| name(event.other_entity))
+                    .flatten()
+                    .map(|other_id| (event.trigger_entity, other_id.to_string()));
+                let other_call = (!sensors.contains(&event.other_entity)
+                    && sw.world.contains(event.other_entity))
+                .then(|| name(event.trigger_entity))
+                .flatten()
+                .map(|sensor_id| (event.other_entity, sensor_id.to_string()));
+                (sensor_call.is_some() || other_call.is_some()).then_some((
+                    sensor_call,
+                    other_call,
+                    event.entered,
+                ))
             })
             .collect()
     };
-    for (sensor, other_id, entered) in callbacks {
-        if entered {
-            script_runtime.call_on_trigger_enter(sensor, &other_id);
-        } else {
-            script_runtime.call_on_trigger_exit(sensor, &other_id);
+    for (sensor_call, other_call, entered) in callbacks {
+        for (entity, id) in [sensor_call, other_call].into_iter().flatten() {
+            if entered {
+                script_runtime.call_on_trigger_enter(entity, &id);
+            } else {
+                script_runtime.call_on_trigger_exit(entity, &id);
+            }
         }
     }
 }
