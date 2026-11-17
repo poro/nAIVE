@@ -250,6 +250,7 @@ impl PhysicsWorld {
         let col_handle =
             self.collider_set
                 .insert_with_parent(collider, rb_handle, &mut self.rigid_body_set);
+        self.index_for_queries(col_handle);
 
         self.body_to_entity.insert(rb_handle, entity);
         self.collider_to_entity.insert(col_handle, entity);
@@ -290,6 +291,7 @@ impl PhysicsWorld {
         let col_handle =
             self.collider_set
                 .insert_with_parent(collider, rb_handle, &mut self.rigid_body_set);
+        self.index_for_queries(col_handle);
 
         self.body_to_entity.insert(rb_handle, entity);
         self.collider_to_entity.insert(col_handle, entity);
@@ -362,6 +364,7 @@ impl PhysicsWorld {
         let col_handle =
             self.collider_set
                 .insert_with_parent(collider, rb_handle, &mut self.rigid_body_set);
+        self.index_for_queries(col_handle);
 
         self.body_to_entity.insert(rb_handle, entity);
         self.collider_to_entity.insert(col_handle, entity);
@@ -386,6 +389,7 @@ impl PhysicsWorld {
         let col_handle =
             self.collider_set
                 .insert_with_parent(collider, rb_handle, &mut self.rigid_body_set);
+        self.index_for_queries(col_handle);
 
         self.body_to_entity.insert(rb_handle, entity);
         self.collider_to_entity.insert(col_handle, entity);
@@ -682,8 +686,26 @@ impl PhysicsWorld {
         }
     }
 
+    /// Put a new collider in the query tree now, so ray casts see it before
+    /// the next physics step: a script's `init`, or an event listener in the
+    /// frame that spawned it. The step accounts for it without inserting it
+    /// again (Rapier's `set_aabb` contract), and nothing else changes: the
+    /// collider's contacts still begin at the step.
+    fn index_for_queries(&mut self, handle: ColliderHandle) {
+        let Some(collider) = self.collider_set.get(handle) else {
+            return;
+        };
+        let aabb =
+            collider.compute_broad_phase_aabb(&self.integration_params, &self.rigid_body_set);
+        if aabb.mins.is_finite() && aabb.maxs.is_finite() {
+            self.broad_phase
+                .set_aabb(&self.integration_params, handle, aabb);
+        }
+    }
+
     /// Scene queries (ray casts, shape casts) against the colliders as of
-    /// the last physics step.
+    /// the last physics step, plus colliders added since. A body moved by
+    /// setting its position is seen at its new place after the next step.
     pub fn query_pipeline<'a>(&'a self, filter: QueryFilter<'a>) -> QueryPipeline<'a> {
         self.broad_phase.as_query_pipeline(
             self.narrow_phase.query_dispatcher(),

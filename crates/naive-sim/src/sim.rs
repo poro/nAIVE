@@ -208,8 +208,12 @@ pub fn dispatch_physics_events(
     dispatch_trigger_events(scene_world, physics_world, script_runtime);
 }
 
-/// Deliver each sensor's enter/exit hook once, without holding engine borrows.
-/// Sensors receive their own callbacks; two overlapping sensors each receive one.
+/// Deliver trigger enter/exit hooks once, without holding engine borrows.
+/// Both sides hear about an overlap: the sensor's script gets the other
+/// entity's ID, and the other entity's script gets the sensor's (so a player
+/// script can react to `on_trigger_enter("portal")`). Two overlapping sensors
+/// each receive exactly one call per change, from their own sensor events.
+/// Destroying a sensor sends no exit to the entities inside it.
 pub fn dispatch_trigger_events(
     scene_world: &SharedSceneWorld,
     physics_world: &SharedPhysicsWorld,
@@ -236,6 +240,16 @@ pub fn dispatch_trigger_events_with_retired_ids(
     if events.is_empty() {
         return;
     }
+    // A sensor already receives its own directed event for every overlap.
+    let sensors: std::collections::HashSet<hecs::Entity> = {
+        let physics = physics_world.borrow();
+        physics
+            .collider_set
+            .iter()
+            .filter(|(_, collider)| collider.is_sensor())
+            .filter_map(|(handle, _)| physics.collider_to_entity.get(&handle).copied())
+            .collect()
+    };
     let callbacks: Vec<_> = {
         let sw = scene_world.borrow();
         let entity_to_id: HashMap<_, _> = sw
@@ -256,15 +270,30 @@ pub fn dispatch_trigger_events_with_retired_ids(
                         .then(|| retired_ids.get(&event.other_entity).map(String::as_str))
                         .flatten()
                 })?;
-                Some((event.trigger_entity, id.to_string(), event.entered))
+                let other = (!sensors.contains(&event.other_entity)
+                    && sw.world.contains(event.other_entity))
+                .then(|| {
+                    entity_to_id
+                        .get(&event.trigger_entity)
+                        .map(|sensor_id| (event.other_entity, sensor_id.to_string()))
+                })
+                .flatten();
+                Some((event.trigger_entity, id.to_string(), other, event.entered))
             })
             .collect()
     };
-    for (sensor, other_id, entered) in callbacks {
+    for (sensor, other_id, other, entered) in callbacks {
         if entered {
             script_runtime.call_on_trigger_enter(sensor, &other_id);
         } else {
             script_runtime.call_on_trigger_exit(sensor, &other_id);
+        }
+        if let Some((other, sensor_id)) = other {
+            if entered {
+                script_runtime.call_on_trigger_enter(other, &sensor_id);
+            } else {
+                script_runtime.call_on_trigger_exit(other, &sensor_id);
+            }
         }
     }
 }

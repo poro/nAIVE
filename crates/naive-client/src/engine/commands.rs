@@ -605,9 +605,15 @@ impl Engine {
             })?;
             env.set("print", print_fn)?;
 
-            let chunk = lua.load(code).set_name("run_lua").set_environment(env);
+            // Compile first: code that does not parse cannot have changed the
+            // scene, so it must not cost an undo step.
+            let chunk = lua
+                .load(code)
+                .set_name("run_lua")
+                .set_environment(env)
+                .into_function()?;
             *may_have_changed = true;
-            let value = script_runtime.run_limited(|| chunk.eval::<mlua::Value>())?;
+            let value = script_runtime.run_limited(|| chunk.call::<mlua::Value>(()))?;
 
             // Format return value
             let result_str = match &value {
@@ -934,6 +940,17 @@ mod tests {
         .unwrap();
         let response = engine.handle_destroy_entity(&request);
         assert_eq!(response.status, "error");
+        undo.commit(false, &mut engine.undo_stack);
+        assert_eq!(engine.undo_stack.len(), 3);
+        // Code that does not parse changed nothing and costs no undo step.
+        undo = PendingUndo::new(engine.snapshot_undo("run_lua"));
+        let request = serde_json::from_value(json!({
+            "cmd": "run_lua", "code": "entity.set_position('target', 1, 2",
+        }))
+        .unwrap();
+        let response = engine.handle_run_lua(&request, &mut undo.may_have_changed);
+        assert_eq!(response.status, "error");
+        assert!(!undo.may_have_changed);
         undo.commit(false, &mut engine.undo_stack);
         assert_eq!(engine.undo_stack.len(), 3);
         engine.script_runtime = None;
