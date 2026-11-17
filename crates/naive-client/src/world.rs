@@ -427,6 +427,21 @@ pub fn spawn_entity(
         return;
     }
 
+    if entity_def
+        .components
+        .collider
+        .as_ref()
+        .is_some_and(|c| c.shape == "trimesh")
+        && (entity_def.components.mesh_renderer.is_none()
+            || entity_def.components.gaussian_splat.is_some())
+    {
+        tracing::error!(
+            "Entity '{}': trimesh collider requires a mesh_renderer",
+            entity_def.id
+        );
+        return;
+    }
+
     // Resolve every swarm asset before allocating an ECS entity. A failed
     // component load must not leave a partially constructed live entity.
     let swarm = if let Some(definition) = &entity_def.components.gpu_swarm {
@@ -1001,8 +1016,9 @@ pub fn euler_degrees_to_quat(euler: [f32; 3]) -> glam::Quat {
     )
 }
 
-/// Spawn all entities headlessly (no GPU resources needed).
-/// Skips MeshRenderer and GaussianSplat components. Used for test runner.
+/// Construct schema fixtures without decoding assets. Runtime headless tests
+/// use `spawn_entity_headless_with_assets` instead.
+#[cfg(test)]
 pub fn spawn_all_entities_headless(
     scene_world: &mut SceneWorld,
     scene: &SceneFile,
@@ -1019,11 +1035,122 @@ pub fn spawn_all_entities_headless(
     );
 }
 
-/// Spawn a single entity headlessly (no GPU resources).
+/// Construct one schema fixture without resolving its render assets.
+#[cfg(test)]
 pub fn spawn_entity_headless(
     scene_world: &mut SceneWorld,
     entity_def: &EntityDef,
     physics_world: &mut PhysicsWorld,
+) {
+    spawn_entity_headless_inner(scene_world, entity_def, physics_world, None);
+}
+
+/// Resolve all assets before mutating the live headless world.
+pub fn spawn_entity_headless_with_assets(
+    scene_world: &mut SceneWorld,
+    entity_def: &EntityDef,
+    physics_world: &mut PhysicsWorld,
+    assets: &mut naive_sim::assets::AssetCatalog,
+) -> Result<(), String> {
+    let prepared = prepare_headless_assets(entity_def, assets)?;
+    spawn_entity_headless_inner(scene_world, entity_def, physics_world, Some(prepared));
+    Ok(())
+}
+
+pub(crate) struct HeadlessAssets {
+    mesh: Option<MeshRenderer>,
+    splat: Option<GaussianSplat>,
+    swarm: Option<GpuSwarm>,
+    trimesh: Option<crate::mesh::PhysicsTrimesh>,
+}
+
+pub(crate) fn prepare_headless_assets(
+    definition: &EntityDef,
+    assets: &mut naive_sim::assets::AssetCatalog,
+) -> Result<HeadlessAssets, String> {
+    prepare_headless_assets_inner(definition, assets)
+        .map_err(|e| format!("Entity '{}': {e}", definition.id))
+}
+
+fn prepare_headless_assets_inner(
+    definition: &EntityDef,
+    assets: &mut naive_sim::assets::AssetCatalog,
+) -> Result<HeadlessAssets, naive_sim::assets::AssetError> {
+    let splat = definition
+        .components
+        .gaussian_splat
+        .as_ref()
+        .map(|s| {
+            assets
+                .validate_splat(&s.source)
+                .map(|splat_handle| GaussianSplat { splat_handle })
+        })
+        .transpose()?;
+    // Native spawning gives an authored splat precedence over a mesh renderer.
+    let mesh = if splat.is_some() {
+        None
+    } else {
+        definition
+            .components
+            .mesh_renderer
+            .as_ref()
+            .map(|m| {
+                Ok::<_, naive_sim::assets::AssetError>(MeshRenderer {
+                    mesh_handle: assets.mesh(&m.mesh)?,
+                    material_handle: assets.material(&m.material)?,
+                })
+            })
+            .transpose()?
+    };
+    let swarm = definition
+        .components
+        .gpu_swarm
+        .as_ref()
+        .map(|d| {
+            Ok::<_, naive_sim::assets::AssetError>(GpuSwarm {
+                def: d.clone(),
+                mesh_handle: assets.mesh(&d.mesh)?,
+                material_handle: assets.material(&d.material)?,
+            })
+        })
+        .transpose()?;
+    let trimesh = if definition
+        .components
+        .collider
+        .as_ref()
+        .is_some_and(|c| c.shape == "trimesh")
+    {
+        let mesh = mesh.as_ref().ok_or_else(|| {
+            naive_sim::assets::AssetError("trimesh collider requires a mesh_renderer".into())
+        })?;
+        let scale = definition
+            .components
+            .transform
+            .as_ref()
+            .map(|t| glam::Vec3::from(t.scale))
+            .unwrap_or(glam::Vec3::ONE);
+        Some(
+            assets
+                .mesh_data(mesh.mesh_handle)
+                .expect("catalog handle")
+                .physics_trimesh(scale),
+        )
+    } else {
+        None
+    };
+    Ok(HeadlessAssets {
+        mesh,
+        splat,
+        swarm,
+        trimesh,
+    })
+}
+
+fn spawn_entity_headless_inner(
+    scene_world: &mut SceneWorld,
+    entity_def: &EntityDef,
+    physics_world: &mut PhysicsWorld,
+    mut assets: Option<HeadlessAssets>,
 ) {
     if scene_world.entity_registry.contains_key(&entity_def.id) {
         tracing::error!("Entity '{}' already exists", entity_def.id);
@@ -1045,8 +1172,8 @@ pub fn spawn_entity_headless(
         Transform::default()
     };
 
-    // GPU components remain in the retained definition; all independent
-    // non-GPU components are attached by the shared constructor below.
+    // GPU-independent components use the same authored constructor; asset
+    // handles below refer to validated CPU data rather than GPU buffers.
     let entity = scene_world.world.spawn((entity_id, tags, transform));
 
     scene_world
@@ -1054,6 +1181,12 @@ pub fn spawn_entity_headless(
         .insert(entity_def.id.clone(), entity);
 
     attach_definition_components(&mut scene_world.world, entity, entity_def);
+    if let Some(mesh) = assets.as_mut().and_then(|a| a.mesh.take()) {
+        let _ = scene_world.world.insert_one(entity, mesh);
+    }
+    if let Some(splat) = assets.as_mut().and_then(|a| a.splat.take()) {
+        let _ = scene_world.world.insert_one(entity, splat);
+    }
 
     // Attach Health component if defined
     if let Some(health_def) = &entity_def.components.health {
@@ -1074,14 +1207,20 @@ pub fn spawn_entity_headless(
         let _ = scene_world.world.insert_one(entity, collision_damage);
     }
 
-    // Swarms run on the CPU headlessly; nothing draws them, so no mesh or material.
-    if let Some(swarm_def) = &entity_def.components.gpu_swarm {
-        let swarm = crate::components::GpuSwarm {
-            def: swarm_def.clone(),
-            mesh_handle: crate::components::MeshHandle(0),
-            material_handle: crate::components::MaterialHandle(0),
-        };
+    if let Some(swarm) = assets.as_mut().and_then(|a| a.swarm.take()) {
         let _ = scene_world.world.insert_one(entity, swarm);
+    } else if assets.is_none() {
+        // Legacy constructors are used by CPU-only schema tests.
+        if let Some(def) = &entity_def.components.gpu_swarm {
+            let _ = scene_world.world.insert_one(
+                entity,
+                GpuSwarm {
+                    def: def.clone(),
+                    mesh_handle: MeshHandle(0),
+                    material_handle: MaterialHandle(0),
+                },
+            );
+        }
     }
 
     // Spawn physics components
@@ -1129,7 +1268,12 @@ pub fn spawn_entity_headless(
             .world
             .insert(entity, (rb_comp, col_comp, cc_comp, player));
     } else if let Some(col_def) = &entity_def.components.collider {
-        let shape = parse_collider_shape(col_def);
+        let shape =
+            if let Some((vertices, indices)) = assets.as_mut().and_then(|a| a.trimesh.take()) {
+                PhysicsShape::Trimesh { vertices, indices }
+            } else {
+                parse_collider_shape(col_def)
+            };
         let is_trigger = col_def.is_trigger;
         let restitution = col_def.restitution;
         let friction = col_def.friction;

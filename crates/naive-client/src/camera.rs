@@ -1,4 +1,4 @@
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use crate::components::{Camera, Transform};
@@ -31,6 +31,39 @@ impl Default for CameraUniform {
             viewport_size: [1280.0, 720.0],
             _pad2: [0.0; 4],
             inv_view_projection: Mat4::IDENTITY.to_cols_array_2d(),
+        }
+    }
+}
+
+impl CameraUniform {
+    /// CPU layout adapter, also usable without creating a GPU device.
+    pub fn from_camera(
+        camera: &Camera,
+        transform: &Transform,
+        viewport: naive_sim::presentation::Viewport,
+    ) -> Self {
+        let camera_view = naive_sim::presentation::CameraView::new(
+            camera,
+            transform,
+            naive_sim::presentation::Viewport::new(viewport.width, viewport.height),
+        );
+        let viewport = camera_view.viewport;
+        let view = camera_view.view;
+        let projection = camera_view.projection;
+        let view_projection = camera_view.view_projection;
+        let inv_view_projection = camera_view.inv_view_projection;
+
+        CameraUniform {
+            view: view.to_cols_array_2d(),
+            projection: projection.to_cols_array_2d(),
+            view_projection: view_projection.to_cols_array_2d(),
+            position: transform.position.to_array(),
+            near_plane: camera.near,
+            far_plane: camera.far,
+            _pad1: 0.0,
+            viewport_size: [viewport.width as f32, viewport.height as f32],
+            _pad2: [0.0; 4],
+            inv_view_projection: inv_view_projection.to_cols_array_2d(),
         }
     }
 }
@@ -92,33 +125,11 @@ impl CameraState {
         viewport_width: u32,
         viewport_height: u32,
     ) {
-        let view = glam::camera::rh::view::look_to_mat4(
-            transform.position,
-            transform.rotation * Vec3::NEG_Z,
-            Vec3::Y,
+        self.uniform = CameraUniform::from_camera(
+            camera,
+            transform,
+            naive_sim::presentation::Viewport::new(viewport_width, viewport_height),
         );
-        let projection = glam::camera::rh::proj::directx::perspective(
-            camera.fov_degrees.to_radians(),
-            viewport_width as f32 / viewport_height.max(1) as f32,
-            camera.near,
-            camera.far,
-        );
-        let view_projection = projection * view;
-
-        let inv_view_projection = view_projection.inverse();
-
-        self.uniform = CameraUniform {
-            view: view.to_cols_array_2d(),
-            projection: projection.to_cols_array_2d(),
-            view_projection: view_projection.to_cols_array_2d(),
-            position: transform.position.to_array(),
-            near_plane: camera.near,
-            far_plane: camera.far,
-            _pad1: 0.0,
-            viewport_size: [viewport_width as f32, viewport_height as f32],
-            _pad2: [0.0; 4],
-            inv_view_projection: inv_view_projection.to_cols_array_2d(),
-        };
 
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
     }
@@ -126,5 +137,42 @@ impl CameraState {
     /// Get the current view matrix.
     pub fn view_matrix(&self) -> Mat4 {
         Mat4::from_cols_array_2d(&self.uniform.view)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use naive_sim::presentation::{CameraView, Viewport};
+    #[test]
+    fn native_uniform_and_headless_projection_share_camera_matrices() {
+        let camera = Camera::default();
+        let transform = Transform {
+            position: glam::Vec3::new(2.0, 3.0, 7.0),
+            rotation: glam::Quat::from_rotation_y(0.4),
+            ..Default::default()
+        };
+        for viewport in [Viewport::default(), Viewport::new(400, 900)] {
+            let cpu = CameraView::new(&camera, &transform, viewport);
+            let native = CameraUniform::from_camera(&camera, &transform, viewport);
+            assert_eq!(
+                native.view_projection,
+                cpu.view_projection.to_cols_array_2d()
+            );
+            assert_eq!(
+                native.inv_view_projection,
+                cpu.inv_view_projection.to_cols_array_2d()
+            );
+            assert_eq!(
+                native.viewport_size,
+                [viewport.width as f32, viewport.height as f32]
+            );
+            assert_eq!(native.position, transform.position.to_array());
+            let point = transform.position + transform.rotation * glam::Vec3::new(0.0, 0.0, -5.0);
+            let (x, y, visible) = cpu.world_to_screen(point);
+            assert!(visible);
+            assert!((x - viewport.width as f32 * 0.5).abs() < 1e-3);
+            assert!((y - viewport.height as f32 * 0.5).abs() < 1e-3);
+        }
     }
 }

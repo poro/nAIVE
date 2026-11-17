@@ -3,79 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::components::MaterialHandle;
 use crate::texture_cache::{TextureCache, TextureHandle};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug)]
-pub enum MaterialError {
-    IoError(std::io::Error),
-    ParseError(serde_norway::Error),
-}
-
-impl std::fmt::Display for MaterialError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::IoError(e) => write!(f, "Material IO error: {}", e),
-            Self::ParseError(e) => write!(f, "Material parse error: {}", e),
-        }
-    }
-}
-
-/// Material YAML deserialization type.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MaterialFile {
-    #[serde(default)]
-    pub shader: String,
-    #[serde(default)]
-    pub properties: MaterialProperties,
-    #[serde(default = "default_opaque")]
-    pub blend_mode: String,
-    #[serde(default = "default_back")]
-    pub cull_mode: String,
-}
-
-fn default_opaque() -> String {
-    "opaque".to_string()
-}
-fn default_back() -> String {
-    "back".to_string()
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MaterialProperties {
-    #[serde(default = "default_base_color")]
-    pub base_color: [f32; 3],
-    #[serde(default = "default_roughness")]
-    pub roughness: f32,
-    #[serde(default)]
-    pub metallic: f32,
-    #[serde(default)]
-    pub emission: [f32; 3],
-    // Texture paths are recorded but not loaded until Phase 3
-    #[serde(default)]
-    pub albedo_map: Option<String>,
-    #[serde(default)]
-    pub normal_map: Option<String>,
-}
-
-impl Default for MaterialProperties {
-    fn default() -> Self {
-        Self {
-            base_color: default_base_color(),
-            roughness: default_roughness(),
-            metallic: 0.0,
-            emission: [0.0; 3],
-            albedo_map: None,
-            normal_map: None,
-        }
-    }
-}
-
-fn default_base_color() -> [f32; 3] {
-    [0.8, 0.8, 0.8]
-}
-fn default_roughness() -> f32 {
-    0.5
-}
+pub use naive_sim::assets::{AssetError as MaterialError, MaterialFile, MaterialProperties};
 
 /// GPU-side material uniform data.
 #[repr(C)]
@@ -144,22 +72,7 @@ impl MaterialCache {
             return Ok(handle);
         }
 
-        let full_path = crate::project_path::resolve(project_root, material_path).map_err(|e| {
-            MaterialError::IoError(std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))
-        })?;
-
-        let mat_file = if full_path.exists() {
-            let contents = std::fs::read_to_string(&full_path).map_err(MaterialError::IoError)?;
-            serde_norway::from_str::<MaterialFile>(&contents).map_err(MaterialError::ParseError)?
-        } else {
-            tracing::warn!("Material file not found: {:?}, using defaults", full_path);
-            MaterialFile {
-                shader: String::new(),
-                properties: MaterialProperties::default(),
-                blend_mode: default_opaque(),
-                cull_mode: default_back(),
-            }
-        };
+        let mat_file = naive_sim::assets::load_material(project_root, material_path)?;
 
         let uniform = MaterialUniform::from_properties(&mat_file.properties);
         tracing::warn!(
@@ -172,59 +85,31 @@ impl MaterialCache {
             uniform.roughness
         );
 
-        // Load textures if referenced
-        let albedo_texture = if let (Some(albedo_path), Some(tex_cache), Some(tex_layout)) = (
+        // The shared loader already validates referenced maps even when this
+        // caller does not supply GPU texture resources.
+        let albedo_texture = if let (Some(path), Some(cache), Some(layout)) = (
             &mat_file.properties.albedo_map,
             texture_cache.as_deref_mut(),
             texture_layout,
         ) {
-            match tex_cache.get_or_load(device, queue, tex_layout, project_root, albedo_path) {
-                Ok(handle) => {
-                    tracing::info!(
-                        "Material '{}' loaded albedo_map: {}",
-                        material_path,
-                        albedo_path
-                    );
-                    Some(handle)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Material '{}' failed to load albedo_map '{}': {}",
-                        material_path,
-                        albedo_path,
-                        e
-                    );
-                    None
-                }
-            }
+            Some(
+                cache
+                    .get_or_load(device, queue, layout, project_root, path)
+                    .map_err(MaterialError)?,
+            )
         } else {
             None
         };
-
-        let normal_texture = if let (Some(normal_path), Some(tex_cache), Some(tex_layout)) = (
+        let normal_texture = if let (Some(path), Some(cache), Some(layout)) = (
             &mat_file.properties.normal_map,
             texture_cache,
             texture_layout,
         ) {
-            match tex_cache.get_or_load(device, queue, tex_layout, project_root, normal_path) {
-                Ok(handle) => {
-                    tracing::info!(
-                        "Material '{}' loaded normal_map: {}",
-                        material_path,
-                        normal_path
-                    );
-                    Some(handle)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Material '{}' failed to load normal_map '{}': {}",
-                        material_path,
-                        normal_path,
-                        e
-                    );
-                    None
-                }
-            }
+            Some(
+                cache
+                    .get_or_load(device, queue, layout, project_root, path)
+                    .map_err(MaterialError)?,
+            )
         } else {
             None
         };
@@ -275,21 +160,11 @@ impl MaterialCache {
                 device,
                 queue,
                 project_root,
-                "assets/materials/default.yaml",
+                "procedural:default",
                 None,
                 None,
             )
-            .unwrap_or_else(|_| {
-                // Create a hardcoded default
-                let uniform = MaterialUniform::from_properties(&MaterialProperties::default());
-                let h = MaterialHandle(self.materials.len());
-                self.materials.push(GpuMaterial {
-                    uniform,
-                    albedo_texture: None,
-                    normal_texture: None,
-                });
-                h
-            });
+            .expect("the explicit engine default has no filesystem dependencies");
         self.default_handle = Some(handle);
         handle
     }

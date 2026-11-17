@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license = "MIT"
-description = "nAIVE simulation without a GPU or window: physics, input and project paths so far"
+description = "nAIVE CPU simulation, asset decoding and presentation contracts without a GPU or window"
 
 # Must never depend on wgpu, winit or an audio backend: CI checks it. It is
 # what headless tests, a future server and the web build share with the
@@ -16,6 +16,9 @@ glam = { workspace = true }
 hecs = { workspace = true }
 rapier3d = { workspace = true }
 gltf = { workspace = true }
+stl_io = { workspace = true }
+ply-rs = { workspace = true }
+image = { workspace = true }
 serde = { workspace = true }
 serde_norway = { workspace = true }
 tracing = { workspace = true }

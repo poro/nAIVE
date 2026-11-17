@@ -112,10 +112,6 @@ pub struct UiRenderer {
     col_idx: Vec<u16>,
     tex_verts: Vec<Vertex2D>,
     tex_idx: Vec<u16>,
-    // Screen flash
-    flash_color: [f32; 4],
-    flash_remaining: f32,
-    flash_duration: f32,
     /// What the last `render` drew, so a frame capture can include the HUD.
     last_frame: DrawnUi,
 }
@@ -146,6 +142,35 @@ fn alpha_blend_state() -> wgpu::BlendState {
 }
 
 impl UiRenderer {
+    /// Consume CPU script intentions. Flash time advances in simulation, even
+    /// when no frame is rendered; GPU rendering never advances that state.
+    pub fn consume_frame(
+        &mut self,
+        frame: &mut naive_sim::presentation::UiFrame,
+        viewport: naive_sim::presentation::Viewport,
+        font: &BitmapFont,
+    ) {
+        let flash = frame.flash(viewport);
+        for intent in frame.intents.drain(..).chain(flash) {
+            match intent {
+                naive_sim::presentation::UiIntent::Text {
+                    x,
+                    y,
+                    text,
+                    size,
+                    color,
+                } => self.draw_text(x, y, &text, size, color, font),
+                naive_sim::presentation::UiIntent::Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                    color,
+                } => self.draw_rect(x, y, width, height, color),
+            }
+        }
+    }
+
     pub fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
@@ -291,9 +316,6 @@ impl UiRenderer {
             col_idx: Vec::with_capacity(384),
             tex_verts: Vec::with_capacity(1024),
             tex_idx: Vec::with_capacity(1536),
-            flash_color: [0.0; 4],
-            flash_remaining: 0.0,
-            flash_duration: 0.0,
             last_frame: DrawnUi::default(),
         }
     }
@@ -355,13 +377,6 @@ impl UiRenderer {
         }
     }
 
-    /// Start a screen flash effect. Color includes alpha. Duration in seconds.
-    pub fn set_flash(&mut self, color: [f32; 4], duration: f32) {
-        self.flash_color = color;
-        self.flash_duration = duration;
-        self.flash_remaining = duration;
-    }
-
     // ── Render ──────────────────────────────────────────────────────
 
     /// Render all queued UI on top of the existing framebuffer.
@@ -376,27 +391,8 @@ impl UiRenderer {
         font: &BitmapFont,
         width: u32,
         height: u32,
-        dt: f32,
+        _dt: f32,
     ) {
-        // Tick screen flash
-        if self.flash_remaining > 0.0 {
-            self.flash_remaining = (self.flash_remaining - dt).max(0.0);
-            let alpha =
-                self.flash_color[3] * (self.flash_remaining / self.flash_duration.max(0.001));
-            self.draw_rect(
-                0.0,
-                0.0,
-                width as f32,
-                height as f32,
-                [
-                    self.flash_color[0],
-                    self.flash_color[1],
-                    self.flash_color[2],
-                    alpha,
-                ],
-            );
-        }
-
         let col_vert_count = self.col_verts.len();
         let col_idx_count = self.col_idx.len();
         let total_idx = col_idx_count + self.tex_idx.len();

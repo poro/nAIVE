@@ -15,9 +15,7 @@ use crate::audio::AudioSystem;
 use crate::camera::CameraState;
 use crate::cli::CliArgs;
 use crate::command::CommandServer;
-use crate::components::{
-    Camera, CameraMode, CameraRole, GaussianSplat, MeshRenderer, Player, Transform,
-};
+use crate::components::{Camera, CameraRole, GaussianSplat, MeshRenderer, Player, Transform};
 use crate::editor_camera::EditorCamera;
 use crate::events::EventBus;
 use crate::font::BitmapFont;
@@ -124,8 +122,10 @@ pub struct Engine {
     pub(crate) test_jobs: crate::test_execution::TestJobs,
     pub editor_scene_path: Option<PathBuf>,
 
-    // Surface config shared with scripting API
-    pub shared_surface_config: Option<Rc<RefCell<wgpu::SurfaceConfiguration>>>,
+    // GPU-free presentation state shared with Lua.
+    pub viewport: Rc<RefCell<naive_sim::presentation::Viewport>>,
+    pub script_ui: Rc<RefCell<naive_sim::presentation::UiFrame>>,
+    pub script_camera_override: crate::scripting::SharedCameraOverride,
 
     // Texture resources for GLB albedo textures
     pub texture_resources: Option<crate::mesh::TextureResources>,
@@ -192,7 +192,9 @@ impl Engine {
             undo_stack: Vec::new(),
             test_jobs: crate::test_execution::TestJobs::default(),
             editor_scene_path: None,
-            shared_surface_config: None,
+            viewport: Rc::new(RefCell::new(Default::default())),
+            script_ui: Rc::new(RefCell::new(Default::default())),
+            script_camera_override: Rc::new(RefCell::new(None)),
             texture_resources: None,
             texture_cache: crate::texture_cache::TextureCache::new(),
             animation_system: crate::anim_system::AnimationSystem::new(),
@@ -249,20 +251,28 @@ impl Engine {
             }
         }
 
-        // Register UI overlay API
-        if let (Some(ui), Some(font), Some(gpu)) = (&self.ui_renderer, &self.bitmap_font, &self.gpu)
-        {
-            let surface_config = Rc::new(RefCell::new(gpu.config.clone()));
-            self.shared_surface_config = Some(surface_config.clone());
-            if let Err(e) = script_runtime.register_ui_api(ui.clone(), font.clone(), surface_config)
-            {
-                tracing::error!("Failed to register UI API: {}", e);
-            }
+        // Lua presentation APIs use the same CPU contracts with or without a GPU.
+        if let Some(gpu) = &self.gpu {
+            *self.viewport.borrow_mut() =
+                naive_sim::presentation::Viewport::new(gpu.config.width, gpu.config.height);
         }
-
-        // Register camera API (world_to_screen)
-        if let (Some(cs), Some(sc)) = (&self.camera_state, &self.shared_surface_config) {
-            if let Err(e) = script_runtime.register_camera_api(cs.clone(), sc.clone()) {
+        if let Err(e) = script_runtime.register_ui_api(
+            self.script_ui.clone(),
+            naive_sim::presentation::FontMetrics::default(),
+            self.viewport.clone(),
+        ) {
+            tracing::error!("Failed to register UI API: {}", e);
+        }
+        if let (Some(sw), Some(pw)) = (&self.scene_world, &self.physics_world) {
+            if let Err(e) = script_runtime.register_camera_api_with_override(
+                sw.clone(),
+                pw.clone(),
+                self.viewport.clone(),
+                self.camera_shake.clone(),
+                self.args
+                    .editor_mode
+                    .then(|| self.script_camera_override.clone()),
+            ) {
                 tracing::error!("Failed to register camera API: {}", e);
             }
         }
@@ -2153,6 +2163,7 @@ impl Engine {
         *self.next_lua_listener_id.borrow_mut() = 0;
         self.lua_listener_id_map.borrow_mut().clear();
         *self.camera_shake.borrow_mut() = CameraShakeState::new();
+        *self.script_ui.borrow_mut() = Default::default();
         *self.swarm_bus.borrow_mut() = crate::swarm_api::SwarmBus::new();
         self.swarm_system.clear();
 
@@ -2372,170 +2383,28 @@ impl Engine {
         true
     }
 
-    /// Compute camera shake offset, decaying the timer.
-    fn compute_camera_shake(&mut self, dt: f32) -> glam::Vec3 {
-        let mut shake = self.camera_shake.borrow_mut();
-        if shake.timer <= 0.0 {
-            return glam::Vec3::ZERO;
-        }
-        shake.timer -= dt;
-        if shake.timer < 0.0 {
-            shake.timer = 0.0;
-        }
-        let t = if shake.duration > 0.0 {
-            shake.timer / shake.duration
-        } else {
-            0.0
-        };
-        let scale = shake.intensity * t;
-        // Simple pseudo-random using seed and timer
-        let s = shake.seed as f32;
-        let phase = shake.timer * 37.0 + s;
-        let x = (phase * 7.31).sin();
-        let y = (phase * 13.17).sin();
-        let z = (phase * 23.41).sin();
-        glam::Vec3::new(x * scale, y * scale, z * scale)
-    }
-
-    /// Update the camera uniform from the main camera entity.
+    /// Upload the same CPU-selected camera that Lua uses for projection/picking.
     fn update_camera(&mut self) {
-        // Compute camera shake offset before borrowing other fields
-        let shake_offset = self.compute_camera_shake(self.delta_time);
-
-        let gpu = match &self.gpu {
-            Some(gpu) => gpu,
-            None => return,
+        let (Some(gpu), Some(world), Some(state)) =
+            (&self.gpu, &self.scene_world, &self.camera_state)
+        else {
+            return;
         };
-        let scene_world = match &self.scene_world {
-            Some(sw) => sw,
-            None => return,
-        };
-        let scene_world = scene_world.borrow();
-        let camera_state_rc = match &self.camera_state {
-            Some(cs) => cs,
-            None => return,
-        };
-        let mut camera_state = camera_state_rc.borrow_mut();
-
-        // Check if there's a player entity controlling the camera
-        let mut player_camera_applied = false;
-        for (entity, (transform, player, camera)) in scene_world
-            .world
-            .query::<(hecs::Entity, (&Transform, &Player, &Camera))>()
-            .iter()
-        {
-            if camera.role == CameraRole::Main {
-                // Check for CameraMode component
-                let camera_mode = scene_world.world.get::<&CameraMode>(entity).ok();
-
-                let is_third_person = camera_mode
-                    .as_ref()
-                    .map(|cm| matches!(**cm, CameraMode::ThirdPerson { .. }))
-                    .unwrap_or(false);
-
-                if is_third_person {
-                    let (distance, height_offset) = if let Some(ref cm) = camera_mode {
-                        match **cm {
-                            CameraMode::ThirdPerson {
-                                distance,
-                                height_offset,
-                                ..
-                            } => (distance, height_offset),
-                            _ => (4.0, 1.5),
-                        }
-                    } else {
-                        (4.0, 1.5)
-                    };
-                    // Third-person camera: orbit behind player
-                    let target = transform.position + glam::Vec3::new(0.0, height_offset, 0.0);
-
-                    // Camera position orbits around target based on yaw and pitch
-                    let cam_offset = glam::Vec3::new(
-                        player.yaw.sin() * player.pitch.cos() * distance,
-                        player.pitch.sin() * distance,
-                        player.yaw.cos() * player.pitch.cos() * distance,
-                    );
-                    let mut desired_pos = target + cam_offset;
-
-                    // Wall collision: raycast from target to desired camera position
-                    if let Some(physics_world) = &self.physics_world {
-                        let physics_world = physics_world.borrow_mut();
-                        let ray_dir = (desired_pos - target).normalize_or_zero();
-                        let ray_dist = (desired_pos - target).length();
-                        if let Some((_entity, toi, _hit, _normal)) =
-                            physics_world.raycast_detailed(target, ray_dir, ray_dist, None)
-                        {
-                            // Pull camera closer to avoid clipping through walls
-                            desired_pos = target + ray_dir * (toi - 0.2).max(0.5);
-                        }
-                    }
-
-                    // Look rotation: camera looks from desired_pos toward target
-                    let forward = (target - desired_pos).normalize_or_zero();
-                    let look_rotation = if forward.length_squared() > 0.001 {
-                        glam::Quat::from_rotation_arc(-glam::Vec3::Z, forward)
-                    } else {
-                        glam::Quat::IDENTITY
-                    };
-
-                    let cam_transform = Transform {
-                        position: desired_pos + shake_offset,
-                        rotation: look_rotation,
-                        ..transform.clone()
-                    };
-                    camera_state.update(
-                        &gpu.queue,
-                        camera,
-                        &cam_transform,
-                        gpu.config.width,
-                        gpu.config.height,
-                    );
-                } else {
-                    // First-person camera (existing behavior)
-                    let look_rotation = glam::Quat::from_rotation_y(player.yaw)
-                        * glam::Quat::from_rotation_x(player.pitch);
-                    let cam_transform = Transform {
-                        position: transform.position
-                            + glam::Vec3::new(0.0, player.height * 0.4, 0.0)
-                            + shake_offset,
-                        rotation: look_rotation,
-                        ..transform.clone()
-                    };
-                    camera_state.update(
-                        &gpu.queue,
-                        camera,
-                        &cam_transform,
-                        gpu.config.width,
-                        gpu.config.height,
-                    );
-                }
-                player_camera_applied = true;
-                break;
-            }
-        }
-
-        if !player_camera_applied {
-            // Find the main camera entity (non-player)
-            for (_entity, (transform, camera)) in scene_world
-                .world
-                .query::<(hecs::Entity, (&Transform, &Camera))>()
-                .iter()
-            {
-                if camera.role == CameraRole::Main {
-                    let cam_transform = Transform {
-                        position: transform.position + shake_offset,
-                        ..transform.clone()
-                    };
-                    camera_state.update(
-                        &gpu.queue,
-                        camera,
-                        &cam_transform,
-                        gpu.config.width,
-                        gpu.config.height,
-                    );
-                    break;
-                }
-            }
+        let world = world.borrow();
+        let physics = self.physics_world.as_ref().map(|physics| physics.borrow());
+        if let Some(view) = naive_sim::presentation::scene_camera(
+            &world.world,
+            physics.as_deref(),
+            *self.viewport.borrow(),
+            self.camera_shake.borrow().offset(),
+        ) {
+            state.borrow_mut().update(
+                &gpu.queue,
+                &view.camera,
+                &view.transform,
+                view.viewport.width,
+                view.viewport.height,
+            );
         }
     }
 
@@ -2570,6 +2439,8 @@ impl Engine {
                 gpu.config.width,
                 gpu.config.height,
             );
+            *self.script_camera_override.borrow_mut() =
+                Some(editor_cam.view(*self.viewport.borrow()));
         }
     }
 
@@ -2903,6 +2774,9 @@ impl Engine {
         // Phase 6: Update scripts
         self.update_scripts(dt);
 
+        self.script_ui.borrow_mut().advance(dt);
+        self.camera_shake.borrow_mut().advance(dt);
+
         // Tick skeletal animations
         self.tick_animations();
 
@@ -2932,7 +2806,9 @@ impl Engine {
         // Tier 2: Update particle system
         if let Some(scene_world) = &self.scene_world {
             let scene_world = scene_world.borrow();
-            self.particle_system.borrow_mut().update(dt, &scene_world);
+            self.particle_system
+                .borrow_mut()
+                .update(dt, &scene_world.world);
         }
 
         // Update listener position for spatial audio
@@ -3059,6 +2935,14 @@ impl Engine {
                 self.splat_cache
                     .sort_splats(splat.splat_handle, &view_matrix, &gpu.queue);
             }
+        }
+
+        // Convert script draw intentions to GPU geometry only at the renderer boundary.
+        if let (Some(ui), Some(font)) = (&self.ui_renderer, &self.bitmap_font) {
+            let mut frame = self.script_ui.borrow_mut();
+            let mut renderer = ui.borrow_mut();
+            let font = font.borrow();
+            renderer.consume_frame(&mut frame, *self.viewport.borrow(), &font);
         }
 
         // Queue editor overlay draw commands (before gpu borrow)
@@ -3477,6 +3361,8 @@ impl ApplicationHandler for Engine {
                     if new_size.width > 0 && new_size.height > 0 {
                         gpu.config.width = new_size.width;
                         gpu.config.height = new_size.height;
+                        *self.viewport.borrow_mut() =
+                            naive_sim::presentation::Viewport::new(new_size.width, new_size.height);
                         gpu.surface.configure(&gpu.device, &gpu.config);
 
                         // Recreate depth texture on resize

@@ -1,5 +1,5 @@
-//! The parts of nAIVE that run without a GPU, a window or audio: what
-//! headless tests, a server and the web build can share with the engine.
+//! CPU simulation, asset decoding and presentation contracts shared by the
+//! native engine and headless tests, without a GPU, a window or audio.
 //!
 //! This is the first slice of moving the simulation out of `naive-client`
 //! (`docs/sim-split-plan.md`); `naive-client` re-exports these modules, so
@@ -8,6 +8,10 @@
 
 pub use naive_core::{components, events, scene, transform};
 
+pub mod animation;
+pub mod assets;
 pub mod input;
+pub mod particles;
 pub mod physics;
+pub mod presentation;
 pub mod project_path;
