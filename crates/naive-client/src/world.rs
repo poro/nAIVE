@@ -54,6 +54,7 @@ pub fn spawn_all_entities(
         splat_cache,
         texture_resources,
         texture_cache.as_deref_mut(),
+        physics_world.as_deref_mut(),
     ) {
         tracing::error!("Scene creation failed: {error}");
         return;

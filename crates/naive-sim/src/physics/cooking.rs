@@ -79,7 +79,52 @@ impl ColliderShapeCache {
         self.stats
     }
 
+    /// The cooked shape for this geometry, or why it cannot be cooked.
+    /// Scene preflight and spawn preparation call this before any live state
+    /// changes, so construction only ever finds shapes that cooked.
+    pub(super) fn try_get_or_cook(
+        &mut self,
+        vertices: &[Vector],
+        indices: &[[u32; 3]],
+    ) -> Result<SharedShape, String> {
+        validate_geometry(vertices, indices)?;
+        let mut failure = None;
+        let shape = self.lookup_or_insert(vertices, indices, || {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cook_trimesh(vertices, indices)
+            })) {
+                Ok(shape) => Some(shape),
+                Err(panic) => {
+                    failure = Some(panic_message(panic.as_ref()));
+                    None
+                }
+            }
+        });
+        shape.ok_or_else(|| {
+            format!(
+                "trimesh collider could not be decomposed into convex parts ({})",
+                failure.unwrap_or_default()
+            )
+        })
+    }
+
+    /// Construction-time lookup. Preparation already cooked this geometry
+    /// (cooking is deterministic, so an evicted entry cooks again the same
+    /// way); a failure here means a caller skipped preparation.
     pub(super) fn get_or_cook(&mut self, vertices: &[Vector], indices: &[[u32; 3]]) -> SharedShape {
+        self.try_get_or_cook(vertices, indices)
+            .unwrap_or_else(|error| {
+                tracing::error!("{error}; using its bounding box, since it was not prepared");
+                bounding_box(vertices)
+            })
+    }
+
+    fn lookup_or_insert(
+        &mut self,
+        vertices: &[Vector],
+        indices: &[[u32; 3]],
+        cook: impl FnOnce() -> Option<SharedShape>,
+    ) -> Option<SharedShape> {
         let geometry_bytes = vertices
             .len()
             .checked_add(indices.len())
@@ -98,11 +143,11 @@ impl ColliderShapeCache {
                 let shape = entry.shape.clone();
                 self.entries.push_back(entry);
                 self.stats.cache_hits = self.stats.cache_hits.saturating_add(1);
-                return shape;
+                return Some(shape);
             }
         }
 
-        let shape = cook_trimesh(vertices, indices);
+        let shape = cook()?;
         self.stats.mesh_cooks = self.stats.mesh_cooks.saturating_add(1);
         if let (Some(fingerprint), Some(bytes)) = (fingerprint, geometry_bytes) {
             while self.entries.len() >= self.max_entries
@@ -124,8 +169,67 @@ impl ColliderShapeCache {
             self.stats.cached_geometry_bytes += bytes;
             self.stats.cached_meshes = self.entries.len();
         }
-        shape
+        Some(shape)
     }
+}
+
+/// Largest coordinate a cooked collider may have, in world units. Convex
+/// decomposition stalls for tens of seconds at extreme scales.
+pub const MAX_COLLIDER_COORDINATE: f32 = 1.0e6;
+/// Smallest triangle (twice its area) that makes a mesh more than a point or
+/// a line. A zero scale collapses every triangle, and decomposing that panics.
+const MIN_DOUBLE_AREA: f32 = 1.0e-12;
+
+fn validate_geometry(vertices: &[Vector], indices: &[[u32; 3]]) -> Result<(), String> {
+    if vertices.is_empty() || indices.is_empty() {
+        return Err("trimesh collider has no triangles".into());
+    }
+    if let Some(vertex) = vertices.iter().find(|vertex| {
+        [vertex.x, vertex.y, vertex.z]
+            .iter()
+            .any(|c| !c.is_finite() || c.abs() > MAX_COLLIDER_COORDINATE)
+    }) {
+        return Err(format!(
+            "trimesh collider vertex {:?} is not finite or is beyond {MAX_COLLIDER_COORDINATE} \
+             units (check the entity's scale)",
+            [vertex.x, vertex.y, vertex.z]
+        ));
+    }
+    let mut largest = 0.0f32;
+    for triangle in indices {
+        let [a, b, c] = triangle.map(|index| vertices.get(index as usize));
+        let (Some(a), Some(b), Some(c)) = (a, b, c) else {
+            return Err("trimesh collider has a triangle index past its vertices".into());
+        };
+        largest = largest.max((*b - *a).cross(*c - *a).length());
+    }
+    if largest < MIN_DOUBLE_AREA {
+        return Err(
+            "trimesh collider has no triangle with area (is the entity's scale zero?)".into(),
+        );
+    }
+    Ok(())
+}
+
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|message| message.to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "panicked".into())
+}
+
+fn bounding_box(vertices: &[Vector]) -> SharedShape {
+    let (min, max) = vertices.iter().fold(
+        (Vector::splat(f32::MAX), Vector::splat(f32::MIN)),
+        |(min, max), vertex| (min.min(*vertex), max.max(*vertex)),
+    );
+    let half = ((max - min) * 0.5).max(Vector::splat(1.0e-3));
+    let center = (min + max) * 0.5;
+    SharedShape::compound(vec![(
+        rapier3d::math::Pose::from_translation(center),
+        SharedShape::cuboid(half.x, half.y, half.z),
+    )])
 }
 
 fn vertex_bits(vertex: &Vector) -> [u32; 3] {

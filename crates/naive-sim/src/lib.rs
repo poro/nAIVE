@@ -17,6 +17,8 @@ pub mod particles;
 pub mod physics;
 pub mod presentation;
 pub mod project_path;
+#[cfg(feature = "scripting")]
+pub mod sandbox;
 pub mod scene_snapshot;
 #[cfg(feature = "scripting")]
 pub mod scripting;

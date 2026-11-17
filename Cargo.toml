@@ -74,6 +74,7 @@ linked-hash-map = "0.5.6"
 rapier3d = "0.36"
 
 # Scripting
+memchr = "2"
 mlua = { version = "0.12", features = ["lua54", "vendored", "serialize"] }
 
 # Audio

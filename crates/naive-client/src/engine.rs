@@ -1032,7 +1032,7 @@ impl Engine {
             }
         };
 
-        if let Err(error) = crate::world::preflight_scene_native(
+        let preflight = crate::world::preflight_scene_native(
             &new_scene,
             &gpu.device,
             &gpu.queue,
@@ -1042,7 +1042,12 @@ impl Engine {
             &mut self.splat_cache,
             self.texture_resources.as_ref(),
             Some(&mut self.texture_cache),
-        ) {
+            self.physics_world
+                .as_ref()
+                .map(|world| world.borrow_mut())
+                .as_deref_mut(),
+        );
+        if let Err(error) = preflight {
             tracing::error!("Scene reload failed: {error}, keeping old scene");
             self.reload_notifications.push((
                 format!("Scene assets failed: {error}"),
@@ -1677,7 +1682,9 @@ impl Engine {
             return false;
         };
         // A bad replacement must not destroy the current world or its scripts.
-        if let Err(error) = crate::world::preflight_scene_native(
+        // Trimesh colliders cook into the current physics world's cache,
+        // which the reset below keeps for construction.
+        let preflight = crate::world::preflight_scene_native(
             &scene,
             &gpu.device,
             &gpu.queue,
@@ -1687,7 +1694,12 @@ impl Engine {
             &mut self.splat_cache,
             self.texture_resources.as_ref(),
             Some(&mut self.texture_cache),
-        ) {
+            self.physics_world
+                .as_ref()
+                .map(|world| world.borrow_mut())
+                .as_deref_mut(),
+        );
+        if let Err(error) = preflight {
             tracing::error!("Scene replacement failed: {error}, keeping old scene");
             return false;
         }
@@ -1723,11 +1735,10 @@ impl Engine {
             sw.current_scene = None;
         }
 
-        // 4. Replace physics world in-place
+        // 4. Reset the physics world in place, keeping the cooked colliders
         let gravity = glam::Vec3::from(scene.settings.gravity);
         if let Some(pw) = &self.physics_world {
-            let mut pw = pw.borrow_mut();
-            *pw = PhysicsWorld::new(gravity);
+            pw.borrow_mut().reset(gravity);
         }
 
         // 5. Clear pool manager, particle system, lua event listeners, camera shake

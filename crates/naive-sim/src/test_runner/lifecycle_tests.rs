@@ -63,7 +63,12 @@ impl EnginePhases {
 
     fn replace_scene(&mut self, project: &Project, scene: &str) {
         let scene = crate::scene::load_scene(&project.0.join(scene)).unwrap();
-        crate::world::preflight_scene(&scene, &mut self.assets).unwrap();
+        crate::world::preflight_scene(
+            &scene,
+            &mut self.assets,
+            Some(&mut self.physics.borrow_mut()),
+        )
+        .unwrap();
         let ids: Vec<_> = self
             .world
             .borrow()
@@ -81,7 +86,9 @@ impl EnginePhases {
         }
         assert!(self.runtime.take_errors().is_empty());
         *self.world.borrow_mut() = SceneWorld::new();
-        *self.physics.borrow_mut() = PhysicsWorld::new(scene.settings.gravity.into());
+        self.physics
+            .borrow_mut()
+            .reset(scene.settings.gravity.into());
         *self.events.borrow_mut() = EventBus::new(1000);
         *self.commands.borrow_mut() = EntityCommandQueue::new();
         *self.pools.borrow_mut() = EntityPoolManager::new();
