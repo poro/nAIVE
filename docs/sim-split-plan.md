@@ -1,79 +1,81 @@
 # Moving the simulation into `naive-sim`
 
-**Goal.** Everything a game needs to *run*, as opposed to *display*, lives in
-`crates/naive-sim`, which never depends on wgpu, winit or an audio backend (CI
-checks this). `naive-client` adds the window, renderer, audio and editor on
-top. That gives:
-
-- **Headless gameplay tests.** `naive test` loads authored mesh and material
-  assets, runs mesh colliders, animation clocks and particle simulation, and
-  records UI draws without a GPU. Runtime GPU mesh creation and texture swaps
-  still fail explicitly; native release smoke tests cover those paths.
-- **A server.** `naive-server` can run the authoritative simulation.
-- **The web build.** `naive-web` can depend on the simulation without
-  pulling in the native renderer, Slang or audio.
+**Goal.** Everything a game needs to run lives in `crates/naive-sim`, which
+never depends on wgpu, winit or an audio backend. `naive-client` supplies the
+window, renderer, audio device and editor. CI checks the dependency boundary
+with Lua enabled and disabled.
 
 ## Where it stands
 
-`naive-sim` holds `physics` (the Rapier wrapper), `input` (key, mouse and
-action state, with nAIVE's own `Key` and `MouseButton`), `project_path`
-(path confinement), validated CPU `assets`, `particles`, animation playback
-helpers and `presentation` (camera matrices, viewport, UI intents and shake).
-It also owns `world` (ECS scene state and retained authoring metadata), the
-plain `Script` component, and `scene_snapshot` (scene document generation).
-Snapshots use read-only asset-name lookups implemented by the CPU asset
-catalog and the native cache adapter.
-`naive-client` re-exports the original three modules, so
-`crate::physics::…`, `crate::input::…` and `crate::project_path::…` keep
-working there. Client world and scripting paths re-export the shared state
-and component types, preserving ECS type identity. The engine turns winit
-events into `input::InputEvent`s in `engine/winit_input.rs`.
+`naive-sim` now owns:
 
-What blocks moving the rest (found by following each module's imports):
+- Scene state, retained authoring definitions, snapshot generation, validated
+  CPU assets, entity construction, deferred command contracts and pooling.
+- Physics, input, particles, animation helpers and presentation state for
+  cameras, viewports, UI intents and shake.
+- Shared swarm layouts, targeting, flow fields, CPU simulation and the swarm
+  command/report bus.
+- With the `scripting` feature: the sandboxed Lua runtime and domain APIs,
+  shared frame/lifecycle steps, swarm Lua registration and the headless runner.
 
-| Module | Why it is GPU-bound today |
+The default feature set has no Lua VM, preserving a CPU library that can be
+checked on `wasm32-unknown-unknown`. Native clients enable `scripting` through
+their dependency. Standalone consumers can enable it without depending on the
+client, GPU, window or audio libraries:
+
+```sh
+cargo test --locked -p naive-sim --no-default-features
+cargo test --locked -p naive-sim --features scripting
+```
+
+`naive_sim::test_runner::{TestRunner, run_test_file}` provides the same runner
+used by `naive test`. The runner retains CPU/memory/instruction limits,
+monotonic deadlines, sticky failures, isolated test VMs and strict asset
+preflight. Unsupported GPU mesh/texture commands still fail explicitly.
+The internal `test-support` feature exposes asset-free schema fixtures to
+cross-crate unit tests; production scene loading uses validated assets.
+
+Client import paths re-export canonical shared types and functions, so ECS
+queries, script environments and existing native callers keep using the same
+implementations. Native adapters have these responsibilities:
+
+| Client module | Remaining native responsibility |
 |---|---|
-| Native spawning and reconciliation | Both paths resolve assets through `SpawnAssetResolver` and use one CPU constructor. Native GPU cache access lives in `world/native_assets.rs`; construction, reconciliation and deferred queues still live in `naive-client`. Scene state and authoring metadata live in `naive-sim`. |
-| `scripting` and `scripting/*` | Presentation APIs use CPU contracts, but audio and runtime mesh/texture operations still refer to native adapters. |
-| `sim`, `swarm_api`, `test_runner` | Through `world` and `scripting`. |
-| `swarm` | The CPU reference (`swarm/cpu.rs`, `swarm/flow.rs`) is GPU-free; the module also holds the GPU pipeline (`swarm/gpu.rs`). |
+| `engine`, `engine/commands` | Window/frame scheduling, editor commands, native scene replacement and orchestration |
+| `world/native_assets`, `world/spawning`, `world` | GPU cache uploads and native spawning/reconciliation over shared constructors |
+| `audio` | Kira device playback through the shared `AudioBackend` contract; headless runs use `SilentAudio` |
+| `particles` | GPU-compatible particle vertices/layout; `AsMut` exposes the shared CPU simulation to Lua registration |
+| `swarm/gpu` and `swarm/compute.wgsl` | GPU buffers, compute, rendering and asynchronous reports over shared planning/layouts |
+| `anim_system`, `scene_snapshot` | Native skeleton/palette storage and asset-name lookup adapters |
+| `test_execution` | CLI/editor subprocess supervision, worker IPC and bounded background admission |
 
-## Steps, one pull request each
+No world or physics borrow is held across Lua callbacks. Shared construction
+finishes before `init`; destruction runs callbacks while components are still
+available, then retires subscriptions, physics and ECS state. Parity tests
+exercise shared phase ordering and runner recreation, plus real native GPU,
+audio and particle adapters against the headless runner. Native and headless
+orchestration policies stay at their respective entry points.
 
-1. **Input without winit.** *Done.* A `Key` and `MouseButton` enum of our
-   own in `naive-sim`; the engine maps winit events onto them at the edge.
-   Bindings files, Lua and `inject_input` keep their key names. Moved
-   `input`.
-2. **Shared CPU assets and construction.** *Implemented; crate extraction remains.*
-   Fallible mesh, material, texture and splat decoders are shared by the native
-   GPU caches and the headless asset catalog. Missing or invalid assets fail
-   instead of producing placeholder geometry. Headless mesh handles retain
-   vertices, triangles, skeletons and clips; trimesh colliders use the authored
-   scale. Native and headless asset resolvers feed one constructor in
-   `world/construction.rs`, including authored entities, ordinary deferred
-   spawns, projectiles and dynamic objects. Game/editor startup, scene
-   replacement and structural reloads all use this boundary; script and
-   animation initialization follow construction. `SceneWorld`, retained
-   authoring definitions, unsupported-state markers and the plain `Script`
-   component now live in `naive-sim`. Snapshot generation also lives there,
-   with `SnapshotAssetLookup` supplying mesh/material paths from either the
-   CPU catalog or a native cache adapter. Existing native save/undo APIs
-   delegate to the shared generator. Construction and deferred command
-   processing remain in the client for a later extraction.
-3. **Script side effects as commands.** *Partially implemented.* UI drawing,
-   camera projection/picking, shake, particle updates and animation clocks use
-   common CPU implementations. Headless tests register the corresponding Lua
-   API groups and retain UI intents. A headless viewport defaults to 1280×720
-   and can be changed through `TestRunner::set_viewport`. Audio playback remains
-   a native concern, and runtime GPU commands fail explicitly in tests.
-   Moving `scripting`, `sim`, `swarm_api`, the CPU swarm and `test_runner` into
-   `naive-sim` remains separate work.
-4. **Server.** `naive-server` runs `naive-sim` with a fixed step and no
-   window.
-5. **Web.** `mlua` with its C Lua does not build for
-   `wasm32-unknown-unknown`, so the browser needs either an Emscripten build
-   of Lua or a pure-Rust Lua VM before `naive-web` can run game scripts.
-   Everything else in `naive-sim` (Rapier, glam, hecs) builds for wasm.
+## Completed extraction steps
 
-Each step keeps the client compiling through re-exports, so the next one can
-land without a flag day.
+1. **Input without winit.** Native events map onto shared key/mouse types;
+   bindings files, Lua and `inject_input` preserve their names.
+2. **CPU assets, world and construction.** Native uploads and the CPU catalog
+   share decoders and one fallible constructor, including scaled mesh
+   colliders, ordinary spawns, projectiles and dynamic objects. Snapshots use
+   read-only asset-name lookups and preserve authoring metadata and errors.
+3. **Shared scripting, lifecycle and runner.** Lua registration, limits,
+   reloads, callbacks, deferred CPU operations and headless execution now
+   live in `naive-sim`. Device playback and GPU operations are adapter work.
+   The CPU swarm and its bus also live there. Client re-exports preserve
+   existing API paths; native particle collection keeps its GPU vertex type.
+
+## Remaining integration
+
+- **Server.** `naive-server` is still a stub. It can now use the shared world,
+  lifecycle and optional Lua runner without importing the native client;
+  authoritative ticking, networking and replication remain to be implemented.
+- **Web.** The default simulation is checked on WebAssembly. `mlua` uses C Lua
+  and cannot target `wasm32-unknown-unknown`, so browser scripts still need a
+  compatible Lua backend or an Emscripten build before the web prototype can
+  run game scripts. The native scripting feature is deliberately opt-in.

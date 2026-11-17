@@ -1,7 +1,7 @@
 //! Lua ui API registration.
 
 use super::ScriptRuntime;
-use naive_sim::presentation::{FontMetrics, UiFrame, UiIntent, Viewport};
+use crate::presentation::{FontMetrics, UiFrame, UiIntent, Viewport};
 use std::cell::RefCell;
 use std::rc::Rc;
 

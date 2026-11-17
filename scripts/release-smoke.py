@@ -572,7 +572,9 @@ def main():
 
             # Destroying an entity removes both the physical object and callbacks.
             ray = 'return physics.raycast(4, 5, 0, 0, -1, 0, 4)'
-            assert command(socket_path, "run_lua", code=ray)["result"] == "true"
+            # Spawn/init can complete before the next fixed physics step.
+            wait_until(lambda: command(socket_path, "run_lua", code=ray)["result"] == "true",
+                       "MCP collider never became available to physics queries")
             command(socket_path, "destroy_entity", entity_id="mcp_actor")
             assert command(socket_path, "run_lua", code='return entity.exists("mcp_actor")')["result"] == "false"
             assert command(socket_path, "run_lua", code=ray)["result"] == "false", "destroy left a collider"
@@ -591,7 +593,8 @@ def main():
                        "scene transition did not complete")
             assert process.poll() is None, "on_destroy crashed scene transition"
             assert float(command(socket_path, "run_lua", code='return entity.get_health("smoke_cube")')["result"]) == 73
-            assert command(socket_path, "run_lua", code='return physics.raycast(0, 3, 0, 0, -1, 0, 2)')["result"] == "true", "saved collider missing"
+            wait_until(lambda: command(socket_path, "run_lua", code='return physics.raycast(0, 3, 0, 0, -1, 0, 2)')["result"] == "true",
+                       "saved collider never became available to physics queries")
             command(socket_path, "benchmark", frames=2)
             stale_after = command(socket_path, "query_events", filter="release.stale_event")["count"]
             assert stale_after == stale_before, f"old scene event reached new scene listeners: {stale_before} -> {stale_after}"

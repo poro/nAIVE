@@ -1,13 +1,65 @@
 //! Lua audio API registration.
 
-use super::{ScriptRuntime, SharedAudioSystem};
-use std::path::PathBuf;
+use super::ScriptRuntime;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+/// Audio operations used by Lua, independent of an audio device or library.
+pub trait AudioBackend {
+    fn play_sfx(
+        &mut self,
+        id: &str,
+        project_root: &Path,
+        path: &str,
+        volume: f32,
+    ) -> Result<(), String>;
+    fn play_music(
+        &mut self,
+        project_root: &Path,
+        path: &str,
+        volume: f32,
+        fade_in_secs: f32,
+    ) -> Result<(), String>;
+    fn stop_sound(&mut self, id: &str, fade_out_secs: f32);
+    fn stop_music(&mut self, fade_out_secs: f32);
+}
+
+/// Headless audio preserves the Lua interface without device or filesystem IO.
+#[derive(Debug, Default)]
+pub struct SilentAudio;
+
+impl AudioBackend for SilentAudio {
+    fn play_sfx(
+        &mut self,
+        _id: &str,
+        _project_root: &Path,
+        _path: &str,
+        _volume: f32,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn play_music(
+        &mut self,
+        _project_root: &Path,
+        _path: &str,
+        _volume: f32,
+        _fade_in_secs: f32,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn stop_sound(&mut self, _id: &str, _fade_out_secs: f32) {}
+
+    fn stop_music(&mut self, _fade_out_secs: f32) {}
+}
 
 impl ScriptRuntime {
     /// Register audio API functions that control the audio system from Lua.
-    pub fn register_audio_api(
+    pub fn register_audio_api<A: AudioBackend + 'static>(
         &self,
-        audio_system: SharedAudioSystem,
+        audio_system: Rc<RefCell<A>>,
         project_root: PathBuf,
     ) -> Result<(), String> {
         let globals = self.lua.globals();

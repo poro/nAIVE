@@ -10,6 +10,13 @@ description = "nAIVE CPU simulation, asset decoding and presentation contracts w
 # what headless tests, a future server and the web build share with the
 # engine. See docs/sim-split-plan.md.
 
+[features]
+default = []
+# Native Lua VM and headless runner; keep the default CPU library usable on wasm.
+scripting = ["dep:mlua"]
+# Asset-free schema fixtures used by cross-crate unit tests, never runtime loads.
+test-support = []
+
 [dependencies]
 naive-core = { workspace = true }
 glam = { workspace = true }
@@ -22,6 +29,6 @@ image = { workspace = true }
 serde = { workspace = true }
 serde_norway = { workspace = true }
 tracing = { workspace = true }
-
-[dev-dependencies]
 serde_json = { workspace = true }
+bytemuck = { workspace = true }
+mlua = { workspace = true, optional = true }

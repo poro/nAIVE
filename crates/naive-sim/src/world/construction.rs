@@ -16,12 +16,12 @@ pub trait SpawnAssetResolver {
     fn trimesh(&mut self, mesh: MeshHandle, scale: glam::Vec3) -> Result<PhysicsTrimesh, String>;
 }
 
-impl SpawnAssetResolver for naive_sim::assets::AssetCatalog {
+impl SpawnAssetResolver for crate::assets::AssetCatalog {
     fn mesh(&mut self, path: &str) -> Result<MeshHandle, String> {
-        naive_sim::assets::AssetCatalog::mesh(self, path).map_err(|error| error.to_string())
+        crate::assets::AssetCatalog::mesh(self, path).map_err(|error| error.to_string())
     }
     fn material(&mut self, path: &str) -> Result<MaterialHandle, String> {
-        naive_sim::assets::AssetCatalog::material(self, path).map_err(|error| error.to_string())
+        crate::assets::AssetCatalog::material(self, path).map_err(|error| error.to_string())
     }
     fn splat(&mut self, path: &str) -> Result<SplatHandle, String> {
         self.validate_splat(path).map_err(|error| error.to_string())
@@ -42,7 +42,7 @@ pub(crate) struct PreparedSpawnAssets {
 }
 
 impl PreparedSpawnAssets {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn schema_fixture(definition: &EntityDef) -> Self {
         Self {
             mesh: None,
@@ -155,7 +155,7 @@ fn validate_trimesh((vertices, indices): &PhysicsTrimesh) -> Result<(), String> 
 
 /// Validate a complete scene before tearing down or populating live state.
 /// Prepared geometry is ephemeral; resolvers retain only their asset caches.
-pub(crate) fn preflight_scene(
+pub fn preflight_scene(
     scene: &SceneFile,
     resolver: &mut impl SpawnAssetResolver,
 ) -> Result<(), String> {

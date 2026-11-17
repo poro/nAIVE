@@ -11,7 +11,7 @@ impl ScriptRuntime {
         &self,
         scene_world: super::SharedSceneWorld,
         physics_world: super::SharedPhysicsWorld,
-        viewport: Rc<RefCell<naive_sim::presentation::Viewport>>,
+        viewport: Rc<RefCell<crate::presentation::Viewport>>,
         camera_shake: SharedCameraShakeState,
     ) -> Result<(), String> {
         self.register_camera_api_with_override(
@@ -28,7 +28,7 @@ impl ScriptRuntime {
         &self,
         scene_world: super::SharedSceneWorld,
         physics_world: super::SharedPhysicsWorld,
-        viewport: Rc<RefCell<naive_sim::presentation::Viewport>>,
+        viewport: Rc<RefCell<crate::presentation::Viewport>>,
         camera_shake: SharedCameraShakeState,
         camera_override: Option<super::SharedCameraOverride>,
     ) -> Result<(), String> {
@@ -37,14 +37,14 @@ impl ScriptRuntime {
         let view = move || {
             if let Some(camera_override) = &camera_override {
                 if let Some(view) = camera_override.borrow().as_ref() {
-                    return Ok(naive_sim::presentation::CameraView::new(
+                    return Ok(crate::presentation::CameraView::new(
                         &view.camera,
                         &view.transform,
                         *viewport.borrow(),
                     ));
                 }
             }
-            naive_sim::presentation::scene_camera(
+            crate::presentation::scene_camera(
                 &scene_world.borrow().world,
                 Some(&physics_world.borrow()),
                 *viewport.borrow(),

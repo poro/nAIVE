@@ -189,6 +189,36 @@ impl Default for AudioSystem {
     }
 }
 
+impl crate::scripting::AudioBackend for AudioSystem {
+    fn play_sfx(
+        &mut self,
+        id: &str,
+        project_root: &Path,
+        path: &str,
+        volume: f32,
+    ) -> Result<(), String> {
+        AudioSystem::play_sfx(self, id, project_root, path, volume)
+    }
+
+    fn play_music(
+        &mut self,
+        project_root: &Path,
+        path: &str,
+        volume: f32,
+        fade_in_secs: f32,
+    ) -> Result<(), String> {
+        AudioSystem::play_music(self, project_root, path, volume, fade_in_secs)
+    }
+
+    fn stop_sound(&mut self, id: &str, fade_out_secs: f32) {
+        AudioSystem::stop_sound(self, id, fade_out_secs);
+    }
+
+    fn stop_music(&mut self, fade_out_secs: f32) {
+        AudioSystem::stop_music(self, fade_out_secs);
+    }
+}
+
 /// Game scripts specify linear amplitudes; Kira 0.12 expects decibels.
 fn linear_volume(amplitude: f32) -> Decibels {
     if !amplitude.is_finite() || amplitude <= 0.0 {
