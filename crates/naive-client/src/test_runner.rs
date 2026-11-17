@@ -3,6 +3,8 @@
 //! Runs Lua test scripts that inject input, advance game time, and assert
 //! that game events occurred. No GPU or window required.
 
+mod limits;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,6 +12,7 @@ use std::rc::Rc;
 
 use mlua::prelude::*;
 
+use self::limits::{create_lua, TestBudget, TestLimits};
 use crate::components::Transform;
 use crate::events::EventBus;
 use crate::input::InputState;
@@ -21,7 +24,7 @@ use crate::tween::TweenSystem;
 use crate::world::{EntityCommandQueue, EntityPoolManager, SceneWorld};
 
 /// Result of a single test function execution.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct TestResult {
     pub name: String,
     pub passed: bool,
@@ -52,10 +55,15 @@ pub struct TestRunner {
     pub cpu_swarms: CpuSwarms,
     /// Failures remain sticky across scene changes and caught Lua errors.
     errors: RefCell<Vec<String>>,
+    execution_budget: Rc<TestBudget>,
 }
 
 impl TestRunner {
     pub fn new(project_root: &Path) -> Self {
+        Self::with_limits(project_root, TestLimits::default())
+    }
+
+    fn with_limits(project_root: &Path, limits: TestLimits) -> Self {
         let bindings = crate::input::load_bindings(project_root);
         Self {
             project_root: project_root.to_path_buf(),
@@ -78,12 +86,22 @@ impl TestRunner {
             swarm_bus: Rc::new(RefCell::new(SwarmBus::new())),
             cpu_swarms: CpuSwarms::new(),
             errors: RefCell::new(Vec::new()),
+            execution_budget: TestBudget::new(limits),
         }
     }
 
     /// Load a scene by path (relative to project root).
     pub fn load_scene(&mut self, scene_rel: &str) -> Result<(), String> {
-        let result = self.load_scene_inner(scene_rel);
+        let result = self
+            .execution_budget
+            .check()
+            .map_err(|error| error.to_string())
+            .and_then(|()| self.load_scene_inner(scene_rel))
+            .and_then(|()| {
+                self.execution_budget
+                    .check()
+                    .map_err(|error| error.to_string())
+            });
         if let Err(error) = &result {
             self.errors.borrow_mut().push(error.clone());
         }
@@ -210,6 +228,9 @@ impl TestRunner {
 
     /// Advance the simulation by one frame.
     pub fn step_frame(&mut self) {
+        if self.execution_budget.check().is_err() {
+            return;
+        }
         let dt = self.delta_time;
 
         // Apply synthetic inputs
@@ -508,6 +529,9 @@ impl TestRunner {
     /// Advance multiple frames.
     pub fn step_frames(&mut self, count: u64) {
         for _ in 0..count {
+            if self.execution_budget.check().is_err() {
+                break;
+            }
             self.step_frame();
         }
     }
@@ -579,7 +603,32 @@ fn validate_headless_entity(definition: &crate::scene::EntityDef) -> Result<(), 
 // ---------------------------------------------------------------------------
 
 /// Run all test functions in a Lua test file. Returns results for each test.
+/// Runtime code generation (`load`) and `__gc` finalizers are unavailable in
+/// test code because they can suppress allocation errors or bypass VM hooks.
 pub fn run_test_file(project_root: &Path, test_file: &Path) -> Vec<TestResult> {
+    run_test_file_with_limits(project_root, test_file, TestLimits::default())
+}
+
+/// Run without printing statuses when a parent process reports the results.
+/// Test-authored stdout, including log.info, remains available to the caller.
+pub(crate) fn run_test_file_quiet(project_root: &Path, test_file: &Path) -> Vec<TestResult> {
+    run_test_file_impl(project_root, test_file, TestLimits::default(), false)
+}
+
+fn run_test_file_with_limits(
+    project_root: &Path,
+    test_file: &Path,
+    limits: TestLimits,
+) -> Vec<TestResult> {
+    run_test_file_impl(project_root, test_file, limits, true)
+}
+
+fn run_test_file_impl(
+    project_root: &Path,
+    test_file: &Path,
+    limits: TestLimits,
+    print_results: bool,
+) -> Vec<TestResult> {
     let test_source = match std::fs::read_to_string(test_file) {
         Ok(s) => s,
         Err(e) => {
@@ -593,14 +642,25 @@ pub fn run_test_file(project_root: &Path, test_file: &Path) -> Vec<TestResult> {
     };
 
     // Create a temporary Lua VM to discover test functions
-    let lua = Lua::new();
+    let budget = TestBudget::new(limits);
+    let lua = match budget.finish(create_lua(budget.clone())) {
+        Ok(lua) => lua,
+        Err(error) => {
+            return vec![TestResult {
+                name: test_file.display().to_string(),
+                passed: false,
+                error: Some(format!("Failed to create test discovery VM: {error}")),
+                game_time: 0.0,
+            }];
+        }
+    };
 
     // Load the test file to discover function names
-    if let Err(e) = lua.load(&test_source).exec() {
+    if let Err(e) = budget.finish(lua.load(&test_source).exec()) {
         return vec![TestResult {
             name: test_file.display().to_string(),
             passed: false,
-            error: Some(format!("Lua parse error: {}", e)),
+            error: Some(format!("Lua test discovery error: {}", e)),
             game_time: 0.0,
         }];
     }
@@ -629,19 +689,23 @@ pub fn run_test_file(project_root: &Path, test_file: &Path) -> Vec<TestResult> {
         }];
     }
 
-    println!("Running {} tests...", test_names.len());
+    if print_results {
+        println!("Running {} tests...", test_names.len());
+    }
 
     let mut results = Vec::new();
 
     for test_name in &test_names {
-        let result = run_single_test(project_root, &test_source, test_name);
-        let status = if result.passed { "OK" } else { "FAIL" };
-        println!(
-            "  {} {} ({:.1}s game time)",
-            status, result.name, result.game_time
-        );
-        if let Some(ref err) = result.error {
-            println!("    Error: {}", err);
+        let result = run_single_test_with_limits(project_root, &test_source, test_name, limits);
+        if print_results {
+            let status = if result.passed { "OK" } else { "FAIL" };
+            println!(
+                "  {} {} ({:.1}s game time)",
+                status, result.name, result.game_time
+            );
+            if let Some(ref err) = result.error {
+                println!("    Error: {}", err);
+            }
         }
         results.push(result);
     }
@@ -650,13 +714,33 @@ pub fn run_test_file(project_root: &Path, test_file: &Path) -> Vec<TestResult> {
 }
 
 /// Run a single test function in an isolated TestRunner.
+#[cfg(test)]
 fn run_single_test(project_root: &Path, test_source: &str, test_name: &str) -> TestResult {
+    run_single_test_with_limits(project_root, test_source, test_name, TestLimits::default())
+}
+
+fn run_single_test_with_limits(
+    project_root: &Path,
+    test_source: &str,
+    test_name: &str,
+    limits: TestLimits,
+) -> TestResult {
     // Each test gets a fresh TestRunner, wrapped in Rc<RefCell<>> for safe sharing with Lua closures
-    let runner = Rc::new(RefCell::new(TestRunner::new(project_root)));
-    let start_time = std::time::Instant::now();
+    let runner = Rc::new(RefCell::new(TestRunner::with_limits(project_root, limits)));
+    let budget = runner.borrow().execution_budget.clone();
 
     // Create the test Lua VM with the test API
-    let test_lua = Lua::new();
+    let test_lua = match budget.finish(create_lua(budget.clone())) {
+        Ok(lua) => lua,
+        Err(error) => {
+            return TestResult {
+                name: test_name.to_string(),
+                passed: false,
+                error: Some(format!("Failed to create test VM: {error}")),
+                game_time: 0.0,
+            };
+        }
+    };
 
     // Register test API functions
     if let Err(e) = register_test_api(&test_lua, runner.clone()) {
@@ -669,7 +753,7 @@ fn run_single_test(project_root: &Path, test_source: &str, test_name: &str) -> T
     }
 
     // Load the test source
-    if let Err(e) = test_lua.load(test_source).exec() {
+    if let Err(e) = budget.finish(test_lua.load(test_source).exec()) {
         return TestResult {
             name: test_name.to_string(),
             passed: false,
@@ -688,10 +772,8 @@ fn run_single_test(project_root: &Path, test_source: &str, test_name: &str) -> T
     };
 
     let game_time = runner.borrow().total_time;
-    let _elapsed = start_time.elapsed();
-
     let mut errors = runner.borrow().take_errors();
-    if let Err(error) = result {
+    if let Err(error) = budget.finish(result) {
         errors.insert(0, error.to_string());
     }
     TestResult {
@@ -880,8 +962,10 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
     let r = runner.clone();
     let wait_frames = lua
         .create_function(move |_, n: u64| {
-            r.borrow_mut().step_frames(n);
-            Ok(())
+            let mut runner = r.borrow_mut();
+            runner.execution_budget.check()?;
+            runner.step_frames(n);
+            runner.execution_budget.check()
         })
         .map_err(|e| e.to_string())?;
     globals
@@ -892,8 +976,10 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
     let r = runner.clone();
     let wait_seconds = lua
         .create_function(move |_, n: f32| {
-            r.borrow_mut().step_seconds(n);
-            Ok(())
+            let mut runner = r.borrow_mut();
+            runner.execution_budget.check()?;
+            runner.step_seconds(n);
+            runner.execution_budget.check()
         })
         .map_err(|e| e.to_string())?;
     globals
@@ -908,12 +994,16 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
             let delta_time = r.borrow().delta_time;
             let max_frames = (timeout / delta_time) as u64;
             let empty_filter = std::collections::HashMap::new();
+            let budget = r.borrow().execution_budget.clone();
+            budget.check()?;
             for _ in 0..max_frames {
+                budget.check()?;
                 if r.borrow().event_occurred(&event_type, &empty_filter) {
                     return Ok(true);
                 }
                 r.borrow_mut().step_frame();
             }
+            budget.check()?;
             Ok(r.borrow().event_occurred(&event_type, &empty_filter))
         })
         .map_err(|e| e.to_string())?;
@@ -928,9 +1018,12 @@ fn register_test_api(lua: &Lua, runner: Rc<RefCell<TestRunner>>) -> Result<(), S
             let timeout = timeout.unwrap_or(10.0);
             let delta_time = r.borrow().delta_time;
             let max_frames = (timeout / delta_time) as u64;
+            let budget = r.borrow().execution_budget.clone();
+            budget.check()?;
             for _ in 0..max_frames {
+                budget.check()?;
                 r.borrow_mut().step_frame();
-                if func.call::<bool>(())? {
+                if budget.finish(func.call::<bool>(()))? {
                     return Ok(true);
                 }
             }
@@ -1031,6 +1124,14 @@ fn action_to_key(action: &str) -> String {
 mod tests {
     use super::*;
 
+    fn tight_limits() -> TestLimits {
+        TestLimits {
+            instructions: 50_000,
+            memory_bytes: 2 * 1024 * 1024,
+            wall_time: std::time::Duration::from_secs(2),
+        }
+    }
+
     struct Project(PathBuf);
 
     impl Project {
@@ -1063,6 +1164,164 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn discovery_rejects_unbounded_top_level_code_and_caught_limits() {
+        let project = Project::new("");
+        for (source, expected) in [
+            ("while true do end", "CPU limit"),
+            (
+                "while true do pcall(function() while true do end end) end",
+                "CPU limit",
+            ),
+            (
+                "pcall(function() string.rep('x', 8000000) end)\nfunction test_ok() end",
+                "memory limit",
+            ),
+        ] {
+            project.write("test.lua", source);
+            let results =
+                run_test_file_with_limits(&project.0, &project.0.join("test.lua"), tight_limits());
+            assert_eq!(results.len(), 1);
+            assert!(!results[0].passed, "discovery accepted {source}");
+            assert!(results[0].error.as_ref().unwrap().contains(expected));
+        }
+    }
+
+    #[test]
+    fn test_source_loading_is_limited_before_calling_the_body() {
+        let project = Project::new("");
+        let result = run_single_test_with_limits(
+            &project.0,
+            "while true do end\nfunction test_regression() end",
+            "test_regression",
+            tight_limits(),
+        );
+        assert!(!result.passed);
+        assert!(result.error.unwrap().contains("CPU limit"));
+    }
+
+    #[test]
+    fn test_body_cpu_and_memory_limits_cannot_be_caught() {
+        let project = Project::new("");
+        for (body, expected) in [
+            ("while true do end", "CPU limit"),
+            ("pcall(function() while true do end end)", "CPU limit"),
+            (
+                "while true do pcall(function() while true do end end) end",
+                "CPU limit",
+            ),
+            ("string.rep('x', 8000000)", "memory limit"),
+            (
+                "pcall(function() string.rep('x', 8000000) end)",
+                "memory limit",
+            ),
+            (
+                "xpcall(function() string.rep('x', 8000000) end, function() return 'hidden' end)",
+                "memory limit",
+            ),
+        ] {
+            let result = run_single_test_with_limits(
+                &project.0,
+                &format!("function test_regression()\n{body}\nend"),
+                "test_regression",
+                tight_limits(),
+            );
+            assert!(!result.passed, "test accepted {body}");
+            assert!(
+                result.error.unwrap().contains(expected),
+                "missing {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn monotonic_deadline_interrupts_lua_and_giant_rust_waits() {
+        let project = Project::new("");
+        for body in [
+            "while true do end",
+            "wait_frames(1000000000000)",
+            "wait_seconds(1e30)",
+            "wait_for_event('never', 1e30)",
+            "wait_until(function() return false end, 1e30)",
+            "pcall(wait_frames, 1000000000000)\npcall(scene.load, 'scene.yaml')",
+        ] {
+            let started = std::time::Instant::now();
+            let result = run_single_test_with_limits(
+                &project.0,
+                &format!("function test_regression()\n{body}\nend"),
+                "test_regression",
+                TestLimits {
+                    instructions: u64::MAX,
+                    wall_time: std::time::Duration::from_millis(20),
+                    ..tight_limits()
+                },
+            );
+            assert!(!result.passed, "test accepted {body}");
+            assert!(result.error.unwrap().contains("wall-clock deadline"));
+            assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        }
+    }
+
+    #[test]
+    fn protected_calls_keep_normal_results_and_errors() {
+        let project = Project::new("");
+        let result = project.run(
+            r#"
+            local ok, first, second, third = pcall(function() return 7, nil, 9 end)
+            assert(ok and first == 7 and second == nil and third == 9)
+            local ok, message = pcall(error, 'expected')
+            assert(not ok and message == 'expected')
+            local ok, message = xpcall(function() error('expected', 0) end,
+                function(err) return 'handled ' .. err end)
+            assert(not ok and message == 'handled expected')
+            assert(coroutine == nil and debug == nil and os == nil and io == nil)
+            assert(load == nil and loadfile == nil and dofile == nil)
+            "#,
+        );
+        assert!(result.passed, "{:?}", result.error);
+    }
+
+    #[test]
+    fn finalizers_cannot_escape_cpu_or_memory_limits() {
+        let project = Project::new("");
+        for finalizer in ["while true do end", "string.rep('x', 8000000)"] {
+            let started = std::time::Instant::now();
+            let result = run_single_test_with_limits(
+                &project.0,
+                &format!(
+                    "function test_regression()\nsetmetatable({{}}, {{__gc = function() {finalizer} end}})\ncollectgarbage('collect')\nend"
+                ),
+                "test_regression",
+                tight_limits(),
+            );
+            assert!(!result.passed);
+            assert!(result.error.unwrap().contains("__gc finalizers"));
+            assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        }
+    }
+
+    #[test]
+    fn ordinary_metatables_work_and_later_finalizer_assignment_is_rejected() {
+        let project = Project::new("");
+        let result = project.run(
+            r#"
+            local mt = {__index = {answer = 42}}
+            local value = setmetatable({}, mt)
+            assert(value.answer == 42 and getmetatable(value) == mt)
+            assert(setmetatable(value, nil) == value and getmetatable(value) == nil)
+            setmetatable(value, mt)
+            mt.__gc = function() error('finalizer must not run') end
+            local ok, message = pcall(setmetatable, value, mt)
+            assert(not ok and string.find(message, '__gc finalizers', 1, true))
+            mt.__gc = nil
+            mt.__metatable = 'protected'
+            assert(getmetatable(value) == 'protected')
+            assert(not pcall(setmetatable, value, nil))
+            "#,
+        );
+        assert!(result.passed, "{:?}", result.error);
     }
 
     #[test]

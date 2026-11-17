@@ -9,6 +9,7 @@ Artifacts and logs are retained in the printed temporary directory on failure.
 
 import argparse
 import json
+import queue
 from pathlib import Path
 import shutil
 import socket
@@ -17,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 import zlib
 
 
@@ -25,13 +27,18 @@ def run(command, cwd, timeout=1800):
     subprocess.run(command, cwd=cwd, check=True, timeout=timeout)
 
 
-def command(socket_path, cmd, **params):
+def raw_command(socket_path, cmd, **params):
     with socket.socket(socket.AF_UNIX) as stream:
         stream.settimeout(15)
         stream.connect(str(socket_path))
         stream.sendall((json.dumps({"cmd": cmd, **params}) + "\n").encode())
         with stream.makefile("rb") as reader:
             result = json.loads(reader.readline(16 * 1024 * 1024))
+    return result
+
+
+def command(socket_path, cmd, **params):
+    result = raw_command(socket_path, cmd, **params)
     if result.get("status") != "ok":
         raise RuntimeError(f"{cmd}: {result}")
     return result.get("data") or {}
@@ -44,6 +51,63 @@ def wait_until(predicate, description, timeout=10):
             return
         time.sleep(0.02)
     raise AssertionError(description)
+
+
+def check_mcp_test_execution(release, socket_path, game):
+    """The same bridge must answer ordinary calls while a test is in flight."""
+    bridge = subprocess.Popen([release / "naive_mcp", socket_path], cwd=game,
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True, bufsize=1)
+    replies = queue.Queue()
+
+    def read_replies():
+        try:
+            for line in bridge.stdout:
+                replies.put(json.loads(line))
+        except Exception as error:
+            replies.put(error)
+
+    threading.Thread(target=read_replies, daemon=True).start()
+
+    def send(identifier, tool, arguments):
+        bridge.stdin.write(json.dumps({"jsonrpc": "2.0", "id": identifier,
+            "method": "tools/call", "params": {"name": tool, "arguments": arguments}}) + "\n")
+        bridge.stdin.flush()
+
+    try:
+        # Six seconds also proves neither transport abandons the reply at five.
+        send(101, "naive_run_tests", {"file": "tests/bounded.lua", "timeout_seconds": 6})
+        wait_until(lambda: command(socket_path, "editor_status")["tests_running"],
+                   "test worker did not start", timeout=3)
+        duplicate = raw_command(socket_path, "run_tests", file="tests/test_release.lua")
+        assert duplicate["status"] == "error" and "already running" in duplicate["message"], duplicate
+        send(102, "naive_editor_status", {})
+        send(103, "naive_run_tests", {"file": "tests/test_release.lua"})
+        early = [replies.get(timeout=3), replies.get(timeout=3)]
+        assert {reply["id"] for reply in early} == {102, 103}, early
+        assert not next(reply for reply in early if reply["id"] == 102)["result"].get("isError"), early
+        assert next(reply for reply in early if reply["id"] == 103)["result"].get("isError"), early
+        timed_out = replies.get(timeout=9)
+        assert timed_out["id"] == 101 and timed_out["result"].get("isError"), timed_out
+        assert "Test suite timed out" in timed_out["result"]["content"][0]["text"], timed_out
+        send(104, "naive_run_tests", {"file": "tests/test_release.lua"})
+        recovered = replies.get(timeout=10)
+        assert recovered["id"] == 104 and not recovered["result"].get("isError"), recovered
+        data = json.loads(recovered["result"]["content"][0]["text"])["data"]
+        assert data["passed"] == 1 and data["failed"] == 0, data
+        bridge.stdin.close()
+        assert bridge.wait(timeout=10) == 0
+    finally:
+        if bridge.poll() is None:
+            bridge.terminate()
+            bridge.wait(timeout=5)
+
+    # EOF after one asynchronous request must still deliver that response.
+    request = {"jsonrpc": "2.0", "id": 105, "method": "tools/call", "params": {
+        "name": "naive_run_tests", "arguments": {"file": "tests/test_release.lua"}}}
+    response = subprocess.run([release / "naive_mcp", socket_path], cwd=game,
+        input=json.dumps(request) + "\n", capture_output=True, text=True, timeout=10, check=True)
+    assert not json.loads(response.stdout)["result"].get("isError"), response.stdout
 
 
 def verify_png(path):
@@ -188,7 +252,18 @@ def main():
             command(socket_path, "capture_frame", path="captures/release.png")
             verify_png(game / "captures" / "release.png")
 
+            # A failing live command may have edited the scene and must be undoable.
+            command(socket_path, "runtime_control", action="pause")
+            failed = raw_command(socket_path, "run_lua", code='entity.set_position("smoke_sphere", 9, 1, 0); error("partial edit")')
+            assert failed["status"] == "error", failed
+            assert command(socket_path, "query_entity", entity_id="smoke_sphere", component="transform")["transform"]["position"][0] == 9
+            assert command(socket_path, "undo")["undone"] == "run_lua"
+            assert command(socket_path, "query_entity", entity_id="smoke_sphere", component="transform")["transform"]["position"][0] == 2
+            command(socket_path, "runtime_control", action="resume")
+            check_mcp_test_execution(release, socket_path, game)
+
             # Authoring round trip: preserve script, health, physics and flags.
+            initialized_before_save = command(socket_path, "query_events", filter="release.initialized")["count"]
             command(socket_path, "run_lua", code='entity.set_health("smoke_cube", 73, 100)')
             command(socket_path, "save_scene", path="scenes/roundtrip.yaml")
             roundtrip = subprocess.run([binary, "test", "tests/roundtrip.lua"], cwd=game,
@@ -212,7 +287,7 @@ def main():
                        "spawned scripts did not initialize")
             initialized = command(socket_path, "query_events", filter="release.spawn_initialized")["events"]
             assert sorted(event["data"]["id"] for event in initialized) == ["lua_actor", "mcp_actor"], initialized
-            assert command(socket_path, "query_events", filter="release.initialized")["count"] == 1, "saving another document reloaded the active scene"
+            assert command(socket_path, "query_events", filter="release.initialized")["count"] == initialized_before_save, "saving another document reloaded the active scene"
 
             # A failed script load must roll back the whole MCP entity, including physics.
             try:

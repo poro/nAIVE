@@ -6,6 +6,7 @@ Clippy changes do not introduce unrelated failures.
 
 ```sh
 cargo fmt --all -- --check
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/agent-benchmark -p 'test_*.py' -v
 cargo test --workspace --exclude naive-web --locked
 cargo clippy --workspace --exclude naive-web --all-targets --locked -- -D warnings
 cargo test --workspace --exclude naive-web --no-default-features --locked
@@ -53,6 +54,27 @@ Editor commands are implemented in `naive-client/src/engine/commands.rs`.
 The shared command types and MCP tool schemas live in `naive-core/src/command.rs`.
 Lua APIs are grouped under `scripting/`; GPU swarm setup, flow-field solving,
 CPU reference simulation and shader code live under `swarm/`.
+
+`naive test --timeout-seconds 30` and MCP `run_tests` use the same supervised
+subprocess. The whole suite, including discovery, has a hard deadline (default
+30 seconds, configurable from 1 to 300). The worker is killed and reaped on
+timeout or normal engine shutdown. Its console output is limited to 1 MiB and
+its structured result to 4 MiB. The editor admits one suite at a time and keeps
+processing commands; `editor_status.tests_running` reports admission state.
+The socket and MCP bridge wait for the selected deadline plus five seconds,
+and the bridge continues answering other requests while a suite runs.
+
+Discovery and each test's source/body also have cumulative limits of 50 million
+Lua instructions, 256 MiB of Lua memory and 30 seconds of wall time. Rust frame
+waits check the same deadline. Tests use restricted libraries; filesystem and
+process access, coroutines, debug hooks, runtime code generation and Lua
+finalizers are unavailable. Catching an exhausted budget cannot produce a pass.
+
+Undo snapshots are committed after a command completes or enters code that may
+mutate the scene. A failed Lua command can therefore still be undone. Definite
+no-op failures preserve existing history, including at the 32-step limit, and
+an unsuccessful undo keeps its entry for a retry. Restoration remains a scene
+snapshot: scripts restart and Lua variables/velocities are not restored.
 
 Scene saves retain resolved entity definitions, including script paths, physics,
 gameplay components, camera modes, mesh flags and unknown authored components.

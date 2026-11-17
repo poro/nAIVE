@@ -49,6 +49,16 @@ pub enum Command {
     Test {
         /// Specific test file (or runs all from naive.yaml)
         test_file: Option<String>,
+        /// Hard deadline for the complete suite, including discovery (1-300 seconds).
+        #[arg(long, default_value_t = naive_core::command::DEFAULT_TEST_TIMEOUT_SECONDS, value_parser = parse_test_timeout)]
+        timeout_seconds: u32,
+    },
+    #[command(name = "__test-worker", hide = true)]
+    TestWorker {
+        #[arg(long)]
+        request: std::path::PathBuf,
+        #[arg(long)]
+        result: std::path::PathBuf,
     },
     /// Bundle game for standalone distribution
     Build {
@@ -92,4 +102,9 @@ pub enum Command {
         #[arg(long)]
         mock: Option<String>,
     },
+}
+
+fn parse_test_timeout(value: &str) -> Result<u32, String> {
+    let seconds = value.parse::<u32>().map_err(|error| error.to_string())?;
+    naive_core::command::TestTimeoutSeconds::try_from(seconds).map(u32::from)
 }

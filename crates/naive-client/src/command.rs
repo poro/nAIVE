@@ -257,15 +257,18 @@ async fn handle_connection(
                 continue;
             }
         };
-        if let Err(error) = request.validate() {
-            if send_response(&mut writer, &CommandResponse::error(error))
-                .await
-                .is_err()
-            {
-                break;
+        let response_timeout = match request.validate() {
+            Ok(command) => command.response_timeout(),
+            Err(error) => {
+                if send_response(&mut writer, &CommandResponse::error(error))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                continue;
             }
-            continue;
-        }
+        };
 
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         let pending = PendingCommand {
@@ -279,7 +282,7 @@ async fn handle_connection(
             break;
         }
 
-        match tokio::time::timeout(Duration::from_secs(5), resp_rx).await {
+        match tokio::time::timeout(response_timeout, resp_rx).await {
             Ok(Ok(response)) => {
                 if send_response(&mut writer, &response).await.is_err() {
                     break;

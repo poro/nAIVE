@@ -52,4 +52,38 @@ python3 scripts/agent-benchmark/run.py --naive-bin target/debug --budget 10
 
 It uses your Claude account, opens engine windows while it works, and keeps
 the generated project and a `report.json` in a temporary directory whose path
-it prints.
+it prints. `--timeout` limits the agent (default 2,400 seconds);
+`--test-timeout` limits each of initialization and `naive test` (default 300
+seconds). Cleanup targets the process groups launched by this run, including
+engine processes that remain in those groups. Detached processes that start
+their own sessions need separate cleanup.
+
+The harness exits nonzero on initialization failure, agent launch failure,
+timeout, nonzero agent exit, missing or malformed JSON result, reported agent
+error, or test failure. It also rejects an untouched starter project. It
+hashes scene YAML and logic/test Lua immediately after initialization and
+after the agent, requiring a nonempty added or changed file in each of
+`scenes/`, `logic/`, and `tests/`. Deletions, timestamp changes, empty files,
+symlinks and unrelated files do not count. These content checks establish
+that authoring occurred; they do not judge the gameplay or test quality.
+
+The report separates `agent_success`, `test_success`, and the overall smoke
+run `success`. `task_acceptance.status` remains `unverified`: even a successful
+run with passing agent-authored tests does not independently establish WASD
+movement, scoring, hazards, HUD, game over, or the requested rendering check.
+The historical run above predates these harness checks.
+
+Each stage has complete `init`, `agent`, or `tests` stdout/stderr `.log` files,
+including partial output on timeout. They stream to disk; report tails are
+limited to 4 KiB per stream, and agent JSON parsing is limited to 4 MiB.
+Invalid UTF-8 is replaced in report text while raw logs retain the original
+bytes. Reports and log artifacts are kept after launch errors and test
+errors, too. Complete logs can consume disk space; remove the retained run
+directory when it is no longer needed.
+
+The harness regressions run offline with fake CLI executables, with no engine
+build or model calls:
+
+```sh
+python3 -m unittest discover -s scripts/agent-benchmark -p 'test_*.py' -v
+```

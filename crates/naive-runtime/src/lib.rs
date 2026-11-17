@@ -74,73 +74,45 @@ pub fn run() {
             run_engine(args);
         }
 
-        // naive test [test_file]
-        Some(naive_client::cli::Command::Test { test_file }) => match test_file {
-            Some(file) => {
-                let cwd = std::env::current_dir().expect("Failed to get current directory");
-                let project_root = match naive_client::project_config::find_config(&cwd) {
-                    Some(config_path) => config_path.parent().unwrap().to_path_buf(),
-                    None => std::path::PathBuf::from(&args.project),
-                };
-                let test_path = match naive_client::project_path::resolve(&project_root, file) {
-                    Ok(path) => path,
-                    Err(error) => {
-                        eprintln!("Error: {error}");
+        // The same bounded subprocess protocol is used by CLI and editor tests.
+        Some(naive_client::cli::Command::Test {
+            test_file,
+            timeout_seconds,
+        }) => {
+            let cwd = std::env::current_dir().expect("Failed to get current directory");
+            let root = naive_client::project_config::find_config(&cwd)
+                .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+                .unwrap_or_else(|| std::path::PathBuf::from(&args.project));
+            let outcome = std::env::current_exe()
+                .map_err(|error| error.to_string())
+                .and_then(|executable| {
+                    naive_client::test_execution::run_isolated_tests(
+                        &executable,
+                        &root,
+                        test_file.as_deref(),
+                        naive_core::command::TestTimeoutSeconds::try_from(*timeout_seconds)?,
+                        &std::sync::atomic::AtomicBool::new(false),
+                    )
+                });
+            match outcome {
+                Ok(report) => {
+                    print_test_report(&report, test_file.is_some());
+                    if report.failed > 0 {
                         std::process::exit(1);
                     }
-                };
-                run_single_test(&project_root, &test_path);
-            }
-            None => {
-                let cwd = std::env::current_dir().expect("Failed to get current directory");
-                let config_path = match naive_client::project_config::find_config(&cwd) {
-                    Some(p) => p,
-                    None => {
-                        eprintln!("Error: No naive.yaml found. Specify a test file or run from a project directory.");
-                        std::process::exit(1);
-                    }
-                };
-                let project_root = config_path.parent().unwrap();
-                let config = match naive_client::project_config::load_config(&config_path) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
-                        std::process::exit(1);
-                    }
-                };
-                let test_files = match naive_client::project_config::discover_test_files(
-                    &config,
-                    project_root,
-                ) {
-                    Ok(files) => files,
-                    Err(error) => {
-                        eprintln!("Error: {error}");
-                        std::process::exit(1);
-                    }
-                };
-                println!("Running {} test file(s)...\n", test_files.len());
-                let mut total_passed = 0;
-                let mut total_failed = 0;
-                for test_path in &test_files {
-                    println!("--- {} ---", test_path.display());
-                    let results = naive_client::test_runner::run_test_file(project_root, test_path);
-                    let passed = results.iter().filter(|r| r.passed).count();
-                    let failed = results.len() - passed;
-                    total_passed += passed;
-                    total_failed += failed;
-                    println!();
                 }
-                println!(
-                    "{} passed, {} failed across {} files.",
-                    total_passed,
-                    total_failed,
-                    test_files.len()
-                );
-                if total_failed > 0 {
+                Err(error) => {
+                    eprintln!("Error: {error}");
                     std::process::exit(1);
                 }
             }
-        },
+        }
+        Some(naive_client::cli::Command::TestWorker { request, result }) => {
+            if let Err(error) = naive_client::test_execution::run_worker(request, result) {
+                eprintln!("Test worker failed: {error}");
+                std::process::exit(1);
+            }
+        }
 
         // naive build [--target X]
         Some(naive_client::cli::Command::Build { target }) => {
@@ -420,25 +392,39 @@ fn run_bundled_game(game: &std::path::Path, args: &CliArgs, socket_given: bool) 
     run_engine(cli_args);
 }
 
-fn run_single_test(project_root: &std::path::Path, test_path: &std::path::Path) {
-    if !test_path.exists() {
-        eprintln!("Test file not found: {}", test_path.display());
-        std::process::exit(1);
-    }
-
-    let results = naive_client::test_runner::run_test_file(project_root, test_path);
-
-    let total = results.len();
-    let passed = results.iter().filter(|r| r.passed).count();
-    let failed = total - passed;
-
-    println!();
-    if failed == 0 {
-        println!("All {} tests passed.", total);
-        std::process::exit(0);
+fn print_test_report(report: &naive_client::test_execution::TestSuiteReport, explicit: bool) {
+    print!("{}", report.output);
+    if explicit {
+        println!("Running {} tests...", report.tests.len());
     } else {
-        println!("{} passed, {} failed.", passed, failed);
-        std::process::exit(1);
+        println!("Running {} test file(s)...\n", report.files);
+    }
+    let mut current_file = "";
+    for test in &report.tests {
+        if !explicit && current_file != test.file {
+            println!("--- {} ---", test.file);
+            current_file = &test.file;
+        }
+        let result = &test.result;
+        println!(
+            "  {} {} ({:.1}s game time)",
+            if result.passed { "OK" } else { "FAIL" },
+            result.name,
+            result.game_time
+        );
+        if let Some(error) = &result.error {
+            println!("    Error: {error}");
+        }
+    }
+    if explicit && report.failed == 0 {
+        println!("\nAll {} tests passed.", report.passed);
+    } else if explicit {
+        println!("\n{} passed, {} failed.", report.passed, report.failed);
+    } else {
+        println!(
+            "\n{} passed, {} failed across {} files.",
+            report.passed, report.failed, report.files
+        );
     }
 }
 

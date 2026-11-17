@@ -37,6 +37,8 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
           rustup default "$RUST_TOOLCHAIN"
       - run: cargo fmt --all -- --check
+      - name: Agent benchmark reporting regressions (no model calls)
+        run: python3 -m unittest discover -s scripts/agent-benchmark -p 'test_*.py' -v
       # naive-sim is the GPU-free simulation shared with headless tests, a
       # server and the web build (docs/sim-split-plan.md).
       - name: naive-sim stays free of GPU, window and audio crates

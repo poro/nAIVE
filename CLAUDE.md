@@ -48,6 +48,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/command.rs` | Command socket — newline-delimited JSON over a Unix domain socket (default `/tmp/naive-runtime.sock`); `naive_mcp` bridges it to MCP |
 | `crates/naive-sim/src/project_path.rs` | Project-relative path confinement, symlink validation and glTF external-resource validation |
 | `crates/naive-client/src/test_runner.rs` | Headless test runner for `naive test` CLI command |
+| `crates/naive-client/src/test_execution.rs` | Shared CLI/editor test subprocess protocol, hard deadlines, bounded output and background admission |
 | `crates/naive-client/src/dev_log.rs` | `naive submit-log` — POST dev.log as GitHub Issue |
 | `crates/naive-client/src/demos.rs` | `naive demo` — 19 embedded demos with interactive browser |
 | `crates/naive-client/src/editor_camera.rs` | Free fly camera for `naive edit` editor mode |
@@ -152,7 +153,7 @@ When the editor is running, Claude Code can use these MCP tools via `naive_mcp`:
 | `naive_editor_status` | Get editor mode info, entity count, camera position |
 | `naive_capture_frame` | Render the current frame to a PNG inside the project (default `captures/frame.png`) so the agent can look at the scene. `include_ui: true` also draws the HUD as the last frame drew it (while paused, scripts draw no HUD). |
 | `naive_benchmark` | Run N whole frames back to back offscreen (no vsync, no window throttling) and report fps, ms per frame and GPU time per pass. The simulation advances. Use this, not the on-screen frame rate, to measure performance |
-| `naive_run_tests` | Run the project's Lua tests headlessly inside the running engine (one file or all from `naive.yaml`) and get each result; the scene on screen is untouched |
+| `naive_run_tests` | Run Lua tests in a supervised subprocess (one file or all from `naive.yaml`); `timeout_seconds` is 1–300, default 30. One suite at a time; the editor stays responsive and `editor_status.tests_running` reports activity |
 | `naive_screenshot_diff` | Compare two PNG captures in the project: changed pixels, max and mean difference, and a diff image (changes in red) |
 | `naive_undo` | Undo the last `spawn_entity`, `destroy_entity`, `modify_entity` or `run_lua` by restoring the scene snapshot taken before it (32 steps; scripts restart) |
 | `naive_gpu_timings` | GPU ms per frame over the last 60 frames, per pass. On screen with vsync the GPU clocks down to just fit the refresh, so these read high |
