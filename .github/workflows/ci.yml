@@ -145,6 +145,11 @@ jobs:
       - name: Check
         run: cargo check --workspace --exclude naive-web --locked
 
+      - name: Native/headless snapshot parity (software Vulkan)
+        env:
+          WGPU_BACKEND: vulkan
+        run: cargo test --locked -p naive-client --lib --no-default-features scene_snapshot::parity_tests::native_gpu_caches_match_headless_snapshot -- --ignored --exact
+
       - name: Standalone release smoke test (software Vulkan)
         env:
           WGPU_BACKEND: vulkan
