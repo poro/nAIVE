@@ -34,7 +34,7 @@ entities:
         position: [0, -1, 0]
         scale: [60, 1, 60]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/dark_floor.yaml
 
   # --- Spawner script (spawns 300+ entities at runtime) ---

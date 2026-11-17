@@ -270,7 +270,9 @@ impl MeshCache {
         gpu_mesh.physics_vertices = Some(cpu.vertices.iter().map(|v| v.position).collect());
         gpu_mesh.physics_indices = Some(
             cpu.indices
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|v| [v[0], v[1], v[2]])
                 .collect(),
         );
@@ -420,7 +422,9 @@ fn build_procedural_gpu_mesh(
         physics_vertices: Some(vertices.iter().map(|v| v.position).collect()),
         physics_indices: Some(
             indices
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|v| [v[0], v[1], v[2]])
                 .collect(),
         ),

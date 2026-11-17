@@ -54,7 +54,7 @@ entities:
         position: [0, -0.5, 0]
         scale: [30, 1, 30]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_floor.yaml
 
   # ================================================================
@@ -85,7 +85,7 @@ entities:
         position: [8.0, 3.5, 0.0]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 2: 22.5 deg -> (7.39, 3.06)
@@ -96,7 +96,7 @@ entities:
         position: [7.39, 3.5, 3.06]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 3: 45 deg -> (5.66, 5.66)
@@ -107,7 +107,7 @@ entities:
         position: [5.66, 3.5, 5.66]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 4: 67.5 deg -> (3.06, 7.39)
@@ -118,7 +118,7 @@ entities:
         position: [3.06, 3.5, 7.39]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 5: 90 deg -> (0, 8)
@@ -129,7 +129,7 @@ entities:
         position: [0.0, 3.5, 8.0]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 6: 112.5 deg -> (-3.06, 7.39)
@@ -140,7 +140,7 @@ entities:
         position: [-3.06, 3.5, 7.39]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 7: 135 deg -> (-5.66, 5.66)
@@ -151,7 +151,7 @@ entities:
         position: [-5.66, 3.5, 5.66]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 8: 157.5 deg -> (-7.39, 3.06)
@@ -162,7 +162,7 @@ entities:
         position: [-7.39, 3.5, 3.06]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 9: 180 deg -> (-8, 0)
@@ -173,7 +173,7 @@ entities:
         position: [-8.0, 3.5, 0.0]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 10: 202.5 deg -> (-7.39, -3.06)
@@ -184,7 +184,7 @@ entities:
         position: [-7.39, 3.5, -3.06]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 11: 225 deg -> (-5.66, -5.66)
@@ -195,7 +195,7 @@ entities:
         position: [-5.66, 3.5, -5.66]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 12: 247.5 deg -> (-3.06, -7.39)
@@ -206,7 +206,7 @@ entities:
         position: [-3.06, 3.5, -7.39]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 13: 270 deg -> (0, -8)
@@ -217,7 +217,7 @@ entities:
         position: [0.0, 3.5, -8.0]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 14: 292.5 deg -> (3.06, -7.39)
@@ -228,7 +228,7 @@ entities:
         position: [3.06, 3.5, -7.39]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 15: 315 deg -> (5.66, -5.66)
@@ -239,7 +239,7 @@ entities:
         position: [5.66, 3.5, -5.66]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # Pillar 16: 337.5 deg -> (7.39, -3.06)
@@ -250,7 +250,7 @@ entities:
         position: [7.39, 3.5, -3.06]
         scale: [0.5, 6, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_pillar.yaml
 
   # ================================================================
@@ -572,7 +572,7 @@ entities:
         position: [2.7, 1.5, 0.0]
         scale: [0.4, 0.4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ember.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -584,7 +584,7 @@ entities:
         position: [1.75, 2.2, 1.75]
         scale: [0.45, 0.45, 0.45]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ember.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -596,7 +596,7 @@ entities:
         position: [0.0, 2.7, 2.31]
         scale: [0.5, 0.5, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ember.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -608,7 +608,7 @@ entities:
         position: [-1.43, 3.0, 1.43]
         scale: [0.55, 0.55, 0.55]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ember.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -620,7 +620,7 @@ entities:
         position: [-1.93, 3.5, 0.0]
         scale: [0.55, 0.55, 0.55]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ember.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -632,7 +632,7 @@ entities:
         position: [-1.11, 3.8, -1.11]
         scale: [0.6, 0.6, 0.6]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ember.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -644,7 +644,7 @@ entities:
         position: [0.0, 4.2, -1.54]
         scale: [0.65, 0.65, 0.65]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ember.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -656,7 +656,7 @@ entities:
         position: [0.95, 4.8, -0.95]
         scale: [0.7, 0.7, 0.7]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ember.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -673,7 +673,7 @@ entities:
         position: [-2.7, 5.0, 0.0]
         scale: [0.3, 0.3, 0.3]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_void.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -685,7 +685,7 @@ entities:
         position: [-1.75, 4.5, -1.75]
         scale: [0.35, 0.35, 0.35]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_void.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -697,7 +697,7 @@ entities:
         position: [0.0, 3.9, -2.31]
         scale: [0.35, 0.35, 0.35]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_void.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -709,7 +709,7 @@ entities:
         position: [1.43, 3.6, -1.43]
         scale: [0.4, 0.4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_void.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -721,7 +721,7 @@ entities:
         position: [1.93, 3.2, 0.0]
         scale: [0.45, 0.45, 0.45]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_void.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -733,7 +733,7 @@ entities:
         position: [1.11, 2.8, 1.11]
         scale: [0.5, 0.5, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_void.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -745,7 +745,7 @@ entities:
         position: [0.0, 2.4, 1.54]
         scale: [0.55, 0.55, 0.55]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_void.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -757,7 +757,7 @@ entities:
         position: [-0.95, 1.7, 0.95]
         scale: [0.6, 0.6, 0.6]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_void.yaml
       script:
         source: logic/titan_emission_wave.lua
@@ -1240,7 +1240,7 @@ entities:
         position: [5.08, 2.5, 2.1]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
 
   # Sentinel 2: 67.5 deg
@@ -1251,7 +1251,7 @@ entities:
         position: [2.1, 2.5, 5.08]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
 
   # Sentinel 3: 112.5 deg
@@ -1262,7 +1262,7 @@ entities:
         position: [-2.1, 2.5, 5.08]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
 
   # Sentinel 4: 157.5 deg
@@ -1273,7 +1273,7 @@ entities:
         position: [-5.08, 2.5, 2.1]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
 
   # Sentinel 5: 202.5 deg
@@ -1284,7 +1284,7 @@ entities:
         position: [-5.08, 2.5, -2.1]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
 
   # Sentinel 6: 247.5 deg
@@ -1295,7 +1295,7 @@ entities:
         position: [-2.1, 2.5, -5.08]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
 
   # Sentinel 7: 292.5 deg
@@ -1306,7 +1306,7 @@ entities:
         position: [2.1, 2.5, -5.08]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
 
   # Sentinel 8: 337.5 deg
@@ -1317,7 +1317,7 @@ entities:
         position: [5.08, 2.5, -2.1]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
 
   # ================================================================
@@ -1331,7 +1331,7 @@ entities:
         position: [0.0, 0.0, 3.5]
         scale: [0.8, 0.4, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/dark_mirror.yaml
 
   - id: pedestal_sapphire
@@ -1341,7 +1341,7 @@ entities:
         position: [3.5, 0.0, 0.0]
         scale: [0.8, 0.4, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/dark_mirror.yaml
 
   - id: pedestal_emerald
@@ -1351,7 +1351,7 @@ entities:
         position: [0.0, 0.0, -3.5]
         scale: [0.8, 0.4, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/dark_mirror.yaml
 
   - id: pedestal_ice
@@ -1361,7 +1361,7 @@ entities:
         position: [-3.5, 0.0, 0.0]
         scale: [0.8, 0.4, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/dark_mirror.yaml
 
   # ================================================================

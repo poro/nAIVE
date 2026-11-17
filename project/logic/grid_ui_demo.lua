@@ -69,7 +69,7 @@ function init()
         for x = 1, GRID_SIZE do
             local id = tile_id(x, y)
             local wx, wz = grid_to_world(x, y)
-            entity.spawn(id, "assets/meshes/cube.gltf", "assets/materials/obsidian.yaml",
+            entity.spawn(id, "procedural:cube", "assets/materials/obsidian.yaml",
                 wx, 0, wz, TILE_SIZE - TILE_GAP, 0.15, TILE_SIZE - TILE_GAP)
         end
     end

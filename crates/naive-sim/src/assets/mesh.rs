@@ -43,7 +43,9 @@ impl CpuMesh {
                 })
                 .collect(),
             self.indices
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|v| [v[0], v[1], v[2]])
                 .collect(),
         )
@@ -377,7 +379,12 @@ fn extract_skin_data(
                     // The runtime approximates cubic channels with linear interpolation;
                     // retain the value slots, rather than treating tangents as keyframes.
                     ChannelValues::Vec3(if cubic {
-                        values.chunks_exact(3).map(|value| value[1]).collect()
+                        values
+                            .as_chunks::<3>()
+                            .0
+                            .iter()
+                            .map(|value| value[1])
+                            .collect()
                     } else {
                         values
                     })
@@ -392,7 +399,12 @@ fn extract_skin_data(
                         ));
                     }
                     let values: Vec<_> = if cubic {
-                        values.chunks_exact(3).map(|value| value[1]).collect()
+                        values
+                            .as_chunks::<3>()
+                            .0
+                            .iter()
+                            .map(|value| value[1])
+                            .collect()
                     } else {
                         values
                     };

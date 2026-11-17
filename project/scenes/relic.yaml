@@ -32,7 +32,7 @@ entities:
         position: [0, -0.5, 0]
         scale: [16, 1, 16]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
@@ -44,7 +44,7 @@ entities:
         position: [0, 5, 0]
         scale: [16, 0.5, 16]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
 
   - id: wall_north
@@ -53,7 +53,7 @@ entities:
         position: [0, 2, -8]
         scale: [16, 5, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
@@ -65,7 +65,7 @@ entities:
         position: [0, 2, 8]
         scale: [16, 5, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
@@ -77,7 +77,7 @@ entities:
         position: [8, 2, 0]
         scale: [1, 5, 16]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
@@ -89,7 +89,7 @@ entities:
         position: [-8, 2, 0]
         scale: [1, 5, 16]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
@@ -103,7 +103,7 @@ entities:
         position: [0, 1.5, -4]
         scale: [2, 3, 0.3]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/wood.yaml
       collider:
         shape: box
@@ -168,7 +168,7 @@ entities:
         position: [0, 0.75, -6]
         scale: [0.8, 1.5, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/goblin.yaml
       script:
         source: logic/guardian.lua
@@ -181,7 +181,7 @@ entities:
         position: [0, 1.2, -7]
         scale: [0.4, 0.6, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/gold.yaml
       script:
         source: logic/relic_pickup.lua
@@ -193,7 +193,7 @@ entities:
         position: [0, 0.4, -7]
         scale: [1, 0.8, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
@@ -206,7 +206,7 @@ entities:
         position: [4, 2, -2]
         scale: [1, 4, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
@@ -218,7 +218,7 @@ entities:
         position: [-4, 2, -2]
         scale: [1, 4, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
@@ -230,7 +230,7 @@ entities:
         position: [4, 2, 3]
         scale: [1, 4, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
@@ -242,7 +242,7 @@ entities:
         position: [-4, 2, 3]
         scale: [1, 4, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/stone.yaml
       collider:
         shape: box
