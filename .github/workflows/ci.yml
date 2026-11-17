@@ -122,10 +122,16 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --exclude naive-web --all-targets --locked -- -D warnings
 
-  check-linux:
-    name: Check (Linux)
+  # The two release smoke modes build different binaries, so they run as
+  # parallel jobs. "Check (Linux)" (the required check) passes only when both do.
+  linux:
+    name: Linux (${{ matrix.part }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [player, slang]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -150,11 +156,15 @@ jobs:
             | tar xz -C vendor
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.part }}
 
       - name: Check
+        if: matrix.part == 'player'
         run: cargo check --workspace --exclude naive-web --locked
 
       - name: Native/headless parity (software Vulkan)
+        if: matrix.part == 'player'
         env:
           WGPU_BACKEND: vulkan
         run: |
@@ -165,15 +175,23 @@ jobs:
         env:
           WGPU_BACKEND: vulkan
           RUST_BACKTRACE: "1"
-        run: |
-          xvfb-run -a python3 scripts/release-smoke.py
-          xvfb-run -a python3 scripts/release-smoke.py --slang
+        run: xvfb-run -a python3 scripts/release-smoke.py ${{ matrix.part == 'slang' && '--slang' || '' }}
 
-      # Uses the Slang-enabled release binary the second smoke mode built.
+      # Uses the Slang-enabled release binary this job's smoke test built.
       - name: Demo scenes build, render and capture repeatably (software Vulkan)
+        if: matrix.part == 'slang'
         env:
           WGPU_BACKEND: vulkan
         run: xvfb-run -a python3 scripts/scene-check.py
+
+  check-linux:
+    name: Check (Linux)
+    needs: linux
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Both Linux parts passed
+        run: test "${{ needs.linux.result }}" = success
 
   check-web:
     name: Check (WebAssembly)
