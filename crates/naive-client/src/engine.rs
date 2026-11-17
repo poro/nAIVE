@@ -850,7 +850,7 @@ impl Engine {
         }
 
         let mut vsync = None;
-        match crate::pipeline::load_pipeline(&pipeline_path) {
+        match crate::pipeline::load_project_pipeline(&pipeline_path, &self.project_root) {
             Ok(pipeline_file) => {
                 vsync = Some(pipeline_file.settings.vsync);
                 let tex_layout = self
@@ -1398,6 +1398,21 @@ impl Engine {
             );
         }
 
+        // Runtime meshes first: a script that calls mesh.create and spawns
+        // the mesh in the same frame must find it. (Spawning first used to
+        // fall back to a cube, and after strict assets, to nothing.)
+        let mesh_creates: Vec<_> =
+            std::mem::take(&mut self.entity_commands.borrow_mut().mesh_creates);
+        for cmd in mesh_creates {
+            match cmd.cpu_mesh() {
+                Ok(mesh) => {
+                    self.mesh_cache
+                        .insert_runtime_mesh(&gpu.device, &cmd.name, &mesh);
+                }
+                Err(error) => tracing::error!("mesh.create '{}': {error}", cmd.name),
+            }
+        }
+
         let spawns = std::mem::take(&mut self.entity_commands.borrow_mut().spawns);
         for command in &spawns {
             if let Some(scene_world) = &self.scene_world {
@@ -1606,20 +1621,6 @@ impl Engine {
                     }
                 }
             }
-        }
-
-        // Process runtime mesh creates
-        let mesh_creates: Vec<_> =
-            std::mem::take(&mut self.entity_commands.borrow_mut().mesh_creates);
-        for cmd in mesh_creates {
-            self.mesh_cache.insert_runtime_mesh(
-                &gpu.device,
-                &cmd.name,
-                &cmd.positions,
-                &cmd.normals,
-                &cmd.uvs,
-                &cmd.indices,
-            );
         }
 
         if !spawns.is_empty() || !projectiles.is_empty() || !dynamics.is_empty() {

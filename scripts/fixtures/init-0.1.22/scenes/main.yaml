@@ -1,0 +1,49 @@
+name: "init-0.1.22 — Main Scene"
+settings:
+  ambient_light: [0.3, 0.3, 0.35]
+  gravity: [0, -9.81, 0]
+
+entities:
+  - id: main_camera
+    components:
+      transform:
+        position: [0, 3, 8]
+        rotation: [-15, 0, 0]
+      camera:
+        fov: 75
+        near: 0.1
+        far: 500
+        role: main
+
+  - id: sun
+    components:
+      transform:
+        position: [10, 20, -5]
+      point_light:
+        color: [1.0, 0.95, 0.9]
+        intensity: 15.0
+        range: 100.0
+
+  - id: floor
+    components:
+      transform:
+        position: [0, 0, 0]
+        scale: [20, 0.1, 20]
+      mesh_renderer:
+        mesh: procedural:cube
+        material: assets/materials/default.yaml
+      rigid_body:
+        body_type: fixed
+      collider:
+        shape: cuboid
+        half_extents: [10, 0.05, 10]
+
+  - id: welcome_cube
+    components:
+      transform:
+        position: [0, 1, 0]
+      mesh_renderer:
+        mesh: procedural:cube
+        material: assets/materials/default.yaml
+      script:
+        source: logic/main.lua

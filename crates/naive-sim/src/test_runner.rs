@@ -378,12 +378,12 @@ impl TestRunner {
             Some(&mut self.script_runtime),
             &self.entity_commands,
         );
-        let (spawns, projectiles, dynamics, scales, visibility, pools, scene_load, gpu_ops) = {
+        let (meshes, spawns, projectiles, dynamics, scales, visibility, pools, scene_load, gpu_ops) = {
             let mut queue = self.entity_commands.borrow_mut();
-            let gpu_ops = queue.texture_swaps.len() + queue.mesh_creates.len();
+            let gpu_ops = queue.texture_swaps.len();
             queue.texture_swaps.clear();
-            queue.mesh_creates.clear();
             (
+                std::mem::take(&mut queue.mesh_creates),
                 std::mem::take(&mut queue.spawns),
                 std::mem::take(&mut queue.projectile_spawns),
                 std::mem::take(&mut queue.dynamic_spawns),
@@ -395,7 +395,22 @@ impl TestRunner {
             )
         };
         if gpu_ops > 0 {
-            self.errors.borrow_mut().push("Headless tests cannot execute GPU mesh/texture commands; use the native release smoke test".into());
+            self.errors.borrow_mut().push("Headless tests cannot execute GPU texture commands; use the native release smoke test".into());
+        }
+        // Runtime meshes first, as the engine does, so this frame's spawns
+        // can use them.
+        for command in meshes {
+            match command.cpu_mesh() {
+                Ok(mesh) => {
+                    self.asset_catalog
+                        .borrow_mut()
+                        .insert_runtime_mesh(&command.name, mesh);
+                }
+                Err(error) => self
+                    .errors
+                    .borrow_mut()
+                    .push(format!("mesh.create '{}': {error}", command.name)),
+            }
         }
 
         for command in spawns {
@@ -563,8 +578,8 @@ impl TestRunner {
         let mut errors = std::mem::take(&mut *self.errors.borrow_mut());
         errors.extend(self.script_runtime.take_errors());
         let pending = self.entity_commands.borrow();
-        if !pending.mesh_creates.is_empty() || !pending.texture_swaps.is_empty() {
-            errors.push("Headless tests cannot execute GPU mesh/texture commands; use the native release smoke test".into());
+        if !pending.texture_swaps.is_empty() {
+            errors.push("Headless tests cannot execute GPU texture commands; use the native release smoke test".into());
         }
         errors
     }
@@ -1574,15 +1589,11 @@ entities:
 
     #[test]
     fn unsupported_gpu_commands_fail_even_without_advancing_a_frame() {
-        for script in [
-            "function init() entity.set_texture('actor', 'albedo', 'image.png') end",
-            "function init() mesh.create('triangle', {{0,0,0},{1,0,0},{0,1,0}}, {0,1,2}, {}) end",
-        ] {
-            let project = Project::new(script);
-            let result = project.run("scene.load('scene.yaml')");
-            assert!(!result.passed);
-            assert!(result.error.unwrap().contains("GPU mesh/texture"));
-        }
+        let project =
+            Project::new("function init() entity.set_texture('actor', 'albedo', 'image.png') end");
+        let result = project.run("scene.load('scene.yaml')");
+        assert!(!result.passed);
+        assert!(result.error.unwrap().contains("GPU texture"));
     }
 
     #[test]
@@ -1662,7 +1673,7 @@ end
         project.write("next.yaml", "name: Next\nentities: []\n");
         let result = project.run("scene.load('scene.yaml')\nscene.load('next.yaml')");
         assert!(!result.passed);
-        assert!(result.error.unwrap().contains("GPU mesh/texture"));
+        assert!(result.error.unwrap().contains("GPU texture"));
     }
 
     #[test]

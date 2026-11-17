@@ -738,7 +738,7 @@ cull_mode: back
     // pipelines/render.yaml — default deferred pipeline
     write_file(
         &root.join("pipelines/render.yaml"),
-        r#"version: 1
+        r#"version: 2
 settings:
   vsync: true
   hdr: true
