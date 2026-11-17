@@ -14,6 +14,7 @@ pub use executor::{
     execute_pipeline, execute_pipeline_to_view, rebuild_bind_groups, sync_environment,
 };
 pub use resource::*;
+pub use shader_source::{load_project_pipeline, migrate_pipeline, CURRENT_PIPELINE_VERSION};
 
 // ---------------------------------------------------------------------------
 // Runtime render debug state (toggled interactively via number keys)

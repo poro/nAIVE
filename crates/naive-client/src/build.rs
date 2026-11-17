@@ -259,8 +259,19 @@ fn prepare_shaders(config: &NaiveConfig, project_root: &Path) -> Result<ShaderPa
         if !required_pipeline && !has_passes {
             continue;
         }
-        let pipeline: crate::pipeline::PipelineFile = serde_norway::from_str(&contents)
+        let mut pipeline: crate::pipeline::PipelineFile = serde_norway::from_str(&contents)
             .map_err(|e| format!("Invalid packaged pipeline {}: {e}", path.display()))?;
+        // The bundled player reads the file verbatim and migrates it the same
+        // way, so package the shaders the migrated pipeline uses.
+        let notes = crate::pipeline::migrate_pipeline(&mut pipeline, project_root)
+            .map_err(|e| format!("Packaged pipeline {}: {e}", path.display()))?;
+        if !notes.is_empty() {
+            println!(
+                "  {} is a version 1 pipeline; packaging its 0.1.22 shaders ({})",
+                path.display(),
+                notes.join("; ")
+            );
+        }
         let has_splats = pipeline.resources.iter().any(|r| r.name == "splat_color")
             && pipeline.resources.iter().any(|r| r.name == "splat_depth");
         for pass in pipeline.passes {
@@ -627,7 +638,7 @@ mod tests {
         fs::create_dir_all(project.join("effects")).unwrap();
         fs::write(
             project.join("effects/render.yaml"),
-            format!("version: 1\npasses:\n  - name: fxaa_custom\n    type: fullscreen\n    shader: {shader}\n"),
+            format!("version: 2\npasses:\n  - name: fxaa_custom\n    type: fullscreen\n    shader: {shader}\n"),
         ).unwrap();
         let yaml = "name: shader-test\nversion: '1'\ndefault_pipeline: effects/render.yaml\n";
         fs::write(project.join("naive.yaml"), yaml).unwrap();
@@ -688,12 +699,25 @@ mod tests {
         for directory in ["pipelines", "assets/effects"] {
             fs::create_dir_all(project.join(directory)).unwrap();
             let pipeline = project.join(directory).join("unused.yml");
-            fs::write(&pipeline, "version: 1\npasses:\n - {name: bloom_custom, type: fullscreen, shader: effects/missing.slang}\n").unwrap();
+            fs::write(&pipeline, "version: 2\npasses:\n - {name: bloom_custom, type: fullscreen, shader: effects/missing.slang}\n").unwrap();
             let error = prepare_shaders(&config, &project).err().unwrap();
             assert!(error.contains("bloom_custom"), "{error}");
             fs::remove_file(pipeline).unwrap();
         }
         fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn a_project_from_the_0_1_22_init_packages_with_engine_shaders() {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/fixtures/init-0.1.22");
+        let config: NaiveConfig =
+            serde_norway::from_str(&fs::read_to_string(fixture.join("naive.yaml")).unwrap())
+                .unwrap();
+        let package = prepare_shaders(&config, &fixture).unwrap();
+        // Every pass maps to an engine shader, so nothing needs compiling.
+        assert!(package.artifacts.is_empty());
+        assert_eq!(package.pipelines.len(), 1);
     }
 
     #[test]
@@ -783,7 +807,7 @@ mod tests {
         for pipeline in [
             format!("{first}{second}"),
             format!(
-                "version: 1\npasses:\n{second}{}",
+                "version: 2\npasses:\n{second}{}",
                 first.split("passes:\n").nth(1).unwrap()
             ),
         ] {

@@ -1,0 +1,17 @@
+name: "init-0.1.22"
+version: "0.1.0"
+engine: "naive-runtime"
+default_scene: "scenes/main.yaml"
+default_pipeline: "pipelines/render.yaml"
+
+test:
+  directory: "tests"
+
+build:
+  targets:
+    - "macos"
+    - "linux"
+
+dev_log:
+  enabled: true
+  submit_on_complete: true

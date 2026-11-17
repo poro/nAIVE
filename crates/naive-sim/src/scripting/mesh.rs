@@ -95,14 +95,18 @@ impl ScriptRuntime {
                         })
                         .collect();
 
-                    let mut cmd = cmd.borrow_mut();
-                    cmd.mesh_creates.push(crate::world::MeshCreateCommand {
+                    let command = crate::world::MeshCreateCommand {
                         name,
                         positions,
                         normals,
                         uvs,
                         indices,
-                    });
+                    };
+                    // Reject bad geometry here, where the script can see why.
+                    command.cpu_mesh().map_err(|error| {
+                        mlua::Error::runtime(format!("mesh.create '{}': {error}", command.name))
+                    })?;
+                    cmd.borrow_mut().mesh_creates.push(command);
                     Ok(())
                 },
             )

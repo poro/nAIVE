@@ -1,0 +1,12 @@
+events:
+  player.interacted:
+    description: "Player pressed interact"
+    fields: []
+  item.collected:
+    description: "Player collected an item"
+    fields:
+      - item_id
+      - item_type
+  game.level_complete:
+    description: "The level was completed"
+    fields: []
