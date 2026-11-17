@@ -1,0 +1,1287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nAIVE Engine PRD v5.0 — nAIVE Engine</title>
+<meta name="description" content="nAIVE: AI-Native Interactive Visual Engine. Rust + WebGPU game engine built for the AI era.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <a href="/" class="logo"><span>n</span>AIVE</a>
+    <button class="menu-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')">☰</button>
+    <div class="nav-links">
+      <a href="/">Home</a>
+          <a href="/whitepaper.html">Whitepaper</a>
+          <a href="/#install">Install</a>
+          <a href="/architecture.html">Architecture</a>
+          <a href="/demos.html">Demos</a>
+      <a href="https://github.com/poro/nAIVE" target="_blank" class="gh-btn">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+
+<div class="doc-page">
+  <div class="container-narrow">
+<div style="background:#2a2410;border:1px solid #6b5a1e;color:#f0d78c;padding:12px 16px;border-radius:8px;margin:0 auto 24px;max-width:900px;font-size:0.9rem">Archived plan from February 2026, kept for reference. Some of it shipped differently and some has not been built; see the <a href="https://github.com/poro/nAIVE" style="color:#f0d78c">repository</a> for what exists today.</div>
+    <div class="doc-header">
+      <h1>nAIVE Engine PRD v5.0</h1>
+      <div class="doc-meta"><span>🔧 Product Requirements</span><span>License: MIT</span><span>Version 5.0</span><span>Author: Mark Ollila</span></div>
+    </div>
+    
+    <div class="toc">
+      <h3>Table of Contents</h3>
+      <ul><li><a href="#1-executive-summary">1. Executive Summary</a></li>
+<li><a href="#2-vision">2. Vision</a></li>
+<li><a href="#3-core-technical-differentiators">3. Core Technical Differentiators</a></li>
+<li><a href="#4-architecture">4. Architecture</a></li>
+<li><a href="#5-what-already-exists-v1-0-foundation">5. What Already Exists (v1.0 Foundation)</a></li>
+<li><a href="#6-intelligence-layer-engine-side">6. Intelligence Layer (Engine-Side)</a></li>
+<li><a href="#7-skeletal-animation-system-new-in-v5-0">7. Skeletal Animation System (NEW in v5.0)</a></li>
+<li><a href="#8-gpu-compute-entity-simulation-new-in-v5-0">8. GPU Compute Entity Simulation (NEW in v5.0)</a></li>
+<li><a href="#9-character-controller-new-in-v5-0">9. Character Controller (NEW in v5.0)</a></li>
+<li><a href="#10-weapon-system-new-in-v5-0">10. Weapon System (NEW in v5.0)</a></li>
+<li><a href="#11-vehicle-system-new-in-v5-0">11. Vehicle System (NEW in v5.0)</a></li>
+<li><a href="#12-inventory-and-loadout-new-in-v5-0">12. Inventory and Loadout (NEW in v5.0)</a></li>
+<li><a href="#13-large-world-support-new-in-v5-0">13. Large World Support (NEW in v5.0)</a></li>
+<li><a href="#14-proof-game-havoc">14. Proof Game: HAVOC</a></li>
+<li><a href="#15-platform-targets">15. Platform Targets</a></li>
+<li><a href="#16-licensing">16. Licensing</a></li>
+<li><a href="#17-new-ecs-components-v5-0">17. New ECS Components (v5.0)</a></li>
+<li><a href="#18-implementation-roadmap">18. Implementation Roadmap</a></li>
+<li><a href="#19-technical-specifications">19. Technical Specifications</a></li>
+<li><a href="#20-risk-assessment">20. Risk Assessment</a></li>
+<li><a href="#21-comparison-to-existing-engines">21. Comparison to Existing Engines</a></li>
+<li><a href="#appendix-a-existing-codebase-map">Appendix A: Existing Codebase Map</a></li>
+<li><a href="#appendix-b-havoc-weapon-stats">Appendix B: HAVOC Weapon Stats</a></li>
+<li><a href="#appendix-c-glossary">Appendix C: Glossary</a></li></ul>
+    </div>
+    <div class="doc-content">
+      
+
+<p><strong>Version:</strong> 5.0</p>
+<p><strong>Date:</strong> February 14, 2026</p>
+<p><strong>Author:</strong> Mark Ollila</p>
+<p><strong>License:</strong> MIT</p>
+<p><strong>Status:</strong> Draft</p>
+<p><strong>Classification:</strong> Public</p>
+<p><strong>Companion Document:</strong> nAIVE Platform PRD v5.0 (BSL 1.1)</p>
+
+<hr>
+
+<h2 id="1-executive-summary">1. Executive Summary</h2>
+
+<p>nAIVE is an open-source, AI-native game engine written in Rust. Worlds are created by AI, rendering happens on the client's GPU, and everything — scenes, materials, shaders, game logic — is a human-readable file that AI can generate, inspect, and modify.</p>
+
+<p>v4.0 unified three layers (core engine, intelligence, networking) into a single platform specification. This document separates the <strong>engine</strong> from the <strong>platform</strong>, because they serve different audiences and carry different licenses:</p>
+
+<ul><li><strong>This document (Engine PRD)</strong> specifies everything a game developer needs to build and ship games with nAIVE. It covers rendering, physics, audio, scripting, GPU compute simulation, skeletal animation, character controllers, weapons, vehicles, and inventory. All MIT licensed. No restrictions.</li>
+</ul>
+<ul><li><strong>The companion Platform PRD</strong> specifies the server infrastructure: multiplayer hosting, world registry, matchmaking, AI Director, Telegram bridge, and the four-word addressing system. BSL 1.1 licensed.</li>
+</ul>
+<p>You do not need the platform to ship a game. <code>naive-core</code> + <code>naive-client</code> + <code>naive-runtime</code> produce a complete single-player game binary. The platform adds multiplayer, hosting, and network services on top.</p>
+
+<h3 id="what-v5-0-adds-to-the-engine">What v5.0 Adds to the Engine</h3>
+
+<p>v4.0's engine was a renderer with scripting and physics. v5.0 adds the systems needed to build action games — shooters, brawlers, horde survival, racing — not just Snake Sweeper:</p>
+
+<ul><li><strong>Gameplay primitives (DONE v0.1.2)</strong> — health/damage, hitscan, projectiles, collision damage, third-person camera. Tier 1 complete.</li>
+<li><strong>Production foundations</strong> — dynamic GPU instance buffer (no more 256-entity ceiling), entity pooling, particle system, runtime entity queries, event subscription. Informed by HAVOC dev log feedback.</li>
+<li><strong>GPU compute entity simulation</strong> — 50,000+ physics-driven entities on the GPU. nAIVE's answer to Unreal's Niagara, but for gameplay entities, not just particles.</li>
+<li><strong>Vertex Animation Textures (VAT)</strong> — baked skeletal animation sampled on the GPU for massive instanced rendering</li>
+<li><strong>Skeletal animation system</strong> — glTF skinned meshes, animation state machines, blend trees</li>
+<li><strong>Character controller</strong> — capsule-based movement with gravity, jumping, sprinting, crouching, third-person and first-person camera</li>
+<li><strong>Weapon system</strong> — hitscan, projectile, and continuous weapons with YAML-defined stats</li>
+<li><strong>Vehicle system</strong> — physics-driven vehicles with mounted weapons, mount/dismount</li>
+<li><strong>Inventory and loadout</strong> — weapon slots, pickups, ammo, health/shield</li>
+<li><strong>Client-side prediction engine</strong> — local player movement feels instant; reconciles with server when connected</li>
+<li><strong>Entity interpolation</strong> — other entities rendered smoothly between network updates when connected</li>
+</ul>
+<h3 id="proof-of-concept-havoc">Proof-of-Concept: HAVOC</h3>
+
+<p>HAVOC is a 3D Vampire Survivors-style horde survival game with vehicle combat. It can run as a single-player game using only MIT-licensed engine crates, or as 1-4 player co-op when combined with the platform.</p>
+
+<p>A HAVOC prototype was already built in a single session during Tier 1 development. It validated the full gameplay loop (driving, killing, leveling, upgrading) but exposed hard engine limits: 256-entity ceiling, deferred destroy crashes, no VFX. The Tier 2 production foundations directly address every wall the prototype hit.</p>
+
+<ul><li><strong>Health, hitscan, projectiles, collision damage</strong> (Tier 1 — DONE)</li>
+<li><strong>Dynamic entity buffer + pooling + particles</strong> (Tier 2 — removes the hard walls)</li>
+<li><strong>50,000+ GPU-simulated enemies</strong> on screen simultaneously (Tier 3)</li>
+<li><strong>GPU neighbor-grid collisions</strong> between horde entities (Tier 3)</li>
+<li><strong>Vertex Animation Textures</strong> for GPU-instanced horde animation (Tier 4)</li>
+<li><strong>Third-person character controller</strong> with skeletal animation (Tier 4)</li>
+<li><strong>Driveable vehicles</strong> with collision damage (Tier 5)</li>
+</ul>
+<p>If nAIVE can render 50,000 physics-driven goblins while you drive a truck through them — it can handle anything.</p>
+
+<hr>
+
+<h2 id="2-vision">2. Vision</h2>
+
+<h3 id="2-1-what-makes-this-different">2.1 What Makes This Different</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Traditional Engine</th><th>nAIVE v5.0</th></tr></thead><tbody><tr><td>Games are compiled binaries</td><td>Worlds are YAML + Lua, generated by AI</td></tr>
+<tr><td>Authoring requires programming</td><td>Describe what you want in natural language</td></tr>
+<tr><td>Shaders are HLSL/GLSL platform-locked</td><td>SLANG shaders cross-compile to any GPU backend</td></tr>
+<tr><td>3D assets from art pipelines only</td><td>Gaussian splats generated from text prompts (Gen-3DGS)</td></tr>
+<tr><td>Render pipeline hardcoded in C++</td><td>YAML-defined render pipeline DAG — add passes without recompiling</td></tr>
+<tr><td>Fixed visual style per game</td><td>Neural render passes swap visual styles at runtime</td></tr>
+<tr><td>Entity counts limited by CPU</td><td><strong>GPU compute simulation drives 50,000+ entities at 60 FPS</strong></td></tr>
+<tr><td>Particle systems are cosmetic</td><td><strong>GPU entity systems are gameplay — they collide, damage, path-find</strong></td></tr>
+<tr><td>Animation requires full CPU skinning</td><td><strong>VAT animation scales to 50,000+ animated entities on GPU</strong></td></tr></tbody></table></div>
+<h3 id="2-2-the-promise">2.2 The Promise</h3>
+
+<p><strong>For creators:</strong> Describe what you imagine. AI builds it. Test it locally. Ship it. The engine is MIT — do anything you want with it. Sell your game. Never pay a royalty. Never give anything back. Or publish it with four words on the nAIVE platform and let anyone play it in a browser.</p>
+
+<h3 id="2-3-design-philosophy">2.3 Design Philosophy</h3>
+
+<p>Six founding principles:</p>
+
+<p><strong>The AI agent IS the editor.</strong> nAIVE has no visual editor. The AI agent — Claude Code, or any MCP-capable LLM — is the editor. This thesis was validated at a Supercell AI Hackathon where a complete game was built using Claude Code as the sole development interface.</p>
+
+<p><strong>Everything is a file.</strong> Scenes, entities, materials, render pipelines, input bindings, event schemas — all human-readable YAML. No proprietary binary formats.</p>
+
+<p><strong>Unix pipes connect everything.</strong> AI services via standardized CLI pipes: Meshy for 3D geometry, ElevenLabs for voice, Flux for textures, Claude API for scene generation.</p>
+
+<p><strong>SLANG shaders from day one.</strong> NVIDIA's SLANG compiles to Metal, SPIR-V, WGSL, and CUDA. Supports auto-differentiation for neural rendering.</p>
+
+<p><strong>Gaussian Splatting as first-class primitive.</strong> Native renderable type alongside meshes, with hybrid depth compositing in the deferred pipeline.</p>
+
+<p><strong>AI observability built in.</strong> Frame streaming for AI vision, game state via command socket, structured event logging, simulated input for automated playtesting.</p>
+
+<h3 id="2-4-the-future-of-rendering">2.4 The Future of Rendering</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>1990s  Fixed-function pipeline     Hardwired vertex/pixel ops, no shaders
+<p>2000s  Programmable shaders        HLSL/GLSL — artists write lighting math</p>
+<p>2010s  Physically-based rendering  Cook-Torrance, metallic/roughness, HDR</p>
+<p>2020s  Neural rendering begins     NeRF, Gaussian splatting, differentiable rendering</p>
+<p>2025+  AI-native rendering         Learned shaders, generated assets, prompted style</p>
+</code></pre></div>
+
+<p><strong>Leap 1: Gaussian Splats Replace Polygons for AI-Generated Content.</strong> Text prompt → Gen-3DGS → .ply file → scene entity. Seconds instead of days.</p>
+
+<p><strong>Leap 2: Neural Shaders Replace Handcoded Shaders.</strong> Visual style becomes data, not code — a weight file, downloadable, swappable, sharable.</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>passes:
+<p>  - name: style_transfer</p>
+<p>    type: neural</p>
+<p>    weights: assets/neural/ghibli.weights</p>
+<p>    inputs: [bloomed_color, depth]</p>
+<p>    output: styled_color</p>
+</code></pre></div>
+
+<p><strong>Leap 3: Prompt-to-Render.</strong> A single sentence generates geometry (Gen-3DGS), lighting, particles, atmosphere, style (neural pass), and audio.</p>
+
+<hr>
+
+<h2 id="3-core-technical-differentiators">3. Core Technical Differentiators</h2>
+
+<h3 id="3-1-slang-as-shader-language">3.1 SLANG as Shader Language</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Feature</th><th>SLANG</th><th>Raw WGSL/HLSL/GLSL</th></tr></thead><tbody><tr><td>Cross-compilation</td><td>Single source → WGSL, SPIR-V, HLSL, Metal, GLSL</td><td>Write per-platform</td></tr>
+<tr><td>Module system</td><td><code>import</code> with namespaces, interfaces, generics</td><td>Copy-paste or #include</td></tr>
+<tr><td>Differentiable</td><td class="winner">Built-in auto-differentiation for neural shader training</td><td>Not possible</td></tr>
+<tr><td>Type safety</td><td>Generics, interfaces, associated types</td><td>Weak typing</td></tr></tbody></table></div>
+<p>All render passes are SLANG source files that cross-compile to WGSL at load time for wgpu.</p>
+
+<h3 id="3-2-gaussian-splatting-as-first-class-rendering-primitive">3.2 Gaussian Splatting as First-Class Rendering Primitive</h3>
+
+<p>Splats flow through the same deferred pipeline as meshes. <code>.ply</code> files load with the same API as <code>.gltf</code> files.</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>entities:
+<p>  - id: castle</p>
+<p>    components:</p>
+<p>      mesh_renderer:</p>
+<p>        mesh: assets/meshes/castle.gltf</p>
+<p>        material: assets/materials/stone.yaml</p>
+
+<p>  - id: dragon</p>
+<p>    components:</p>
+<p>      splat_renderer:</p>
+<p>        splat: assets/splats/crystal_dragon.ply</p>
+<p>        scale: 2.0</p>
+</code></pre></div>
+
+<h3 id="3-3-data-driven-yaml-render-pipeline">3.3 Data-Driven YAML Render Pipeline</h3>
+
+<p>The render pipeline is a YAML-defined DAG of passes. Add, remove, or reorder render stages without recompiling. Neural passes slot alongside traditional passes.</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>passes:
+<p>  - name: shadow_pass</p>
+<p>    type: raster</p>
+<p>    shader: passes/shadow.slang</p>
+<p>    output: shadow_map</p>
+
+<p>  - name: geometry_pass</p>
+<p>    type: raster</p>
+<p>    shader: passes/geometry.slang</p>
+<p>    outputs: [albedo, normal, depth, metallic_roughness]</p>
+
+<p>  - name: splat_pass</p>
+<p>    type: compute</p>
+<p>    shader: passes/splat_render.slang</p>
+<p>    inputs: [depth]</p>
+<p>    outputs: [albedo, normal]</p>
+
+<p>  - name: lighting_pass</p>
+<p>    type: raster</p>
+<p>    shader: passes/deferred_light.slang</p>
+<p>    inputs: [albedo, normal, depth, metallic_roughness, shadow_map]</p>
+<p>    output: hdr_color</p>
+
+<p>  - name: bloom_pass</p>
+<p>    type: raster</p>
+<p>    shader: passes/bloom.slang</p>
+<p>    inputs: [hdr_color]</p>
+<p>    output: bloomed_color</p>
+
+<p>  - name: tonemap_pass</p>
+<p>    type: raster</p>
+<p>    shader: passes/tonemap.slang</p>
+<p>    inputs: [bloomed_color]</p>
+<p>    output: ldr_color</p>
+
+<p>  - name: fxaa_pass</p>
+<p>    type: raster</p>
+<p>    shader: passes/fxaa.slang</p>
+<p>    inputs: [ldr_color]</p>
+<p>    output: final_color</p>
+</code></pre></div>
+
+<h3 id="3-4-ai-as-runtime-primitive">3.4 AI as Runtime Primitive</h3>
+
+<p>AI is a runtime component, not external tooling:</p>
+
+<div class="table-wrap"><table><thead><tr><th>Traditional</th><th>nAIVE v5.0</th></tr></thead><tbody><tr><td>AI writes code at dev time</td><td>AI runs inside the game at play time</td></tr>
+<tr><td>NPCs follow pre-authored scripts</td><td>NPCs are LLM agents that reason, remember, adapt</td></tr>
+<tr><td>3D assets created by artists</td><td>3D assets generated from text on demand</td></tr>
+<tr><td>Visual style fixed at compile time</td><td>Neural render passes swap styles at runtime</td></tr>
+<tr><td>Level design is manual</td><td>NL Compiler generates levels from natural language</td></tr></tbody></table></div>
+<h3 id="3-5-self-modifying-engine-plugin-architecture">3.5 Self-Modifying Engine (Plugin Architecture)</h3>
+
+<p>Hot-loadable <code>.dylib/.so</code> modules with a versioned ABI boundary:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>rust</span></div><pre><code>pub trait NaivePlugin: Send + Sync {
+<p>    fn name(&self) -&gt; &str;</p>
+<p>    fn version(&self) -&gt; (u32, u32, u32);</p>
+<p>    fn on_load(&mut self, ctx: &mut PluginContext);</p>
+<p>    fn on_update(&mut self, ctx: &mut PluginContext, dt: f32);</p>
+<p>    fn on_unload(&mut self, ctx: &mut PluginContext);</p>
+<p>}</p>
+</code></pre></div>
+
+<h3 id="3-6-extended-mcp-server">3.6 Extended MCP Server</h3>
+
+<p>14+ MCP tools covering scene management, NL compilation, agent interaction, asset generation, plugin management, and render pipeline modification. Makes Claude Code (or any MCP client) a first-class citizen.</p>
+
+<div class="table-wrap"><table><thead><tr><th>MCP Tool</th><th>Purpose</th></tr></thead><tbody><tr><td><code>naive/scene/load</code></td><td>Load a scene YAML</td></tr>
+<tr><td><code>naive/scene/query</code></td><td>Query entities, components, transforms</td></tr>
+<tr><td><code>naive/scene/modify</code></td><td>Add/remove/update entities</td></tr>
+<tr><td><code>naive/nl/compile</code></td><td>Natural language → YAML + Lua</td></tr>
+<tr><td><code>naive/generate/splat</code></td><td>Text description → Gaussian splat (Gen-3DGS)</td></tr>
+<tr><td><code>naive/plugin/list</code></td><td>List loaded plugins</td></tr>
+<tr><td><code>naive/plugin/swap</code></td><td>Hot-swap a plugin at runtime</td></tr>
+<tr><td><code>naive/render/pipeline</code></td><td>Query or modify the render pipeline YAML</td></tr></tbody></table></div>
+<h3 id="3-7-gpu-compute-entity-simulation-new-in-v5-0">3.7 GPU Compute Entity Simulation (NEW in v5.0)</h3>
+
+<p>The most ambitious new system. nAIVE's answer to Unreal's Niagara.</p>
+
+<p>Traditional game engines simulate entities on the CPU. At 10,000+ entities, the CPU becomes the bottleneck. nAIVE's GPU compute entity system simulates tens of thousands of physics-driven entities entirely on the GPU — flocking, collision, pathfinding, damage — all in compute shaders.</p>
+
+<div class="table-wrap"><table><thead><tr><th>Capability</th><th>CPU ECS</th><th>GPU Compute Entities (v5.0)</th></tr></thead><tbody><tr><td>Max active entities</td><td>~5,000</td><td><strong>50,000+</strong></td></tr>
+<tr><td>Collision detection</td><td>Rapier broadphase</td><td><strong>Neighbor-grid on GPU</strong></td></tr>
+<tr><td>Pathfinding</td><td>A* on CPU</td><td><strong>Flow field on GPU</strong></td></tr>
+<tr><td>Animation</td><td>Skeletal (CPU-skinned)</td><td><strong>VAT</strong> (GPU-sampled)</td></tr>
+<tr><td>Rendering</td><td>Individual draw calls</td><td><strong>GPU instancing</strong> from compute buffer</td></tr>
+<tr><td>Use case</td><td>Players, bosses, key NPCs</td><td><strong>Hordes, swarms, crowds, bullet hell</strong></td></tr></tbody></table></div>
+<p>The two systems coexist. Players and bosses remain CPU ECS entities. Hordes and swarms use GPU compute entities. Full specification in Section 8.</p>
+
+<hr>
+
+<h2 id="4-architecture">4. Architecture</h2>
+
+<h3 id="4-1-crate-structure">4.1 Crate Structure</h3>
+
+<p>nAIVE is split into three MIT-licensed crates:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>┌─────────────────────────────────────────────────┐
+<p>│  naive-core (MIT)                                │</p>
+<p>│  Shared types, ECS components, scene format,     │</p>
+<p>│  serialization                                   │</p>
+<p>└──────────────────────┬──────────────────────────┘</p>
+<p>                       │</p>
+<p>┌──────────────────────▼──────────────────────────┐</p>
+<p>│  naive-client (MIT)  [library crate]             │</p>
+<p>│  Re-exports naive-core. Renderer, audio, input,  │</p>
+<p>│  physics, scripting, UI, GPU horde sim, skeletal │</p>
+<p>│  animation, prediction engine, interpolation —   │</p>
+<p>│  all engine modules (25 total)                   │</p>
+<p>└──────────────────────┬──────────────────────────┘</p>
+<p>                       │</p>
+<p>┌──────────────────────▼──────────────────────────┐</p>
+<p>│  naive-runtime (MIT)  [binary crate]             │</p>
+<p>│  Thin CLI entry point. Produces <code>naive</code>,         │</p>
+<p>│  <code>naive-runtime</code>, and <code>naive_mcp</code> binaries.      │</p>
+<p>└─────────────────────────────────────────────────┘</p>
+</code></pre></div>
+
+<p><strong>naive-core:</strong> Shared types library. Contains ECS component definitions, scene format parsing, transform types, tween interpolation, event definitions, and all serialization logic. Re-exported by naive-client so downstream consumers get everything.</p>
+
+<p><strong>naive-client:</strong> Library crate containing the full engine. Re-exports naive-core. Contains the wgpu renderer, Kira audio, input capture, UI overlay, Rapier 3D physics, Lua scripting, GPU horde simulation shaders, skeletal animation, character controller, prediction engine, interpolation buffer, PBR materials, mesh loading, Gaussian splatting, CLI argument parsing, and command socket server. 25 modules total.</p>
+
+<p><strong>naive-runtime:</strong> Binary crate. A thin CLI entry point that depends on naive-client. Produces three binaries: <code>naive-runtime</code> (the main engine binary), <code>naive</code> (convenience alias), and <code>naive_mcp</code> (MCP JSON-RPC server for AI agent integration).</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>toml</span></div><pre><code># crates/naive-runtime/Cargo.toml
+<p>[dependencies]</p>
+<p>naive-client = { workspace = true }</p>
+
+<p>[[bin]]</p>
+<p>name = "naive-runtime"</p>
+<p>path = "src/main.rs"</p>
+
+<p>[[bin]]</p>
+<p>name = "naive"</p>
+<p>path = "src/main.rs"</p>
+</code></pre></div>
+
+<p><strong>The server binary (<code>naive-server</code>) is specified in the companion Platform PRD.</strong></p>
+
+<h3 id="4-2-rendering-philosophy-client-side-rendering">4.2 Rendering Philosophy: Client-Side Rendering</h3>
+
+<p>The engine renders locally on the client's GPU. If connected to a server, the server never touches a pixel — it sends state deltas, the client renders them.</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Server-side rendering: 100 worlds × 10 players × $0.25/hr GPU = $180,000/month
+<p>Client-side rendering: 100 worlds on 2-core VPS = $25/month</p>
+<p>Ratio: 9,000:1 cost advantage</p>
+</code></pre></div>
+
+<p>This is what Minecraft, Roblox, Fortnite, and every successful multiplayer game uses.</p>
+
+<h3 id="4-3-scene-yaml-as-world-format">4.3 Scene YAML as World Format</h3>
+
+<p>A "world" is a directory of files: YAML scenes, Lua scripts, YAML materials, glTF meshes, audio files, SLANG shaders, and VAT textures.</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>project/
+<p>  scenes/            — YAML scene definitions</p>
+<p>  logic/             — Lua game scripts</p>
+<p>  assets/</p>
+<p>    materials/       — PBR material YAML files</p>
+<p>    meshes/          — glTF 3D models (including skinned meshes)</p>
+<p>    splats/          — Gaussian splatting .ply files</p>
+<p>    vat/             — Vertex Animation Textures (.exr)</p>
+<p>    audio/           — MP3/WAV/OGG audio files</p>
+<p>  shaders/</p>
+<p>    passes/          — SLANG render pass shaders</p>
+<p>    compute/         — SLANG compute shaders (horde sim, etc.)</p>
+<p>    modules/         — Shared SLANG modules</p>
+</code></pre></div>
+
+<h3 id="4-4-data-flow-single-player-naive-runtime">4.4 Data Flow (Single-Player / naive-runtime)</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Player presses "W"
+<p>  → Input system captures key event</p>
+<p>  → Character controller processes input: move forward 0.2m</p>
+<p>  → Rapier physics: collision check, gravity, grounding</p>
+<p>  → Lua script: game logic (stamina drain, footstep sound trigger)</p>
+<p>  → GPU horde sim: compute shaders update 50,000 entities</p>
+<p>  → ECS updated: player position, horde positions, animation states</p>
+<p>  → Renderer: deferred pipeline draws frame</p>
+<p>  → Audio: spatial sound, footstep SFX</p>
+<p>  → Total frame time: &lt;16ms at 60 FPS</p>
+</code></pre></div>
+
+<h3 id="4-5-data-flow-multiplayer-naive-client-platform-server">4.5 Data Flow (Multiplayer / naive-client + Platform Server)</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Player presses "W"
+<p>  → Client prediction: character controller moves player locally (instant)</p>
+<p>  → Client sends input to server via WebRTC DataChannel</p>
+<p>  → Server processes authoritatively, broadcasts delta to all clients</p>
+<p>  → Client compares prediction to server state</p>
+<p>    → Match (95%): discard prediction buffer</p>
+<p>    → Mismatch (5%): rewind to server state, replay inputs</p>
+<p>  → Other players: interpolated between last two server states</p>
+<p>  → GPU horde sim: runs on client, parameterized by server-sent flow field</p>
+<p>  → Perceived input latency: &lt;16ms (one frame)</p>
+</code></pre></div>
+
+<h3 id="4-6-client-side-prediction-engine">4.6 Client-Side Prediction Engine</h3>
+
+<p>Included in naive-client for use when connected to a server. Also usable in naive-runtime for consistent behavior.</p>
+
+<p><strong>What is predicted:</strong></p>
+<ul><li>Player position (character controller movement)</li>
+<li>Player rotation (camera/aim direction)</li>
+</ul>
+<p><strong>What is NOT predicted:</strong></p>
+<ul><li>Weapon fire (server-authoritative)</li>
+<li>Damage taken/dealt</li>
+<li>Inventory changes</li>
+<li>Horde entity positions (client-simulated independently)</li>
+<li>Other players (interpolated, not predicted)</li>
+</ul>
+<p><strong>Reconciliation:</strong> On receiving server state, compare predicted position to server position for the acknowledged tick. If diverged, rewind to server state and replay all unacknowledged inputs. This happens ~5% of frames (usually due to collisions with other players that the client couldn't predict).</p>
+
+<h3 id="4-7-entity-interpolation">4.7 Entity Interpolation</h3>
+
+<p>Other entities (players, NPCs, vehicles) are rendered by interpolating between the two most recent states received from the server:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Server sends position at tick 100: [43.0, 0, 87.0]
+<p>Server sends position at tick 101: [43.2, 0, 87.1]</p>
+
+<p>Client renders at visual time = tick 100.5:</p>
+<p>  position = lerp([43.0, 0, 87.0], [43.2, 0, 87.1], 0.5)</p>
+<p>           = [43.1, 0, 87.05]</p>
+</code></pre></div>
+
+<p>The client renders one tick behind the server (configurable). Extrapolation fallback if a packet is lost: linear extrapolation with exponential decay.</p>
+
+<hr>
+
+<h2 id="5-what-already-exists-v1-0-foundation">5. What Already Exists (v1.0 Foundation)</h2>
+
+<p>16 phases built and working:</p>
+
+<div class="table-wrap"><table><thead><tr><th>System</th><th>Status</th><th>Implementation</th></tr></thead><tbody><tr><td>Window + Input</td><td>Done</td><td>winit 0.30, keyboard/mouse events</td></tr>
+<tr><td>Scene Graph</td><td>Done</td><td>YAML scenes with entity/component definitions</td></tr>
+<tr><td>ECS</td><td>Done</td><td>hecs with Transform, MeshRenderer, Camera, Light, Hidden, EntityId</td></tr>
+<tr><td>Deferred Rendering</td><td>Done</td><td>8-stage pipeline: Shadow → G-Buffer → Splat → Lighting → Bloom → Tonemap → FXAA → UI</td></tr>
+<tr><td>Gaussian Splatting</td><td>Done</td><td>.ply loader, integrated into deferred pipeline</td></tr>
+<tr><td>PBR Materials</td><td>Done</td><td>Cook-Torrance GGX, metallic/roughness/emissive</td></tr>
+<tr><td>Shadow Mapping</td><td>Done</td><td>Directional shadow maps with PCF soft shadows</td></tr>
+<tr><td>Post-Processing</td><td>Done</td><td>Bloom, tone mapping, FXAA</td></tr>
+<tr><td>Physics</td><td>Done</td><td>Rapier 3D: rigid bodies, colliders, joints, gravity</td></tr>
+<tr><td>Scripting</td><td>Done</td><td>mlua (Lua 5.4): per-entity scripts, full API</td></tr>
+<tr><td>Audio</td><td>Done</td><td>Kira 0.9: music, SFX, fade-in/out, MP3/WAV/OGG</td></tr>
+<tr><td>UI Overlay</td><td>Done</td><td>Immediate-mode 2D: text, rects, screen flash</td></tr>
+<tr><td>Entity Commands</td><td>Done</td><td>Runtime spawn/destroy/scale/visibility from Lua</td></tr>
+<tr><td>MCP Server</td><td>Done</td><td>JSON-RPC over stdio</td></tr>
+<tr><td>Event Bus</td><td>Done</td><td>Typed publish/subscribe</td></tr>
+<tr><td>Headless Mode</td><td>Done</td><td><code>--headless</code> runs without window</td></tr>
+<tr><td>Shader Pipeline</td><td>Done</td><td>SLANG → WGSL, YAML-defined render pipeline DAG</td></tr>
+<tr><td>Procedural Meshes</td><td>Done</td><td>Sphere, cube, plane at runtime</td></tr></tbody></table></div>
+<p>16 demo scenes exercising all systems. 20 features DONE.</p>
+
+<h3 id="tier-1-gameplay-primitives-v0-1-2">Tier 1 Gameplay Primitives (v0.1.2)</h3>
+
+<p>Implemented in v0.1.2. These are engine-level systems, not game-specific code:</p>
+
+<div class="table-wrap"><table><thead><tr><th>System</th><th>Status</th><th>Implementation</th></tr></thead><tbody><tr><td>Health/Damage</td><td>Done</td><td><code>Health</code> ECS component, <code>entity.damage()</code> / <code>entity.heal()</code> Lua API, <code>on_damage</code> / <code>on_death</code> callbacks</td></tr>
+<tr><td>Hitscan API</td><td>Done</td><td><code>physics.hitscan()</code> returns entity ID + hit point + normal, self-exclusion</td></tr>
+<tr><td>Collision Damage</td><td>Done</td><td><code>CollisionDamage</code> component, automatic damage on physics contact, owner-skip for projectiles</td></tr>
+<tr><td>Projectile System</td><td>Done</td><td><code>entity.spawn_projectile()</code> spawns physics-driven projectiles with velocity, gravity, lifetime, auto-damage via collision</td></tr>
+<tr><td>Third-Person Camera</td><td>Done</td><td><code>CameraMode::ThirdPerson</code> with configurable distance/height/pitch, wall collision via raycast</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="6-intelligence-layer-engine-side">6. Intelligence Layer (Engine-Side)</h2>
+
+<p>These AI capabilities run in the engine (client or runtime), not on the server.</p>
+
+<h3 id="6-1-natural-language-compiler">6.1 Natural Language Compiler</h3>
+
+<p>Text descriptions → complete YAML + Lua files via MCP tool:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>User:  "I want a 3D snake game on a neon grid with pulsing music"
+
+<p>NL Compiler:</p>
+<p>  → scenes/snake.yaml</p>
+<p>  → logic/snake_controller.lua</p>
+<p>  → logic/food_spawner.lua</p>
+<p>  → materials/neon_grid.yaml</p>
+<p>  → materials/snake_body.yaml</p>
+</code></pre></div>
+
+<p>Target: >80% first-attempt correct scene generation.</p>
+
+<h3 id="6-2-generative-gaussian-splatting-gen-3dgs">6.2 Generative Gaussian Splatting (Gen-3DGS)</h3>
+
+<p>Text descriptions → 3D Gaussian splat assets:</p>
+
+<div class="table-wrap"><table><thead><tr><th>Tier</th><th>Gaussians</th><th>Time</th><th>Quality</th></tr></thead><tbody><tr><td>Preview</td><td>~10K</td><td>2-5s</td><td>Draft</td></tr>
+<tr><td>Standard</td><td>~100K</td><td>15-30s</td><td>Good</td></tr>
+<tr><td>High</td><td>~500K</td><td>1-3min</td><td>Excellent</td></tr>
+<tr><td>Cinematic</td><td>~2M</td><td>5-15min</td><td>Photorealistic</td></tr></tbody></table></div>
+<h3 id="6-3-neural-render-passes">6.3 Neural Render Passes</h3>
+
+<p>Portions of the render pipeline replaced with differentiable, trainable neural networks:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>passes:
+<p>  - name: style_transfer</p>
+<p>    type: neural</p>
+<p>    weights: ghibli_style.neural_shader</p>
+<p>    inputs: [color_buffer, depth_buffer]</p>
+<p>    output: styled_color</p>
+<p>  - name: super_resolution</p>
+<p>    type: neural</p>
+<p>    weights: 2x_upscale.neural_shader</p>
+<p>    inputs: [styled_color]</p>
+<p>    output: final_color</p>
+</code></pre></div>
+
+<p>Use cases: style transfer, ambient occlusion estimation, denoising, super-resolution. Performance target: >30 FPS on M1 MacBook with one neural pass active.</p>
+
+<hr>
+
+<h2 id="7-skeletal-animation-system-new-in-v5-0">7. Skeletal Animation System (NEW in v5.0)</h2>
+
+<p>glTF skinned mesh support with animation state machines.</p>
+
+<h3 id="7-1-pipeline">7.1 Pipeline</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>glTF file → Skeleton extraction (joints, bones, inverse bind matrices)
+<p>          → Animation clip loading (keyframes per joint per clip)</p>
+<p>          → Runtime: Animation state machine drives blend weights</p>
+<p>          → GPU skinning (vertex shader or compute shader)</p>
+</code></pre></div>
+
+<h3 id="7-2-animation-state-machine-yaml-defined">7.2 Animation State Machine (YAML-Defined)</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>animation_state_machine:
+<p>  states:</p>
+<p>    idle:</p>
+<p>      clip: animations/idle.gltf</p>
+<p>      loop: true</p>
+<p>      transitions:</p>
+<p>        - to: run</p>
+<p>          condition: speed &gt; 0.5</p>
+<p>        - to: jump</p>
+<p>          condition: is_airborne</p>
+<p>    run:</p>
+<p>      clip: animations/run.gltf</p>
+<p>      loop: true</p>
+<p>      blend_parameter: speed</p>
+<p>      transitions:</p>
+<p>        - to: idle</p>
+<p>          condition: speed &lt; 0.1</p>
+<p>        - to: jump</p>
+<p>          condition: is_airborne</p>
+<p>        - to: sprint</p>
+<p>          condition: speed &gt; 5.0</p>
+<p>    jump:</p>
+<p>      clip: animations/jump.gltf</p>
+<p>      loop: false</p>
+<p>      transitions:</p>
+<p>        - to: fall</p>
+<p>          condition: velocity_y &lt; 0</p>
+<p>    fall:</p>
+<p>      clip: animations/fall.gltf</p>
+<p>      loop: true</p>
+<p>      transitions:</p>
+<p>        - to: land</p>
+<p>          condition: is_grounded</p>
+<p>    land:</p>
+<p>      clip: animations/land.gltf</p>
+<p>      loop: false</p>
+<p>      duration: 0.3</p>
+<p>      transitions:</p>
+<p>        - to: idle</p>
+<p>          condition: animation_complete AND speed &lt; 0.1</p>
+<p>        - to: run</p>
+<p>          condition: animation_complete AND speed &gt; 0.5</p>
+</code></pre></div>
+
+<p><strong>Animation blending:</strong> Crossfade between states (configurable duration, default 0.15s). Upper body and lower body can play different animations simultaneously (layered animation).</p>
+
+<hr>
+
+<h2 id="8-gpu-compute-entity-simulation-new-in-v5-0">8. GPU Compute Entity Simulation (NEW in v5.0)</h2>
+
+<p>The system that makes 50,000+ on-screen enemies possible. This runs entirely on the client GPU.</p>
+
+<h3 id="8-1-architecture">8.1 Architecture</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>┌─────────────────────────────────────────────────────────┐
+<p>│                    GPU COMPUTE PIPELINE                   │</p>
+<p>│                                                          │</p>
+<p>│  ┌──────────┐   ┌──────────────┐   ┌────────────────┐  │</p>
+<p>│  │ Spawn    │──&gt;│ Simulation   │──&gt;│ Animation      │  │</p>
+<p>│  │ Buffer   │   │ Compute      │   │ (VAT sample)   │  │</p>
+<p>│  │          │   │ Shader       │   │                │  │</p>
+<p>│  └──────────┘   └──────┬───────┘   └───────┬────────┘  │</p>
+<p>│                         │                    │           │</p>
+<p>│                  ┌──────▼───────┐    ┌───────▼────────┐ │</p>
+<p>│                  │ Neighbor     │    │ Instance       │ │</p>
+<p>│                  │ Grid         │    │ Render Buffer  │ │</p>
+<p>│                  │ (collision)  │    │ (transforms)   │ │</p>
+<p>│                  └──────────────┘    └────────────────┘ │</p>
+<p>│                                                          │</p>
+<p>│  Inputs:                                                 │</p>
+<p>│    - Flow field texture (128×128, for pathfinding)      │</p>
+<p>│    - Spawn commands (position, count, type)              │</p>
+<p>│    - Global parameters (max_speed, damage, etc.)         │</p>
+<p>│                                                          │</p>
+<p>│  Outputs:                                                │</p>
+<p>│    - Per-instance transform buffer → GPU instanced draw  │</p>
+<p>│    - Per-instance animation state (VAT time offset)      │</p>
+<p>│    - Per-instance health (for damage flash shader)       │</p>
+<p>│    - Player damage events (readback to CPU)              │</p>
+<p>│                                                          │</p>
+<p>└─────────────────────────────────────────────────────────┘</p>
+</code></pre></div>
+
+<h3 id="8-2-compute-shader-pipeline">8.2 Compute Shader Pipeline</h3>
+
+<p>Each frame, the GPU runs a sequence of compute dispatches:</p>
+
+<li><strong>Spawn</strong> — New entities written into free slots. Atomic counter free-list tracks available slots.</li>
+<li><strong>Flow Field Sample</strong> — Each entity samples the flow field texture for desired velocity.</li>
+<li><strong>Steering</strong> — Separation, alignment, cohesion from neighbor grid. Combined with flow field.</li>
+<li><strong>Neighbor Grid Build</strong> — Entities binned into spatial grid via atomic scatter.</li>
+<li><strong>Collision Resolution</strong> — Iterate neighbors, apply separation forces, apply damage to player contact volumes.</li>
+<li><strong>Integration</strong> — Apply velocity to position. Clamp to world bounds. Update animation state.</li>
+<li><strong>Death and Cleanup</strong> — Health ≤ 0 → marked dead, slot returned to free list, death event buffered.</li>
+<li><strong>Instance Buffer Write</strong> — Living entities write transform + anim state to render buffer. Compaction removes gaps.</li>
+
+<h3 id="8-3-vertex-animation-textures-vat">8.3 Vertex Animation Textures (VAT)</h3>
+
+<p>Skeletal animation doesn't scale to 50,000 entities. VAT bakes animation into textures:</p>
+
+<p><strong>Baking (offline):</strong></p>
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>glTF with skeletal animation
+<p>  → Sample vertex positions at each frame of each clip</p>
+<p>  → Pack into texture: X = vertex index, Y = frame, RGBA = position offset + normal</p>
+<p>  → Output: animation_atlas.exr (e.g., 1024 vertices × 150 frames × RGBA16F)</p>
+</code></pre></div>
+
+<p><strong>Runtime (GPU, per-entity):</strong></p>
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>vertex_position = base_mesh_position + texture_sample(vat_texture, vertex_id, anim_time)
+</code></pre></div>
+
+<p><strong>LOD levels:</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Distance</th><th>Mesh</th><th>Animation</th><th>Draw</th></tr></thead><tbody><tr><td class="winner">< 30m</td><td>Full mesh (LOD0)</td><td>VAT sampling</td><td>GPU instanced</td></tr>
+<tr><td>30-80m</td><td>Simplified mesh (LOD1, 50% triangles)</td><td>VAT sampling</td><td>GPU instanced</td></tr>
+<tr><td>80m+</td><td>Billboard sprite</td><td>Sprite sheet</td><td>Billboard batch</td></tr></tbody></table></div>
+<h3 id="8-4-yaml-configuration">8.4 YAML Configuration</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>gpu_entity_system:
+<p>  name: goblin_horde</p>
+<p>  max_entities: 65536</p>
+<p>  mesh: assets/meshes/goblin_lod0.gltf</p>
+<p>  mesh_lod1: assets/meshes/goblin_lod1.gltf</p>
+<p>  mesh_lod2: billboard</p>
+<p>  lod_distances: [30.0, 80.0]</p>
+
+<p>  animation:</p>
+<p>    type: vat</p>
+<p>    texture: assets/vat/goblin_walk_run_die.exr</p>
+<p>    clips:</p>
+<p>      idle: { start: 0, end: 30 }</p>
+<p>      walk: { start: 31, end: 60 }</p>
+<p>      run: { start: 61, end: 90 }</p>
+<p>      attack: { start: 91, end: 120 }</p>
+<p>      die: { start: 121, end: 150 }</p>
+
+<p>  simulation:</p>
+<p>    compute_shader: shaders/horde_sim.slang</p>
+<p>    collision: neighbor_grid</p>
+<p>    grid_cell_size: 2.0</p>
+<p>    pathfinding: flow_field</p>
+<p>    flow_field_resolution: 128</p>
+<p>    separation_radius: 1.0</p>
+<p>    cohesion_radius: 5.0</p>
+<p>    max_speed: 8.0</p>
+<p>    health: 100</p>
+<p>    damage_on_contact: 10</p>
+
+<p>  spawning:</p>
+<p>    wave_system: true</p>
+<p>    initial_count: 1000</p>
+<p>    spawn_rate: 200</p>
+<p>    spawn_radius: 80.0</p>
+<p>    max_alive: 50000</p>
+</code></pre></div>
+
+<h3 id="8-5-slang-compute-shader">8.5 SLANG Compute Shader</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>slang</span></div><pre><code>struct HordeEntity {
+<p>    float3 position;</p>
+<p>    float3 velocity;</p>
+<p>    float health;</p>
+<p>    float anim_time;</p>
+<p>    uint type;          // 0 = melee, 1 = ranged, 2 = elite</p>
+<p>    uint state;         // 0 = alive, 1 = dying, 2 = dead</p>
+<p>};</p>
+
+<p>RWStructuredBuffer&lt;HordeEntity&gt; entities;</p>
+<p>Texture2D&lt;float2&gt; flow_field;</p>
+<p>RWTexture2D&lt;uint&gt; neighbor_grid_counts;</p>
+
+<p>[numthreads(256, 1, 1)]</p>
+<p>void cs_simulate(uint3 tid : SV_DispatchThreadID) {</p>
+<p>    uint idx = tid.x;</p>
+<p>    if (idx &gt;= alive_count) return;</p>
+
+<p>    HordeEntity e = entities[idx];</p>
+<p>    if (e.state != 0) return;</p>
+
+<p>    // Sample flow field for pathfinding</p>
+<p>    float2 grid_uv = e.position.xz / world_size;</p>
+<p>    float2 desired_velocity = flow_field.SampleLevel(linear_sampler, grid_uv, 0);</p>
+
+<p>    // Neighbor query for separation</p>
+<p>    int2 cell = int2(e.position.xz / grid_cell_size);</p>
+<p>    float3 separation = float3(0);</p>
+<p>    // ... iterate neighbors, compute separation force</p>
+
+<p>    // Combine steering forces</p>
+<p>    float3 steering = float3(desired_velocity.x, 0, desired_velocity.y) * max_speed</p>
+<p>                    + separation * separation_weight;</p>
+
+<p>    // Integrate</p>
+<p>    e.velocity = lerp(e.velocity, steering, dt * 5.0);</p>
+<p>    e.position += e.velocity * dt;</p>
+
+<p>    // Update animation based on speed</p>
+<p>    float speed = length(e.velocity);</p>
+<p>    e.anim_time += dt <em> speed </em> anim_speed_scale;</p>
+
+<p>    entities[idx] = e;</p>
+<p>}</p>
+</code></pre></div>
+
+<hr>
+
+<h2 id="9-character-controller-new-in-v5-0">9. Character Controller (NEW in v5.0)</h2>
+
+<p>Capsule collider-based movement using Rapier:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>character_controller:
+<p>  capsule:</p>
+<p>    height: 1.8</p>
+<p>    radius: 0.3</p>
+<p>  movement:</p>
+<p>    walk_speed: 5.0</p>
+<p>    sprint_speed: 9.0</p>
+<p>    crouch_speed: 2.5</p>
+<p>    jump_force: 8.0</p>
+<p>    gravity: -20.0</p>
+<p>    air_control: 0.3</p>
+<p>    ground_friction: 8.0</p>
+<p>    air_friction: 0.5</p>
+<p>  camera:</p>
+<p>    mode: third_person       # or first_person</p>
+<p>    distance: 4.0</p>
+<p>    height_offset: 1.5</p>
+<p>    collision: true</p>
+<p>    spring_arm: true</p>
+<p>    sensitivity: 2.0</p>
+<p>    pitch_limits: [-60, 75]</p>
+</code></pre></div>
+
+<p><strong>Touch input mapping (mobile):</strong></p>
+<ul><li>Left virtual joystick: movement</li>
+<li>Right virtual joystick: camera/aim</li>
+<li>Jump button, fire button, weapon switch swipe</li>
+</ul>
+<hr>
+
+<h2 id="10-weapon-system-new-in-v5-0">10. Weapon System (NEW in v5.0)</h2>
+
+<p>Weapons defined in YAML. In single-player (naive-runtime), hit detection runs locally. In multiplayer, hit detection is server-authoritative (see Platform PRD).</p>
+
+<h3 id="10-1-weapon-types">10.1 Weapon Types</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>weapons:
+<p>  assault_rifle:</p>
+<p>    type: hitscan</p>
+<p>    fire_rate: 10.0</p>
+<p>    damage: 22</p>
+<p>    range: 100.0</p>
+<p>    spread: 2.5</p>
+<p>    recoil:</p>
+<p>      vertical: 1.5</p>
+<p>      horizontal: 0.3</p>
+<p>      recovery: 5.0</p>
+<p>    magazine: 30</p>
+<p>    reload_time: 2.0</p>
+<p>    headshot_multiplier: 2.0</p>
+
+<p>  rocket_launcher:</p>
+<p>    type: projectile</p>
+<p>    fire_rate: 1.0</p>
+<p>    damage: 120</p>
+<p>    splash_radius: 5.0</p>
+<p>    splash_falloff: linear</p>
+<p>    projectile:</p>
+<p>      speed: 40.0</p>
+<p>      gravity: true</p>
+<p>      lifetime: 5.0</p>
+<p>      mesh: assets/meshes/rocket.gltf</p>
+<p>      trail_effect: assets/effects/rocket_trail.yaml</p>
+<p>    magazine: 1</p>
+<p>    reload_time: 3.0</p>
+
+<p>  flamethrower:</p>
+<p>    type: continuous</p>
+<p>    damage_per_second: 80</p>
+<p>    range: 15.0</p>
+<p>    cone_angle: 30.0</p>
+<p>    fuel: 100</p>
+<p>    fuel_drain: 20</p>
+<p>    ignite_chance: 0.3</p>
+</code></pre></div>
+
+<h3 id="10-2-hit-detection-single-player">10.2 Hit Detection (Single-Player)</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Player fires weapon
+<p>  → Raycast from player position in aim direction</p>
+<p>  → Check intersection with ECS entities (Rapier colliders)</p>
+<p>  → Apply damage to hit entity</p>
+<p>  → Play hit effect at impact point</p>
+</code></pre></div>
+
+<p>In multiplayer, the server performs the raycast and applies damage. The client plays cosmetic effects locally. See Platform PRD Section 7 for lag compensation and server-authoritative hit registration.</p>
+
+<hr>
+
+<h2 id="11-vehicle-system-new-in-v5-0">11. Vehicle System (NEW in v5.0)</h2>
+
+<p>Vehicles are Rapier rigid bodies:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>vehicles:
+<p>  war_buggy:</p>
+<p>    type: wheeled</p>
+<p>    physics:</p>
+<p>      mass: 1500</p>
+<p>      wheels: 4</p>
+<p>      suspension_stiffness: 30.0</p>
+<p>      max_speed: 25.0</p>
+<p>      acceleration: 12.0</p>
+<p>      brake_force: 20.0</p>
+<p>      turn_rate: 2.5</p>
+<p>    health: 500</p>
+<p>    seats:</p>
+<p>      driver:</p>
+<p>        position: [0, 0.8, 0.3]</p>
+<p>        controls: driving</p>
+<p>      gunner:</p>
+<p>        position: [0, 1.5, -0.5]</p>
+<p>        controls: turret</p>
+<p>        weapon: mounted_machine_gun</p>
+<p>    mounted_machine_gun:</p>
+<p>      type: hitscan</p>
+<p>      fire_rate: 15.0</p>
+<p>      damage: 15</p>
+<p>      range: 80.0</p>
+<p>      overheat: 5.0</p>
+<p>      cooldown: 2.0</p>
+<p>    mesh: assets/meshes/war_buggy.gltf</p>
+<p>    enter_radius: 3.0</p>
+
+<p>  truck:</p>
+<p>    type: wheeled</p>
+<p>    physics:</p>
+<p>      mass: 5000</p>
+<p>      wheels: 6</p>
+<p>      max_speed: 18.0</p>
+<p>      acceleration: 6.0</p>
+<p>    health: 1200</p>
+<p>    damage_on_collision: 80</p>
+<p>    seats:</p>
+<p>      driver:</p>
+<p>        position: [0, 1.5, 1.0]</p>
+<p>        controls: driving</p>
+<p>    mesh: assets/meshes/truck.gltf</p>
+</code></pre></div>
+
+<p>Press E near vehicle → mount. Press E while mounted → dismount. Vehicles damage horde enemies on collision.</p>
+
+<hr>
+
+<h2 id="12-inventory-and-loadout-new-in-v5-0">12. Inventory and Loadout (NEW in v5.0)</h2>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>inventory:
+<p>  weapon_slots:</p>
+<p>    primary: 1</p>
+<p>    secondary: 1</p>
+<p>    heavy: 1</p>
+<p>    melee: 1          # always available</p>
+
+<p>  consumable_slots: 4</p>
+
+<p>  pickups:</p>
+<p>    health_pack:</p>
+<p>      heal: 50</p>
+<p>      mesh: assets/meshes/health_pack.gltf</p>
+<p>      respawn_time: 30.0</p>
+<p>    shield_cell:</p>
+<p>      shield: 25</p>
+<p>      mesh: assets/meshes/shield_cell.gltf</p>
+<p>      respawn_time: 20.0</p>
+<p>    ammo_box:</p>
+<p>      ammo: 60</p>
+<p>      mesh: assets/meshes/ammo_box.gltf</p>
+<p>      respawn_time: 15.0</p>
+</code></pre></div>
+
+<hr>
+
+<h2 id="13-large-world-support-new-in-v5-0">13. Large World Support (NEW in v5.0)</h2>
+
+<h3 id="13-1-chunk-based-world-streaming">13.1 Chunk-Based World Streaming</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>world_streaming:
+<p>  chunk_size: 64.0</p>
+<p>  load_radius: 3</p>
+<p>  unload_radius: 5</p>
+</code></pre></div>
+
+<p>Chunks are individual YAML scene files loaded/unloaded based on player position.</p>
+
+<h3 id="13-2-lod-system">13.2 LOD System</h3>
+
+<ul><li><strong>Mesh LOD:</strong> glTF meshes with multiple LOD levels, selected by screen-space size</li>
+<li><strong>Gaussian Splat LOD:</strong> Progressive pruning — drop small/transparent Gaussians at distance</li>
+<li><strong>Horde LOD:</strong> Full mesh → simplified mesh → billboard (Section 8.3)</li>
+</ul>
+<h3 id="13-3-occlusion-culling">13.3 Occlusion Culling</h3>
+
+<p>Frustum culling + optional Hi-Z occlusion culling for complex scenes.</p>
+
+<hr>
+
+<h2 id="14-proof-game-havoc">14. Proof Game: HAVOC</h2>
+
+<p>HAVOC is a 3D Vampire Survivors-style horde survival game with vehicle combat. It runs as single-player on naive-runtime or as 1-4 player co-op when connected to the platform.</p>
+
+<h3 id="14-1-why-havoc">14.1 Why HAVOC</h3>
+
+<p>The game "There Are Millions of Goblins" (Unreal Engine 5, Niagara GPU simulation) demonstrated 50,000 physics-driven enemies with Vampire Survivors-style gameplay fused with vehicle combat. HAVOC proves nAIVE can match this:</p>
+
+<div class="table-wrap"><table><thead><tr><th>System</th><th>How HAVOC Proves It</th><th>Engine Tier</th></tr></thead><tbody><tr><td>Health/damage/hitscan</td><td>Weapon damage, enemy death, collision damage</td><td><strong>Tier 1 (DONE)</strong></td></tr>
+<tr><td>Projectiles</td><td>Physics-driven weapon projectiles</td><td><strong>Tier 1 (DONE)</strong></td></tr>
+<tr><td>Dynamic buffer + pooling</td><td>200+ CPU entities without crashes, horde pooling</td><td>Tier 2</td></tr>
+<tr><td>Particle system</td><td>Kill effects, weapon VFX, boost trails</td><td>Tier 2</td></tr>
+<tr><td>Event subscription</td><td>Cross-script game events (kills, waves, pickups)</td><td>Tier 2</td></tr>
+<tr><td>GPU compute entities</td><td>50,000+ goblins on GPU</td><td>Tier 3</td></tr>
+<tr><td>Neighbor-grid collisions</td><td>Goblins collide with each other and players</td><td>Tier 3</td></tr>
+<tr><td>VAT animation</td><td>50,000 goblins animated via vertex textures</td><td>Tier 4</td></tr>
+<tr><td>Skeletal animation</td><td>Player character with full state machine</td><td>Tier 4</td></tr>
+<tr><td>Vehicles</td><td>War buggy, truck with collision damage</td><td>Tier 5</td></tr></tbody></table></div>
+<h3 id="14-2-game-design">14.2 Game Design</h3>
+
+<p><strong>Concept:</strong> Survive increasingly intense waves of goblin hordes. On foot or in vehicles.</p>
+
+<p><strong>Setting:</strong> Arena-scale map (~500m × 500m) with ruins, open fields, vehicle spawn points, elevation changes. Gothic-industrial aesthetic.</p>
+
+<p><strong>Core Loop:</strong></p>
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Explore → Find weapons/vehicles → Survive wave → Brief respite → Harder wave → Repeat
+<p>  → Die → Score screen → Play again</p>
+</code></pre></div>
+
+<p><strong>Wave progression:</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Wave</th><th>Count</th><th>Types</th><th>Special</th></tr></thead><tbody><tr><td>1-3</td><td>1K → 5K</td><td>Melee only</td><td>Tutorial, plentiful health drops</td></tr>
+<tr><td>4-6</td><td>5K → 15K</td><td>Melee + ranged</td><td>Ranged goblins, first vehicle</td></tr>
+<tr><td>7-9</td><td>15K → 30K</td><td>+ elite</td><td>3x health elites, rarer pickups</td></tr>
+<tr><td>10</td><td>30K → 50K</td><td>+ boss</td><td>Goblin King (CPU ECS, full AI)</td></tr>
+<tr><td>Endless</td><td>Scales</td><td>Dynamic</td><td>AI Director controls everything</td></tr></tbody></table></div>
+<p><strong>Player abilities:</strong> Sprint (stamina), dodge roll (i-frames), weapon swap, vehicle mount/dismount, AoE ground slam (cooldown, unlocked wave 3).</p>
+
+<h3 id="14-3-performance-targets">14.3 Performance Targets</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Metric</th><th>Target</th></tr></thead><tbody><tr><td>Horde entities on screen</td><td>50,000+</td></tr>
+<tr><td>Frame rate (desktop, RTX 3060)</td><td>60 FPS</td></tr>
+<tr><td>Frame rate (browser, WebGPU)</td><td>30+ FPS</td></tr>
+<tr><td>Frame rate (M1 MacBook)</td><td>45+ FPS</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="15-platform-targets">15. Platform Targets</h2>
+
+<div class="table-wrap"><table><thead><tr><th>Platform</th><th>GPU Backend</th><th>Status</th></tr></thead><tbody><tr><td>macOS (Intel + Apple Silicon)</td><td>Metal</td><td>DONE (primary dev)</td></tr>
+<tr><td>Windows (x64)</td><td>Vulkan / DX12</td><td>Supported</td></tr>
+<tr><td>Linux (x64)</td><td>Vulkan</td><td>Supported</td></tr>
+<tr><td>Browser (WebGPU + WASM)</td><td>WebGPU</td><td>Planned</td></tr>
+<tr><td>Android (ARM64)</td><td>Vulkan</td><td>Planned</td></tr>
+<tr><td>iOS (ARM64)</td><td>Metal</td><td>Planned</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="16-licensing">16. Licensing</h2>
+
+<h3 id="mit-license">MIT License</h3>
+
+<p>nAIVE engine (<code>naive-core</code>, <code>naive-client</code>, <code>naive-runtime</code>) is licensed under the MIT License.</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>MIT License
+
+<p>Copyright (c) 2026 Mark Ollila</p>
+
+<p>Permission is hereby granted, free of charge, to any person obtaining a copy</p>
+<p>of this software and associated documentation files (the "Software"), to deal</p>
+<p>in the Software without restriction, including without limitation the rights</p>
+<p>to use, copy, modify, merge, publish, distribute, sublicense, and/or sell</p>
+<p>copies of the Software, and to permit persons to whom the Software is</p>
+<p>furnished to do so, subject to the following conditions:</p>
+
+<p>The above copyright notice and this permission notice shall be included in all</p>
+<p>copies or substantial portions of the Software.</p>
+
+<p>THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR</p>
+<p>IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,</p>
+<p>FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE</p>
+<p>AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER</p>
+<p>LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,</p>
+<p>OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE</p>
+<p>SOFTWARE.</p>
+</code></pre></div>
+
+<p><strong>What this means:</strong></p>
+
+<ul><li>Use nAIVE for any purpose — personal, commercial, educational</li>
+<li>Modify the source code however you want</li>
+<li>Sell games built with nAIVE — owe nothing, no royalties, no revenue share</li>
+<li>Fork nAIVE and build a competing engine — that's fine</li>
+<li>Include nAIVE in proprietary software — that's fine</li>
+<li>No CLA required for contributions</li>
+</ul>
+<p><strong>The server (<code>naive-server</code>) is licensed separately under BSL 1.1.</strong> See the companion Platform PRD for details. You do not need the server to build and ship games.</p>
+
+<h3 id="dependency-compatibility">Dependency Compatibility</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Dependency</th><th>License</th><th>Compatible</th></tr></thead><tbody><tr><td>wgpu</td><td>MIT/Apache-2.0</td><td class="winner">Yes</td></tr>
+<tr><td>hecs</td><td>MIT/Apache-2.0</td><td class="winner">Yes</td></tr>
+<tr><td>Rapier</td><td>Apache-2.0</td><td class="winner">Yes</td></tr>
+<tr><td>Kira</td><td>MIT/Apache-2.0</td><td class="winner">Yes</td></tr>
+<tr><td>mlua</td><td>MIT</td><td class="winner">Yes</td></tr>
+<tr><td>serde</td><td>MIT/Apache-2.0</td><td class="winner">Yes</td></tr>
+<tr><td>shader-slang</td><td>MIT</td><td class="winner">Yes</td></tr></tbody></table></div>
+<p>No GPL dependencies. All dependencies are MIT or Apache-2.0 compatible.</p>
+
+<hr>
+
+<h2 id="17-new-ecs-components-v5-0">17. New ECS Components (v5.0)</h2>
+
+<p>All v4.0 components remain. v5.0 adds:</p>
+
+<p><strong>Tier 1 — Implemented (v0.1.2)</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Component</th><th>Purpose</th></tr></thead><tbody><tr><td><code>health</code></td><td>Health points with current/max, dead flag. Engine fires <code>on_damage</code>/<code>on_death</code> callbacks.</td></tr>
+<tr><td><code>collision_damage</code></td><td>Auto-applies damage on physics contact. Configurable damage amount and destroy_on_hit.</td></tr>
+<tr><td><code>projectile</code></td><td>Runtime-spawned physics projectile with damage, lifetime, owner tracking.</td></tr>
+<tr><td><code>camera_mode</code></td><td><code>FirstPerson</code> or <code>ThirdPerson { distance, height_offset, pitch_min, pitch_max }</code>. Wall collision via raycast.</td></tr>
+<tr><td><code>character_controller</code></td><td>Capsule movement: walk, sprint, jump, step height</td></tr></tbody></table></div>
+<p><strong>Tier 2 — Production Foundations (planned)</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Component</th><th>Purpose</th></tr></thead><tbody><tr><td><code>particle_emitter</code></td><td>Billboard particle source with rate, lifetime, velocity, color, size curves</td></tr>
+<tr><td><code>pool_member</code></td><td>Marks entity as belonging to a named pool for acquire/release lifecycle</td></tr></tbody></table></div>
+<p><strong>Tier 3+ — Future</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Component</th><th>Purpose</th></tr></thead><tbody><tr><td><code>skeletal_mesh</code></td><td>glTF skinned mesh with bone hierarchy</td></tr>
+<tr><td><code>animation_state</code></td><td>Current clip, blend weight, state machine ref</td></tr>
+<tr><td><code>weapon_holder</code></td><td>Equipped weapons, current weapon, ammo counts</td></tr>
+<tr><td><code>vehicle_seat</code></td><td>Associates entity with a vehicle seat</td></tr>
+<tr><td><code>vehicle_physics</code></td><td>Wheeled vehicle rigid body configuration</td></tr>
+<tr><td><code>horde_config</code></td><td>GPU compute horde parameters for this world</td></tr>
+<tr><td><code>prediction_state</code></td><td>Unacknowledged input buffer for reconciliation</td></tr>
+<tr><td><code>interpolation_buffer</code></td><td>Last N server states for smooth rendering</td></tr>
+<tr><td><code>agent_brain</code></td><td>LLM NPC personality, memory slots, inference tier (server runs inference; see Platform PRD Section 10)</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="18-implementation-roadmap">18. Implementation Roadmap</h2>
+
+<p><strong>Phase 1 (Weeks 1-4): Snake Sweeper + Headless Mode</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Week</th><th>Deliverable</th></tr></thead><tbody><tr><td>1</td><td>Snake Sweeper core gameplay</td></tr>
+<tr><td>2</td><td>Snake Sweeper polish: particles, heartbeat, HUD</td></tr>
+<tr><td>3</td><td>Headless mode improvements for testing</td></tr>
+<tr><td>4</td><td>State delta encoding/decoding in naive-core</td></tr></tbody></table></div>
+<p><strong>Phase 1.5 (Informed by Snake Sweeper Devlog): Lua API Polish</strong></p>
+
+<p>Snake Sweeper was built by Claude Code (Opus 4.6) in a single session using only <code>naive init</code> + CLAUDE.md as documentation. The devlog identified concrete API gaps that blocked or complicated the build. These are small, focused additions that improve the game development experience without architectural changes.</p>
+
+<div class="table-wrap"><table><thead><tr><th>API</th><th>Priority</th><th>Rationale</th></tr></thead><tbody><tr><td><code>entity.get_rotation(id) -> pitch, yaw, roll</code></td><td>High</td><td>Complete the transform API. <code>set_rotation</code> exists but <code>get_rotation</code> doesn't. Any game with dynamic rotation needs manual tracking without this.</td></tr>
+<tr><td><code>entity.exists(id) -> bool</code></td><td>High</td><td class="poor">No way to check if an entity is alive. <code>entity.destroy()</code> is deferred to end-of-frame, creating a race condition with <code>entity.spawn()</code> in the same frame. <code>exists()</code> enables defensive programming.</td></tr>
+<tr><td><code>entity.set_base_color(id, r, g, b)</code></td><td>High</td><td>Only emission/roughness/metallic can be overridden at runtime. Base color requires pre-authored materials, limiting dynamic visual state changes. The devlog used emission-only tinting as a workaround, producing a glow-heavy aesthetic.</td></tr>
+<tr><td><code>camera.world_to_screen(x, y, z) -> sx, sy, visible</code></td><td>High</td><td>Essential for any game that overlays UI on 3D entities (damage numbers, name tags, Minesweeper numbers). The devlog manually calculated screen projection from camera FOV — 5 lines of fragile math that breaks with camera movement.</td></tr>
+<tr><td><code>input.any_just_pressed() -> bool</code></td><td>Medium</td><td class="poor">No "any key" query. Splash screens require checking every mapped action individually.</td></tr>
+<tr><td><code>ui.text_width(text, font_size) -> pixels</code></td><td>Medium</td><td class="poor">No text measurement. Centering text requires magic numbers tuned by eye.</td></tr>
+<tr><td><code>entity.destroy_by_prefix(prefix)</code></td><td>Medium</td><td>Bulk entity cleanup. Procedural games (grids, particles) track hundreds of entity IDs in arrays for cleanup.</td></tr>
+<tr><td><code>math.lerp(a, b, t) -> number</code></td><td>Low</td><td>Used constantly for animations, fades, easing. Currently written inline everywhere.</td></tr></tbody></table></div>
+<p><strong>Key Discovery: Deferred <code>entity.destroy()</code> Behavior</strong></p>
+
+<p><code>entity.destroy(id)</code> is queued and executed at end-of-frame. If <code>entity.spawn(id)</code> is called in the same frame after <code>entity.destroy(id)</code>, the spawn is a no-op (entity still exists), and the deferred destroy then removes it. This caused invisible entities and immediate deaths on level transitions. The safe pattern is: <strong>never destroy entities you might re-use; hide them with <code>set_visible(false)</code> and reposition.</strong> This must be documented in CLAUDE.md, the Game Development Guide, and engine docstrings.</p>
+
+<p><strong>Phase 2 (Weeks 5-12): Intelligence Layer</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Weeks</th><th>Deliverable</th></tr></thead><tbody><tr><td>5-6</td><td>NL Compiler v1 via Claude API MCP tool</td></tr>
+<tr><td>7-8</td><td>Gen-3DGS preview tier: text → Gaussian splat</td></tr>
+<tr><td>9-10</td><td>Neural shader prototype: style transfer pass</td></tr>
+<tr><td>11-12</td><td>WebGPU/WASM browser build</td></tr></tbody></table></div>
+<p><strong>Phase 3: Engine Systems — Tiered by Game Capability</strong></p>
+
+<p>The engine provides generic systems and Lua/YAML APIs. Game developers (human or AI) build content, logic, and game rules on top. HAVOC is a proof game built by a developer using these engine systems — it is not built into the engine.</p>
+
+<p><strong>Tier 1 — Gameplay Primitives</strong> (unblocks any action game) <strong>DONE v0.1.2</strong></p>
+
+<p>These systems let a game developer build a playable shooter/brawler/survival game at CPU entity scale. Implemented in engine version 0.1.2.</p>
+
+<div class="table-wrap"><table><thead><tr><th>System</th><th>Engine Provides</th><th>Game Dev Uses Via</th></tr></thead><tbody><tr><td>Health/Damage components</td><td>Generic <code>Health</code> ECS component. Engine applies damage, tracks death state, fires <code>on_damage</code>/<code>on_death</code> callbacks.</td><td>Lua: <code>entity.get_health(id)</code>, <code>entity.damage(id, amount)</code>, <code>entity.heal(id, amount)</code>. YAML: <code>health: { max: 100 }</code> on entities.</td></tr>
+<tr><td>Projectile system</td><td>Engine spawns physics-driven projectile entities with velocity, gravity, lifetime, auto-damage via <code>CollisionDamage</code>.</td><td>Lua: <code>entity.spawn_projectile(owner, mesh, material, pos, dir, speed, damage, lifetime, gravity)</code></td></tr>
+<tr><td>Third-person camera</td><td>Camera mode with configurable offset, collision-aware pullback via Rapier raycast.</td><td>YAML: <code>camera: { mode: third_person, distance: 4.0, height_offset: 1.5, pitch_limits: [-60, 75] }</code></td></tr>
+<tr><td>Hitscan API</td><td>Raycast from origin in direction, returns hit entity + point + normal. Self-exclusion built in.</td><td>Lua: <code>physics.hitscan(ox, oy, oz, dx, dy, dz, range)</code> returning <code>hit, entity_id, distance, hx, hy, hz, nx, ny, nz</code></td></tr>
+<tr><td>Collision damage</td><td><code>CollisionDamage</code> component auto-applies damage on physics contact. Projectile owner-skip prevents self-damage.</td><td>YAML: <code>collision_damage: { damage: 25, destroy_on_hit: false }</code>. Engine handles detection automatically.</td></tr></tbody></table></div>
+<p><strong>Tier 2 — Production Foundations</strong> (makes nAIVE a shippable engine)</p>
+
+<p>Informed by the HAVOC dev log. A complete Vampire Survivors prototype was built in nAIVE in a single session, validating Tier 1 systems. But the developer hit hard walls — engine crashes from entity overflow, mandatory workarounds for deferred destroy, no VFX, no runtime queries. These aren't missing features; they're the difference between "prototyping engine" and "real engine." The HAVOC developer's verdict: <em>"If I were pitching to a publisher, this nAIVE prototype would be the vertical slice demo. Then we'd rebuild it in a real engine."</em> Tier 2 ensures they don't have to.</p>
+
+<div class="table-wrap"><table><thead><tr><th>System</th><th>Engine Provides</th><th>Game Dev Uses Via</th></tr></thead><tbody><tr><td>Dynamic GPU instance buffer</td><td class="poor">Instance buffer grows automatically when entity count exceeds current capacity. No hard 256-entity ceiling. Graceful warning at configurable thresholds.</td><td>Transparent — game dev spawns entities freely. Engine handles buffer resizing. Target: 4K+ CPU entities before GPU becomes the bottleneck, not an arbitrary buffer.</td></tr>
+<tr><td>Safe entity lifecycle</td><td>Deferred destroy processes before spawns within the same frame. Spawn+destroy in one frame no longer doubles buffer usage. Optional <code>entity.destroy_immediate()</code> for cases where the dev needs guaranteed slot reclamation.</td><td>Lua: existing <code>entity.destroy()</code> becomes safe by default. <code>entity.destroy_immediate(id)</code> for explicit control.</td></tr>
+<tr><td class="winner">Built-in entity pooling</td><td>Engine-managed object pools. Pre-allocate N entities of a type, acquire/release without spawn/destroy overhead. Zero GPU buffer churn.</td><td>Lua: <code>entity.pool_create(name, count, mesh, material)</code>, <code>entity.pool_acquire(name)</code> returns id, <code>entity.pool_release(id)</code>. YAML: <code>pool: { name: "goblins", count: 200, mesh: ..., material: ... }</code></td></tr>
+<tr><td>Particle system</td><td>Lightweight 2D billboard particles with lifetime, velocity, gravity, color fade, size curve. GPU-instanced rendering from a dedicated particle buffer (separate from entity buffer).</td><td>Lua: <code>particles.emit(x, y, z, { count: 20, lifetime: 0.5, speed: 3.0, color: {1,1,0}, gravity: -5 })</code>. YAML: <code>particle_emitter: { rate: 50, lifetime: 1.0, ... }</code> on entities.</td></tr>
+<tr><td>Runtime entity queries</td><td>Query entities by tag at runtime. Returns array of entity IDs matching a tag.</td><td>Lua: <code>scene.find_by_tag(tag)</code> returns <code>{id1, id2, ...}</code>. Eliminates hardcoded ID arrays in game scripts.</td></tr>
+<tr><td>Event subscription</td><td>Lua scripts can subscribe to named events and receive callbacks. Completes the event bus (currently write-only from Lua).</td><td>Lua: <code>events.on("enemy_killed", function(data) ... end)</code>, <code>events.emit("enemy_killed", { id = eid, killer = pid })</code>. Cross-script communication without polling the <code>game</code> table.</td></tr></tbody></table></div>
+<p><strong>Tier 3 — GPU Scale</strong> (unblocks 50K entities)</p>
+
+<p>These systems move entity simulation from CPU to GPU. Game developers configure behavior via YAML and SLANG compute shaders.</p>
+
+<div class="table-wrap"><table><thead><tr><th>System</th><th>Engine Provides</th><th>Game Dev Uses Via</th></tr></thead><tbody><tr><td>GPU compute entity system</td><td>Generic compute pipeline: storage buffers for entity data, configurable dispatch, spawn/death slot management with atomic free-list.</td><td>YAML: <code>gpu_entity_system: { max_entities: 65536, compute_shader: shaders/compute/horde.slang }</code>. Game dev writes SLANG shader for entity behavior.</td></tr>
+<tr><td>GPU neighbor grid</td><td>Spatial hash built on GPU each frame. Entities binned into cells. Query API for compute shaders.</td><td>Engine auto-builds grid from entity positions. Game dev's compute shader calls <code>query_neighbors(cell)</code> in SLANG.</td></tr>
+<tr><td>GPU instanced rendering</td><td>Render 50K+ entities from compute-output transform buffer in one draw call per mesh type.</td><td>Automatic — engine reads instance buffer written by compute shader. Game dev configures mesh/material in YAML.</td></tr>
+<tr><td>Flow field pathfinding</td><td>GPU wavefront propagation from target position. 2D grid of direction vectors. Entities sample field for steering.</td><td>YAML: <code>flow_field: { resolution: 128, cell_size: 4.0 }</code>. Engine recomputes when target moves. Game dev's compute shader samples <code>flow_field_texture</code>.</td></tr></tbody></table></div>
+<p><strong>Tier 4 — Animation</strong> (unblocks animated characters)</p>
+
+<div class="table-wrap"><table><thead><tr><th>System</th><th>Engine Provides</th><th>Game Dev Uses Via</th></tr></thead><tbody><tr><td>Skeletal animation</td><td>glTF skinned mesh loading (joints, weights, inverse bind matrices). Animation clip parsing. State machine with crossfade blending. GPU skinning.</td><td>YAML: animation state machine definition (states, transitions, conditions). Lua: <code>entity.set_anim_state(id, "run")</code>, <code>entity.set_anim_param(id, "speed", 5.0)</code></td></tr>
+<tr><td>VAT loader + renderer</td><td>Load baked vertex animation textures (.exr). Vertex shader samples position/normal per frame. Works with GPU instanced rendering.</td><td>YAML: <code>animation: { type: vat, texture: assets/vat/goblin.exr, clips: { walk: { start: 0, end: 30 } } }</code></td></tr></tbody></table></div>
+<p><strong>Tier 5 — Vehicles</strong> (unblocks vehicle combat)</p>
+
+<div class="table-wrap"><table><thead><tr><th>System</th><th>Engine Provides</th><th>Game Dev Uses Via</th></tr></thead><tbody><tr><td>Vehicle physics</td><td>Rapier wheel joints, raycast suspension, engine torque, steering angle, brake force.</td><td>YAML: <code>vehicle: { wheels: 4, max_speed: 25.0, suspension_stiffness: 30.0 }</code></td></tr>
+<tr><td>Mount/dismount</td><td>Engine re-parents player to vehicle seat, switches input context (movement → driving). Proximity trigger.</td><td>Lua: <code>vehicle.mount(player_id, vehicle_id, "driver")</code>, <code>vehicle.dismount(player_id)</code>. Automatic on interact key near vehicle.</td></tr>
+<tr><td>LOD system</td><td>Distance-based mesh switching. Billboard fallback at far distance. Engine selects LOD per frame.</td><td>YAML: <code>lod: { distances: [30, 80], meshes: [lod0.gltf, lod1.gltf], billboard: sprite.png }</code></td></tr></tbody></table></div>
+<p><strong>Implementation Schedule</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Phase</th><th>Tier</th><th>Weeks</th><th>Deliverables</th></tr></thead><tbody><tr><td>3a</td><td>Tier 1: Gameplay Primitives</td><td>—</td><td><strong>DONE (v0.1.2)</strong> Health/damage, projectiles, third-person camera, hitscan API, collision damage</td></tr>
+<tr><td>3b</td><td>Tier 2: Production Foundations</td><td>13-18</td><td>Dynamic instance buffer, safe entity lifecycle, entity pooling, particle system, runtime queries, event subscription</td></tr>
+<tr><td>3c</td><td>Tier 3: GPU Scale</td><td>19-24</td><td>GPU compute entity system, neighbor grid, instanced rendering, flow field</td></tr>
+<tr><td>3d</td><td>Tier 4: Animation</td><td>25-28</td><td>Skeletal animation + state machine, VAT loader + renderer</td></tr>
+<tr><td>3e</td><td>Tier 5: Vehicles</td><td>29-32</td><td>Vehicle physics, mount/dismount, LOD system</td></tr></tbody></table></div>
+<p><strong>Phase 4: HAVOC — Proof Game (Built by Game Developer Using Engine)</strong></p>
+
+<p>HAVOC is built entirely in YAML + Lua + SLANG using the engine systems from Phase 3. It validates that the engine APIs are sufficient for a AAA-scale horde survival game. No Rust code is written for HAVOC — if Rust is needed, that's a missing engine system.</p>
+
+<p>A HAVOC prototype was already built during Tier 1 development using only CPU entities and Lua-side simulation. It validated the gameplay loop (driving, killing, leveling, upgrading) but hit hard limits: 256-entity ceiling, deferred destroy crashes, no VFX. Tier 2 removes these walls. The full HAVOC rebuild on Tier 2+ will prove nAIVE is a production engine, not just a prototyping tool.</p>
+
+<div class="table-wrap"><table><thead><tr><th>Weeks</th><th>Deliverable</th><th>Engine Systems Exercised</th></tr></thead><tbody><tr><td>33-34</td><td>HAVOC core: arena scene, player controller, horde (pooled + particles)</td><td>Tier 1 (health, hitscan, third-person camera) + Tier 2 (pooling, particles, dynamic buffer, events)</td></tr>
+<tr><td>35-36</td><td>HAVOC GPU horde: 50K goblin swarm, wave progression, 5 weapon types</td><td>Tier 3 (GPU entities, flow field) + Tier 4 (skeletal anim for player, VAT for horde)</td></tr>
+<tr><td>37-38</td><td>HAVOC vehicles + polish: 2 vehicles, LOD, 10-wave campaign</td><td>Tier 5 (vehicles, mount/dismount, LOD)</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="19-technical-specifications">19. Technical Specifications</h2>
+
+<h3 id="19-1-client-requirements">19.1 Client Requirements</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Component</th><th>Minimum</th><th>Recommended</th><th>HAVOC (50K horde)</th></tr></thead><tbody><tr><td>GPU</td><td>Intel UHD 620</td><td>Any dedicated GPU</td><td>RTX 3060+</td></tr>
+<tr><td>VRAM</td><td>512 MB</td><td>2 GB</td><td>4 GB+</td></tr>
+<tr><td>RAM</td><td>512 MB</td><td>2 GB</td><td>4 GB</td></tr>
+<tr><td>Browser</td><td>Chrome 113+</td><td>Latest stable</td><td>Latest + WebGPU</td></tr></tbody></table></div>
+<h3 id="19-2-performance-targets">19.2 Performance Targets</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Metric</th><th>Target</th></tr></thead><tbody><tr><td>Frame rate (Snake Sweeper, M1 MacBook)</td><td>>60 FPS</td></tr>
+<tr><td>Frame rate (HAVOC, desktop RTX 3060)</td><td>>60 FPS</td></tr>
+<tr><td>Frame rate (HAVOC, browser WebGPU)</td><td>>30 FPS</td></tr>
+<tr><td>Horde entity count (desktop)</td><td>50,000+</td></tr>
+<tr><td>Horde entity count (browser)</td><td>20,000+</td></tr>
+<tr><td>NL Compiler accuracy</td><td>>80% first-attempt correct</td></tr>
+<tr><td>Neural shader FPS</td><td>>30 FPS on M1 with one pass</td></tr>
+<tr><td class="poor">WASM binary size</td><td class="winner"><80 MB</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="20-risk-assessment">20. Risk Assessment</h2>
+
+<div class="table-wrap"><table><thead><tr><th>Risk</th><th>Severity</th><th>Mitigation</th><th>Fallback</th></tr></thead><tbody><tr><td>GPU compute portability</td><td>High</td><td>SLANG cross-compiles to WGSL, SPIR-V, Metal</td><td>CPU fallback with 5,000 entities</td></tr>
+<tr><td>50K entities on WebGPU</td><td>High</td><td>Aggressive LOD, billboard at distance</td><td>Cap browser at 20,000</td></tr>
+<tr><td>VAT texture memory</td><td>Medium</td><td>BC6H compression, 3-5 clips per type</td><td>Rotation-only animation</td></tr>
+<tr><td>WebGPU browser support</td><td>Medium</td><td>WebGL2 fallback renderer</td><td class="winner">Native-first distribution</td></tr>
+<tr><td>SLANG compilation speed</td><td>Low</td><td>Shader cache (compile once, reuse)</td><td>Pre-compiled WGSL fallback</td></tr>
+<tr><td>Rapier scaling for vehicles</td><td>Low</td><td>Rapier handles hundreds of rigid bodies easily</td><td>Simplified vehicle physics</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="21-comparison-to-existing-engines">21. Comparison to Existing Engines</h2>
+
+<div class="table-wrap"><table><thead><tr><th>Feature</th><th>nAIVE v5.0</th><th>Unity</th><th>Unreal</th><th>Godot</th></tr></thead><tbody><tr><td>License</td><td><strong>MIT</strong></td><td>Subscription</td><td>Royalty</td><td>MIT</td></tr>
+<tr><td>Language</td><td>Rust</td><td>C#</td><td>C++/Blueprints</td><td>GDScript/C#</td></tr>
+<tr><td>World format</td><td>YAML + Lua</td><td>Proprietary</td><td>Proprietary</td><td>tscn (text)</td></tr>
+<tr><td>AI-generatable</td><td class="winner"><strong>Native</strong></td><td>Limited</td><td>No</td><td>Partial</td></tr>
+<tr><td>Gaussian splatting</td><td class="winner"><strong>Native</strong></td><td>Plugin</td><td>Plugin</td><td>No</td></tr>
+<tr><td>GPU entity sim (50K+)</td><td class="winner"><strong>Native</strong></td><td>VFX Graph</td><td><strong>Niagara</strong></td><td>No</td></tr>
+<tr><td>Hot-reload</td><td class="winner"><200ms</td><td>5-60s</td><td>10-30s</td><td>1-3s</td></tr>
+<tr><td>MCP / AI control</td><td class="winner"><strong>Native</strong></td><td>No</td><td>No</td><td>No</td></tr>
+<tr><td>Neural shaders</td><td class="winner"><strong>Native (SLANG)</strong></td><td>No</td><td>No</td><td>No</td></tr>
+<tr><td>Browser target</td><td>WebGPU WASM</td><td>Limited</td><td>Pixel streaming</td><td>Planned</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="appendix-a-existing-codebase-map">Appendix A: Existing Codebase Map</h2>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>crates/
+<p>  naive-core/src/</p>
+<p>    lib.rs, components.rs, scene.rs, transform.rs, tween.rs, events.rs</p>
+<p>  naive-client/src/</p>
+<p>    lib.rs             — Re-exports naive-core + declares all engine modules</p>
+<p>    engine.rs          — Core engine loop</p>
+<p>    pipeline.rs        — Deferred render pipeline</p>
+<p>    shader.rs          — SLANG → WGSL compilation</p>
+<p>    world.rs           — Scene loading, ECS setup</p>
+<p>    scripting.rs       — Lua runtime</p>
+<p>    physics.rs         — Rapier 3D</p>
+<p>    audio.rs           — Kira 0.9</p>
+<p>    ui.rs              — Immediate-mode 2D overlay</p>
+<p>    font.rs            — Bitmap font atlas</p>
+<p>    command.rs         — Command socket server</p>
+<p>    cli.rs             — CLI arguments</p>
+<p>    splat.rs           — Gaussian splatting renderer</p>
+<p>    material.rs        — PBR materials from YAML</p>
+<p>    mesh.rs            — glTF + procedural meshes</p>
+<p>    ... (25 modules total)</p>
+<p>  naive-runtime/src/</p>
+<p>    main.rs            — Thin CLI entry point</p>
+<p>    bin/naive_mcp.rs   — MCP JSON-RPC server</p>
+<p>  naive-server/src/    — (see Platform PRD)</p>
+<p>    lib.rs, main.rs</p>
+</code></pre></div>
+
+<h2 id="appendix-b-havoc-weapon-stats">Appendix B: HAVOC Weapon Stats</h2>
+
+<div class="table-wrap"><table><thead><tr><th>Weapon</th><th>Type</th><th>Damage</th><th>Fire Rate</th><th>Range</th><th>Magazine</th><th>Reload</th></tr></thead><tbody><tr><td>Assault Rifle</td><td>Hitscan</td><td>22</td><td>10/s</td><td>100m</td><td>30</td><td>2.0s</td></tr>
+<tr><td>Shotgun</td><td>Hitscan (8 pellets)</td><td>12×8</td><td>1.5/s</td><td>20m</td><td>6</td><td>2.5s</td></tr>
+<tr><td>Rocket Launcher</td><td>Projectile</td><td>120 (splash)</td><td>1/s</td><td>∞</td><td>1</td><td>3.0s</td></tr>
+<tr><td>Flamethrower</td><td>Continuous</td><td>80/s</td><td>—</td><td>15m</td><td>100 fuel</td><td>—</td></tr>
+<tr><td>Sword</td><td>Melee</td><td>60</td><td>2/s</td><td>2m</td><td>∞</td><td>—</td></tr>
+<tr><td>Mounted MG</td><td>Hitscan</td><td>15</td><td>15/s</td><td>80m</td><td>∞ (overheat)</td><td>2.0s cool</td></tr></tbody></table></div>
+<h2 id="appendix-c-glossary">Appendix C: Glossary</h2>
+
+<div class="table-wrap"><table><thead><tr><th>Term</th><th>Definition</th></tr></thead><tbody><tr><td><strong>GPU compute entity</strong></td><td>Entity simulated on the GPU via compute shaders</td></tr>
+<tr><td><strong>VAT</strong></td><td>Vertex Animation Texture — baked skeletal animation sampled on GPU</td></tr>
+<tr><td><strong>Neighbor grid</strong></td><td>GPU-side spatial hash for entity-entity collision queries</td></tr>
+<tr><td><strong>Flow field</strong></td><td>Precomputed pathfinding grid (each cell stores a direction vector)</td></tr>
+<tr><td><strong>Horde</strong></td><td>Large group of GPU compute entities acting as a swarm</td></tr>
+<tr><td><strong>SLANG</strong></td><td>NVIDIA shader language that cross-compiles to WGSL/SPIR-V/Metal/CUDA</td></tr>
+<tr><td><strong>Gen-3DGS</strong></td><td>Generative Gaussian Splatting: text → 3D splat assets</td></tr>
+<tr><td><strong>Neural pass</strong></td><td>Render pipeline stage implemented as a trained neural network</td></tr>
+<tr><td><strong>LOD</strong></td><td>Level of Detail — reducing mesh complexity at distance</td></tr>
+<tr><td><strong>Client-side prediction</strong></td><td>Client simulates local movement before server confirmation</td></tr>
+<tr><td><strong>Entity interpolation</strong></td><td>Smoothly rendering entities between network state updates</td></tr>
+<tr><td><strong>HAVOC</strong></td><td>nAIVE v5.0 proof game: horde survival with vehicle combat</td></tr>
+<tr><td><strong>naive-core</strong></td><td>MIT library crate: shared types, ECS components, scene format, serialization</td></tr>
+<tr><td><strong>naive-client</strong></td><td>MIT library crate: full engine — renderer, audio, input, physics, scripting, UI, all engine modules. Re-exports naive-core</td></tr>
+<tr><td><strong>naive-runtime</strong></td><td class="poor">MIT binary crate: thin CLI entry point that uses naive-client. Produces <code>naive</code>, <code>naive-runtime</code>, and <code>naive_mcp</code> binaries</td></tr></tbody></table></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="container">
+    <p>nAIVE — AI-Native Interactive Visual Engine · Created by <a href="https://markollila.com" target="_blank">Mark Ollila</a> · <a href="https://github.com/poro/nAIVE" target="_blank">GitHub</a></p>
+  </div>
+</footer>
+
+</body>
+</html>

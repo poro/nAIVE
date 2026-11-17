@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI-Native Game Engine — nAIVE Engine</title>
+<meta name="description" content="nAIVE: AI-Native Interactive Visual Engine. Rust + WebGPU game engine built for the AI era.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script defer src="https://analytics.game-agents.com/script.js" data-website-id="b154a54a-9836-43ca-a3a6-9736806255d0"></script>
+<link rel="stylesheet" href="/css/style.css">
+
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <a href="/" class="logo"><span>n</span>AIVE</a>
+    <button class="menu-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')">☰</button>
+    <div class="nav-links">
+      <a href="/" class="active">Home</a>
+          <a href="/whitepaper.html">Whitepaper</a>
+          <a href="/#install">Install</a>
+          <a href="/architecture.html">Architecture</a>
+          <a href="/demos.html">Demos</a>
+      <a href="https://github.com/poro/nAIVE" target="_blank" class="gh-btn">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge"><span class="dot"></span> Open Source Game Engine · v0.1.23</div>
+    <h1>The Game Engine<br>Built for the <span class="ai">AI Era</span></h1>
+    <p class="sub">nAIVE is an AI-Native Interactive Visual Engine. Rust + WebGPU core, YAML-driven pipelines, Lua scripting, sub-second hot-reload — designed so AI and humans can build games together.</p>
+    <div class="hero-actions">
+      <a href="https://github.com/poro/nAIVE" target="_blank" class="btn-primary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        View on GitHub
+      </a>
+      <a href="#install" class="btn-secondary">Install →</a>
+    </div>
+    <div class="tech-badges">
+      <span class="badge">🦀 Rust</span>
+      <span class="badge">🔺 WebGPU</span>
+      <span class="badge">🌙 Lua 5.4</span>
+      <span class="badge">📄 YAML</span>
+      <span class="badge">🧠 MCP Interface</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="num">&lt;50<span class="unit">ms</span></div><div class="label">Script Hot-Reload</div></div>
+      <div class="stat"><div class="num">&lt;200<span class="unit">ms</span></div><div class="label">Shader Rebuild</div></div>
+      <div class="stat"><div class="num">50<span class="unit">K</span></div><div class="label">GPU Units at ~1,000 fps</div></div>
+      <div class="stat"><div class="num">49<span class="unit">K</span></div><div class="label">Lines of Rust</div></div>
+      <div class="stat"><div class="num">19<span class="unit"> built-in</span></div><div class="label">Embedded Demos</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="install">
+  <div class="container">
+    <div class="section-label">Get Started</div>
+    <h2>Install in One Line</h2>
+    <p class="desc">Homebrew builds the CLI and the standalone player from the release source. Prebuilt player and demo-app downloads for Apple silicon are on <a href="https://github.com/poro/nAIVE/releases/latest" target="_blank">GitHub Releases</a>.</p>
+    <div class="code-block" style="max-width:640px;margin:0 auto">
+      <div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>terminal</span></div>
+<pre><code><span class="cm">$ brew install poro/tap/naive</span>
+<span class="cm">$ naive init my-game &amp;&amp; cd my-game</span>
+<span class="cm">$ naive edit</span>     <span class="str"># open the AI scene editor (MCP socket)</span>
+<span class="cm">$ naive test</span>     <span class="str"># run Lua playtests headlessly, no GPU</span>
+<span class="cm">$ naive build</span>    <span class="str"># ship a standalone .app or Linux bundle</span>
+<span class="cm">$ naive demo</span>     <span class="str"># browse the 19 built-in demos</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <div class="section-label">Core Features</div>
+    <h2>AI-Native by Design</h2>
+    <p class="desc">Every architectural decision in nAIVE was made to enable AI collaboration. Not as a plugin — as the foundation.</p>
+    <div class="features-grid">
+      <div class="feature"><div class="icon">⚡</div><h3>Sub-Second Hot-Reload</h3><p>Shaders in &lt;200ms, scenes in &lt;100ms, scripts in &lt;50ms. Zero frame drops. State preserved across reloads. 100x faster than Unity/Unreal.</p></div>
+      <div class="feature"><div class="icon">📄</div><h3>YAML-Driven Everything</h3><p>Scenes, render pipelines, materials, input bindings — all human-readable YAML. Git-friendly, diffable, and trivially generatable by LLMs.</p></div>
+      <div class="feature"><div class="icon">🧠</div><h3>MCP Command Interface</h3><p>20 typed tools over a Unix socket: spawn and edit entities, run Lua, capture frames and diff screenshots, run tests, benchmark, undo. Claude, GPT, or your own agent drives the running engine.</p></div>
+      <div class="feature"><div class="icon">🧪</div><h3>Headless AI Playtesting</h3><p>The simulation lives in its own GPU-free crate, so tests run the same construction, physics and Lua as the game — no GPU, no window. Fixed timestep, supervised runs with hard deadlines.</p></div>
+      <div class="feature"><div class="icon">🔺</div><h3>Declarative Render DAG</h3><p>One YAML file defines the deferred PBR pipeline: shadows, G-buffer, Gaussian splats, lighting, bloom, tonemap, FXAA. Topological sorting and cycle detection built in.</p></div>
+      <div class="feature"><div class="icon">🌐</div><h3>Gaussian Splats (3DGS)</h3><p>First-class engine feature. PLY loading, depth compositing with mesh geometry, hardware-accelerated rendering. Not a plugin — built in.</p></div>
+      <div class="feature"><div class="icon">💥</div><h3>Dynamic Physics</h3><p><code>entity.spawn_dynamic()</code> for runtime physics bodies. Physics materials with restitution/friction, CCD for fast projectiles, impulse/force/velocity API.</p></div>
+      <div class="feature"><div class="icon">🎮</div><h3>19 Embedded Demos</h3><p>Run <code>naive demo</code> to browse and launch any of 19 demos across 6 categories — no downloads needed. Getting Started, Physics, Visual, Gameplay, Stress Test, Showcase.</p></div>
+      <div class="feature"><div class="icon">🐜</div><h3>GPU Swarms</h3><p>50,000 units moving, separating, path-finding on flow fields and fighting in GPU compute — about 1,000 fps on an M4 Max. Driven from Lua with the <code>swarm</code> API.</p></div>
+      <div class="feature"><div class="icon">🌗</div><h3>Shadows &amp; Sky Lighting</h3><p>Cascaded shadow maps, frustum culling, and an optional sky with image-based lighting — all from the YAML pipeline and scene settings.</p></div>
+      <div class="feature"><div class="icon">📦</div><h3>Standalone Games</h3><p><code>naive build</code> packages a macOS app or Linux bundle with a player built without the shader compiler; shaders are precompiled to WGSL.</p></div>
+      <div class="feature"><div class="icon">🛡️</div><h3>Sandboxed Lua</h3><p>Every script call runs under CPU, memory and time limits — including pattern matching and library calls — so agent-written code cannot freeze the editor.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="feedback">
+  <div class="container">
+    <div class="section-label">Self-Improving Engine</div>
+    <h2>Dev Feedback Loop</h2>
+    <p class="desc">Every AI-built game is a test case. Zero-cost feedback. Structured, not narrative.</p>
+    <p style="color:var(--text2);max-width:720px;margin-bottom:32px;line-height:1.7">Every <code>naive init</code> project includes a structured <code>dev.log</code> template. AI agents maintain it throughout development (instructed via CLAUDE.md), recording what worked, what broke, and what's missing. When done, <code>naive submit-log</code> posts it as a GitHub Issue with the <code>dev-log</code> label. The engine agent reads all dev.logs worldwide and evolutionarily improves the engine. The more games built, the better the engine gets.</p>
+    <div class="pipeline-flow">
+      <div class="pipe-step"><h4>naive init</h4><p>Project + dev.log template</p></div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><h4>Build Game</h4><p>AI maintains dev.log</p></div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><h4>submit-log</h4><p>GitHub Issue · dev-log label</p></div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><h4>Triage</h4><p>Engine agent reads all logs</p></div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><h4>Improve</h4><p>Engine evolves</p></div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><h4>Release</h4><p>Better engine for all</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="demos">
+  <div class="container">
+    <div class="section-label">Demo Browser</div>
+    <h2>19 Demos. One Command.</h2>
+    <p class="desc">Run <code>naive demo</code> to browse and launch any embedded demo. No downloads, no setup — everything is compiled into the binary via <code>include_str!()</code>.</p>
+    <div class="card-grid">
+      <div class="card"><h3>🚀 Getting Started</h3><p style="color:var(--text2);font-size:0.9rem">Hello Cube, basic scene setup — get running in seconds.</p></div>
+      <div class="card"><h3>⚡ Physics</h3><p style="color:var(--text2);font-size:0.9rem">Rigid bodies, collisions, physics materials, CCD, spawn_dynamic().</p></div>
+      <div class="card"><h3>🎨 Visual</h3><p style="color:var(--text2);font-size:0.9rem">PBR materials, lighting, Gaussian splats, camera effects.</p></div>
+      <div class="card"><h3>🎮 Gameplay</h3><p style="color:var(--text2);font-size:0.9rem">Health/damage, projectiles, third-person camera, input handling.</p></div>
+      <div class="card"><h3>🔥 Stress Test</h3><p style="color:var(--text2);font-size:0.9rem">Push the engine to its limits — mass spawning, particle storms.</p></div>
+      <div class="card"><h3>🏆 Showcase</h3><p style="color:var(--text2);font-size:0.9rem">Complete mini-games demonstrating full engine capabilities.</p></div>
+    </div>
+    <div class="code-block" style="max-width:500px;margin:32px auto 0">
+      <div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>terminal</span></div>
+      <pre><code><span class="cm">$ naive demo</span>
+<span class="str">Available demos (19):</span>
+  <span class="kw">Getting Started</span> · <span class="kw">Physics</span> · <span class="kw">Visual</span>
+  <span class="kw">Gameplay</span> · <span class="kw">Stress Test</span> · <span class="kw">Showcase</span>
+
+<span class="cm">$ naive demo physics_materials</span>
+<span class="str">▶ Running: Physics Materials Demo...</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="pipeline">
+  <div class="container">
+    <div class="section-label">Render Pipeline</div>
+    <h2>One File. Full PBR.</h2>
+    <p class="desc">A complete deferred pipeline — cascaded shadows, Gaussian splats, PBR lighting with sky IBL, bloom and tonemapping — defined in YAML. Use the engine's shaders by name, or point any pass at your own Slang shader.</p>
+    <div class="pipeline-flow">
+      <div class="pipe-step"><h4>G-Buffer</h4><p>Albedo · Normal · Depth · Emission</p></div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><h4>Splat Pass</h4><p>3DGS Point Clouds</p></div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><h4>Deferred Light</h4><p>PBR · 32 Lights · Compositing</p></div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><h4>Bloom</h4><p>13-tap Tent Filter</p></div>
+      <span class="pipe-arrow">→</span>
+      <div class="pipe-step"><h4>Tonemap</h4><p>ACES · Vignette · Output</p></div>
+    </div>
+    <div class="code-block">
+      <div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>pipeline.yaml</span></div>
+      <pre><code><span class="kw">version:</span> <span class="num">2</span>
+<span class="kw">settings:</span>
+  <span class="kw">vsync:</span> <span class="num">true</span>
+  <span class="kw">hdr:</span> <span class="num">true</span>
+
+<span class="kw">resources:</span>
+  - <span class="kw">name:</span> <span class="str">gbuffer_albedo</span>
+    <span class="kw">format:</span> rgba8
+    <span class="kw">size:</span> viewport
+  - <span class="kw">name:</span> <span class="str">gbuffer_normal</span>
+    <span class="kw">format:</span> rgba16f
+    <span class="kw">size:</span> viewport
+  - <span class="kw">name:</span> <span class="str">hdr_buffer</span>
+    <span class="kw">format:</span> rgba16f
+    <span class="kw">size:</span> viewport
+  - <span class="kw">name:</span> <span class="str">bloom_buffer</span>
+    <span class="kw">format:</span> rgba16f
+    <span class="kw">size:</span> viewport/2
+
+<span class="kw">passes:</span>
+  - <span class="kw">name:</span> <span class="str">geometry_pass</span>
+    <span class="kw">type:</span> rasterize
+    <span class="kw">shader:</span> <span class="str">builtin:gbuffer</span>
+    <span class="kw">outputs:</span>
+      <span class="kw">color:</span> gbuffer_albedo
+      <span class="kw">normal:</span> gbuffer_normal
+
+  - <span class="kw">name:</span> <span class="str">lighting_pass</span>
+    <span class="kw">type:</span> fullscreen
+    <span class="kw">shader:</span> <span class="str">builtin:deferred_light</span>
+    <span class="kw">inputs:</span>
+      <span class="kw">gbuffer_albedo:</span> gbuffer_albedo
+      <span class="kw">gbuffer_normal:</span> gbuffer_normal
+    <span class="kw">outputs:</span>
+      <span class="kw">color:</span> hdr_buffer
+
+  - <span class="kw">name:</span> <span class="str">tonemap_pass</span>
+    <span class="kw">type:</span> fullscreen
+    <span class="kw">shader:</span> <span class="str">builtin:tonemap</span>
+    <span class="kw">outputs:</span>
+      <span class="kw">color:</span> swapchain</code></pre>
+    </div>
+  </div>
+</section>
+
+<section id="architecture">
+  <div class="container">
+    <div class="section-label">Architecture</div>
+    <h2>Built Different</h2>
+    <p class="desc">A lean, modern stack designed for speed, composability, and AI-native workflows.</p>
+    <div class="card-grid">
+      <div class="card"><h3>Runtime Core — Rust</h3><ul>
+        <li>WebGPU (wgpu 30) — Metal/Vulkan/DX12 backends</li>
+        <li>Entity Component System (hecs) — data-oriented design</li>
+        <li>Rapier3D physics — rigid bodies, character controllers</li>
+        <li>Kira spatial audio — 3D sound, doppler, attenuation</li>
+        <li>Slang shaders, precompiled to WGSL for shipping</li>
+            <li>GPU-free <code>naive-sim</code> crate shared by game and tests</li>
+      </ul></div>
+      <div class="card"><h3>Data Layer — YAML + glTF</h3><ul>
+        <li>YAML for scenes, pipelines, materials, input, events</li>
+        <li>glTF 2.0 mesh loading with procedural fallbacks</li>
+        <li>PLY Gaussian splat loading with SH extraction</li>
+        <li>Git-friendly, diffable, AI-generatable</li>
+        <li>No binary blobs, no proprietary formats</li>
+      </ul></div>
+      <div class="card"><h3>Scripting — Lua 5.4</h3><ul>
+        <li>Per-entity sandboxed environments</li>
+        <li>Lifecycle hooks: init, update, on_event, on_reload</li>
+        <li>Sandboxed: CPU, memory and time limits per call</li>
+        <li>Hot-reload preserves entity self tables</li>
+        <li>Health/damage, projectile spawning, entity.spawn_dynamic()</li>
+      </ul></div>
+      <div class="card"><h3>AI Integration — MCP</h3><ul>
+        <li>20 typed tools over a Unix socket</li>
+        <li>Frame capture, screenshot diff, undo, benchmarks</li>
+        <li>Headless test runner — no GPU required</li>
+        <li>CI/CD ready with GitHub Actions</li>
+        <li>Built for Claude Code, Cursor, AI agents</li>
+      </ul></div>
+      <div class="card"><h3>Dev Feedback — Self-Improving</h3><ul>
+        <li>Structured dev.log in every project</li>
+        <li>AI agents maintain logs during development</li>
+        <li>naive submit-log → GitHub Issues with dev-log label</li>
+        <li>Engine agent reads all logs, improves engine</li>
+        <li>Virtuous cycle: more games = better engine</li>
+      </ul></div>
+      <div class="card"><h3>Demo System — 19 Embedded</h3><ul>
+        <li>All demos compiled via include_str!()</li>
+        <li>6 categories: Getting Started → Showcase</li>
+        <li>Zero downloads — run any demo instantly</li>
+        <li>Each demo exercises specific engine features</li>
+        <li>Living documentation and regression tests</li>
+      </ul></div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="compare">
+  <div class="container">
+    <div class="section-label">Comparison</div>
+    <h2>nAIVE vs. The Incumbents</h2>
+    <p class="desc">How nAIVE stacks up against Unity 6, Unreal 5.7, Godot 4.5, and Bevy 0.18.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Capability</th><th>nAIVE</th><th>Unity 6</th><th>Unreal 5.7</th><th>Godot 4.5</th></tr></thead>
+        <tbody>
+          <tr><td>Shader Hot-Reload</td><td class="winner">&lt;200ms</td><td class="poor">5-15s</td><td class="poor">10-30s</td><td class="ok">1-3s</td></tr>
+          <tr><td>Script Hot-Reload</td><td class="winner">&lt;50ms</td><td class="poor">2-10s</td><td class="poor">5-15s</td><td class="ok">&lt;1s</td></tr>
+          <tr><td>Scene Hot-Reload</td><td class="winner">&lt;100ms</td><td class="poor">30-60s</td><td class="poor">N/A (binary)</td><td class="ok">1-2s</td></tr>
+          <tr><td>Data Format</td><td class="winner">YAML (AI-readable)</td><td class="poor">Binary blobs</td><td class="poor">Binary .uasset</td><td class="ok">tscn (text)</td></tr>
+          <tr><td>Pipeline Definition</td><td class="winner">One YAML file</td><td class="ok">~500 lines C#</td><td class="poor">~800 lines C++</td><td class="poor">Fixed pipeline</td></tr>
+          <tr><td>AI Control Interface</td><td class="winner">Native MCP</td><td class="poor">None</td><td class="poor">None</td><td class="poor">None</td></tr>
+          <tr><td>Headless Testing</td><td class="winner">Built-in, no GPU</td><td class="ok">Batch mode (limited)</td><td class="poor">Gauntlet (complex)</td><td class="ok">GUT plugin</td></tr>
+          <tr><td>Gaussian Splats</td><td class="winner">First-class</td><td class="poor">No support</td><td class="poor">No support</td><td class="poor">No support</td></tr>
+          <tr><td>Built-in Demo Browser</td><td class="winner">19 demos, one command</td><td class="poor">Manual setup</td><td class="poor">Manual setup</td><td class="poor">Manual setup</td></tr>
+          <tr><td>Dev Feedback Loop</td><td class="winner">Structured dev.log → auto-triage</td><td class="poor">None</td><td class="poor">None</td><td class="poor">None</td></tr>
+          <tr><td>License</td><td class="winner">MIT (open source)</td><td class="ok">Free (revenue cap)</td><td class="poor">5% royalty &gt; $1M</td><td class="winner">MIT</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="license">
+  <div class="container">
+    <div class="section-label">Licensing</div>
+    <h2>Dual License Model</h2>
+    <p class="desc">The engine is fully open source. The platform adds optional server infrastructure.</p>
+    <div class="license-grid">
+      <div class="license-card mit"><span class="license-tag">MIT</span><h3>🔓 nAIVE Engine</h3><p>The core engine — rendering, physics, scripting, ECS, hot-reload, headless testing, MCP interface. Use it for anything. Commercial, personal, educational. No restrictions. No royalties. Forever.</p></div>
+      <div class="license-card bsl"><span class="license-tag">BSL 1.1</span><h3>🔐 nAIVE Platform</h3><p>Server infrastructure for multiplayer, world registry, AI Director, LLM NPCs, Telegram bridge. Source-available with commercial use restrictions. Converts to MIT after 3 years.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="docs" class="alt">
+  <div class="container" style="text-align:center">
+    <div class="section-label">Documentation</div>
+    <h2>Deep Dive</h2>
+    <p class="desc" style="margin:0 auto 48px">Full technical documentation — whitepaper, product requirements, architecture diagrams, and runnable demos.</p>
+    <div class="card-grid" style="max-width:800px;margin:0 auto">
+      <a href="/whitepaper.html" class="card" style="text-decoration:none">
+        <h3>📄 Whitepaper</h3>
+        <p style="color:var(--text2);font-size:0.9rem">GDC 2026 white paper (February 2026). Technical overview of the architecture, innovations and positioning.</p>
+      </a>
+      <a href="/engine-prd.html" class="card" style="text-decoration:none">
+        <h3>🔧 Engine PRD v5.0 (archived)</h3>
+        <p style="color:var(--text2);font-size:0.9rem">Product requirements including dev.log feedback system, demo browser specs, rendering, physics, audio, scripting, GPU compute.</p>
+      </a>
+      <a href="/platform-prd.html" class="card" style="text-decoration:none">
+        <h3>🌐 Platform PRD v5.0 (archived)</h3>
+        <p style="color:var(--text2);font-size:0.9rem">Server infrastructure spec: multiplayer, world registry, AI Director, LLM NPCs, Telegram bridge, matchmaking.</p>
+      </a>
+      <a href="/demos.html" class="card" style="text-decoration:none">
+        <h3>🎮 Demos &amp; Showcases</h3>
+        <p style="color:var(--text2);font-size:0.9rem">19 embedded demos across 6 categories. Run any demo with a single command — no downloads required.</p>
+      </a>
+      <a href="/architecture.html" class="card" style="text-decoration:none">
+        <h3>🏗️ Architecture</h3>
+        <p style="color:var(--text2);font-size:0.9rem">System architecture diagrams including dev feedback loop, demo browser internals, and engine component graph.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="container">
+    <h2>Build the Future of Games</h2>
+    <p>nAIVE is open source and ready for contributors. Dive in.</p>
+    <div class="hero-actions">
+      <a href="https://github.com/poro/nAIVE" target="_blank" class="btn-primary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        Star on GitHub
+      </a>
+      <a href="/whitepaper.html" class="btn-secondary">Read the Whitepaper</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>nAIVE — AI-Native Interactive Visual Engine · Created by <a href="https://markollila.com" target="_blank">Mark Ollila</a> · <a href="https://github.com/poro/nAIVE" target="_blank">GitHub</a></p>
+  </div>
+</footer>
+
+</body>
+</html>

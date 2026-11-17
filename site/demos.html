@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Demos & Showcases — nAIVE Engine</title>
+<meta name="description" content="nAIVE: AI-Native Interactive Visual Engine. Rust + WebGPU game engine built for the AI era.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<style>
+  .doc-content h1{display:none}
+  .doc-content h2{color:var(--accent2);background:none;padding:8px 0;display:block;font-size:1.6rem;border-top:1px solid var(--border)}
+  .doc-content .subtitle{display:none}
+  .demo-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:24px;margin:20px 0 40px}
+  .demo-card{background:var(--bg2);border-radius:12px;padding:24px;border:1px solid var(--border);transition:border-color .2s}
+  .demo-card:hover{border-color:var(--accent)}
+  .demo-card .number{display:inline-block;background:var(--accent);color:#fff;font-weight:700;width:28px;height:28px;text-align:center;line-height:28px;border-radius:50%;font-size:0.85em;margin-right:8px}
+  .demo-card .title{font-weight:700;color:#fff;font-size:1.1em}
+  .demo-card .tagline{color:var(--accent2);font-style:italic;margin:6px 0 10px;font-size:0.92em}
+  .demo-card .desc{color:var(--text2);font-size:0.93em;margin-bottom:12px}
+  .demo-card .cmd{background:var(--bg);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:0.82em;color:var(--cyan);margin:8px 0;overflow-x:auto;white-space:pre}
+  .demo-card .cmd .comment{color:var(--text3)}
+  .demo-card .highlights li{color:var(--text2);font-size:0.88em;margin:3px 0;list-style:none}
+  .demo-card .highlights li::before{content:"▸ ";color:var(--accent)}
+  .hero-card{grid-column:1/-1;border:2px solid var(--accent);text-align:center;padding:30px}
+  .hero-card .title{font-size:1.3em}
+  .hero-card .desc{max-width:700px;margin:10px auto}
+  .phase-tag{display:inline-block;background:var(--bg3);color:var(--cyan);font-size:0.72em;padding:2px 8px;border-radius:3px;margin-left:8px;font-weight:600;font-family:var(--mono)}
+  .section-intro{color:var(--text2);max-width:800px;margin:0 auto 20px;text-align:center;font-size:0.95em}
+  .doc-content table{width:100%;border-collapse:collapse;margin:16px 0}
+  .doc-content th{background:var(--bg3);color:var(--accent2);padding:8px 12px;text-align:left;font-size:0.88em}
+  .doc-content td{padding:8px 12px;border-bottom:1px solid var(--border);font-size:0.88em;color:var(--text2)}
+  .doc-content code{background:var(--bg);padding:2px 6px;border-radius:3px;font-size:0.86em}
+  .footer{text-align:center;color:var(--text3);margin-top:40px;padding:20px;font-size:0.85em;border-top:1px solid var(--border)}
+  @media(max-width:900px){
+    .demo-grid{grid-template-columns:1fr}
+    .hero-card{grid-column:1}
+    .demo-card{padding:16px}
+    .demo-card .cmd{font-size:0.75em;white-space:pre-wrap;word-break:break-all}
+    .demo-card .number{width:24px;height:24px;line-height:24px;font-size:0.75em}
+    .doc-content h2{font-size:1.3rem}
+    .section-intro{font-size:0.88em;padding:0 8px}
+    .doc-content table{display:block;overflow-x:auto}
+    .doc-content th,.doc-content td{padding:6px 8px;font-size:0.8em;white-space:nowrap}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <a href="/" class="logo"><span>n</span>AIVE</a>
+    <button class="menu-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')">☰</button>
+    <div class="nav-links">
+      <a href="/">Home</a>
+          <a href="/whitepaper.html">Whitepaper</a>
+          <a href="/#install">Install</a>
+          <a href="/architecture.html">Architecture</a>
+          <a href="/demos.html" class="active">Demos</a>
+      <a href="https://github.com/poro/nAIVE" target="_blank" class="gh-btn">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+
+<div class="doc-page">
+  <div class="container">
+    <div class="doc-header">
+      <h1>Demos & Showcases</h1>
+      <div class="doc-meta"><span>🎮 16 Runnable Demos</span><span>AI-Native Interactive Visual Engine</span></div>
+    </div>
+    <div class="doc-content">
+      
+
+  <h1>nAIVE - Demos &amp; Showcases</h1>
+  <p class="subtitle">AI-Native Interactive Visual Engine &mdash; 16 Phases, 16 Runnable Demos</p>
+
+  <!-- =========================================================== -->
+  <h2>Flagship Demo</h2>
+
+  <div class="demo-grid">
+    <div class="demo-card hero-card">
+      <span class="title">The Relic &mdash; Complete Dungeon Crawler</span>
+      <span class="phase-tag">Phase 9</span>
+      <p class="tagline">"Every system in the engine, working together in one playable experience."</p>
+      <p class="desc">
+        A first-person dungeon crawler that exercises all core engine phases simultaneously.
+        Navigate a torch-lit stone dungeon, open a physics-driven gate, battle a patrolling goblin guardian
+        with a finite-state-machine AI, and claim the golden relic. Deferred HDR lighting with flickering
+        torchlight, Rapier 3D physics, Lua-scripted entity behaviors, event-driven game logic, and a full
+        win/lose condition &mdash; all defined in pure YAML + Lua, zero recompilation needed.
+      </p>
+      <div class="cmd"><span class="comment"># Play The Relic</span>
+naive --scene scenes/relic.yaml</div>
+      <ul class="highlights">
+        <li>15 entities orchestrated by 6 Lua scripts</li>
+        <li>Guardian AI: patrol &rarr; detect &rarr; chase &rarr; melee attack FSM</li>
+        <li>Interactive door with swing animation (press E)</li>
+        <li>4 torches with layered sine-wave flicker (each uniquely phased)</li>
+        <li>Player FPS controller: WASD, sprint, jump, interact, melee combat</li>
+        <li>Full event schema: player.damaged, door.opened, enemy.defeated, game.level_complete</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>Visual Showcases</h2>
+  <p class="section-intro">Cinematic and interactive experiences that push every engine system to the limit.</p>
+
+  <div class="demo-grid">
+
+    <div class="demo-card hero-card">
+      <span class="title">TITAN &mdash; Colosseum of Light</span>
+      <span class="phase-tag">Phase 15</span>
+      <p class="tagline">"100+ entities, 32 lights, the most ambitious scene in the engine."</p>
+      <p class="desc">
+        A grand colosseum showcasing the engine at full throttle. A levitating gold titan sphere sits at the heart,
+        surrounded by 16 outer pillars, 8 obsidian sentinels, dual orbital rings of gold and platinum spheres,
+        4 gemstone pedestals (ruby, sapphire, emerald, ice), spiraling ember and void cubes with rainbow emission
+        waves, and copper/steel outer orbits. 32 dynamic lights paint the scene with dramatic warm/cool contrasts.
+        FXAA anti-aliasing keeps every edge clean.
+      </p>
+      <div class="cmd"><span class="comment"># Enter the colosseum</span>
+naive --scene scenes/titan.yaml</div>
+      <ul class="highlights">
+        <li>100+ entities across 7 distinct visual layers</li>
+        <li>15+ unique materials (titan_gold, platinum, ruby, sapphire, emerald, ice, ember, void)</li>
+        <li>32 dynamic lights: pillar, core glow, accent, rim, gem, dramatic spots</li>
+        <li>Dual orbital rings: 12 gold spheres + 8 platinum spheres in opposing orbits</li>
+        <li>Spiraling ember/void cubes with rainbow emission wave animation</li>
+        <li>FXAA anti-aliasing + shadow mapping + bloom</li>
+      </ul>
+    </div>
+
+    <div class="demo-card hero-card">
+      <span class="title">GENESIS &mdash; The Birth of a World</span>
+      <span class="phase-tag">Phase 13</span>
+      <p class="tagline">"65 entities, 24 lights, a multi-act creation story told in PBR and light."</p>
+      <p class="desc">
+        A cinematic visual showcase that unfolds like a creation myth. A central spark core pulses with emission,
+        concentric rings of chrome and copper orbs orbit at different speeds, 8 obsidian pillars rise from
+        underground, and a Gaussian splat nebula swirls at the center &mdash; all choreographed by keyframe-driven
+        camera moves with smooth Hermite interpolation. Bloom, HDR tonemapping, and shadow mapping bring it to life.
+      </p>
+      <div class="cmd"><span class="comment"># Watch the birth of a world</span>
+naive --scene scenes/genesis.yaml</div>
+      <ul class="highlights">
+        <li>65 entities orchestrated by 8 Lua scripts</li>
+        <li>12 unique PBR materials (genesis_core, chrome, copper_ring, steel_ring, obsidian, 7 neons)</li>
+        <li>24 dynamic point lights (key, fill, pillar, core glow, accent, rim)</li>
+        <li>Pillar rise animation with easing, roughness sweep, emissive cycle</li>
+        <li>Cinematic camera with keyframe choreography (60s loop)</li>
+        <li>Directional sun with shadow mapping + Gaussian splat nebula</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">A</span><span class="title">VOID &mdash; Cosmic Gaussian Splatting</span>
+      <span class="phase-tag">Phase 15</span>
+      <p class="tagline">"Minimalist void. Floating monoliths. Procedural splats. Pure atmosphere."</p>
+      <p class="desc">
+        A dark, atmospheric showcase focused on Gaussian splatting compositing. Floating void monolith pillars
+        drift around a procedural splat nebula, joined by void crystals, ice shards, obsidian fragments, and
+        neon accent orbs. Ultra-low ambient lighting (0.005) creates a deeply immersive cosmic void. 16 dynamic
+        lights add subtle color washes that breathe and pulse.
+      </p>
+      <div class="cmd"><span class="comment"># Drift through the void</span>
+naive --scene scenes/void.yaml</div>
+      <ul class="highlights">
+        <li>40+ entities: monoliths, crystals, stars, orbs, ice shards, debris</li>
+        <li>Procedural Gaussian splat nebula at center</li>
+        <li>Ultra-dark ambient (0.005) with cold blue directional light</li>
+        <li>16 dynamic lights with slow breathing pulse</li>
+        <li>Void drift animation: slow cosmic movement on all axes</li>
+        <li>10+ unique materials (void_monolith, void_crystal, void_star, chrome, ice)</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">B</span><span class="title">INFERNO &mdash; Combat Arena</span>
+      <span class="phase-tag">Phase 15</span>
+      <p class="tagline">"FPS combat meets hellfire lighting. Fight 6 demons in a lava-lit arena."</p>
+      <p class="desc">
+        A playable first-person combat arena that combines the physics and scripting systems with intense visual
+        design. Navigate a 32&times;32 arena with 4 lava pits at the corners, 4 iron pillars for cover, and
+        6 demon enemies with AI combat logic. Health pickups float and bob, torches flicker with layered sine
+        waves, and orange-red hellfire sunlight casts dramatic shadows across everything.
+      </p>
+      <div class="cmd"><span class="comment"># Enter the inferno (WASD + mouse, left-click attack)</span>
+naive --scene scenes/inferno.yaml</div>
+      <ul class="highlights">
+        <li>FPS player: 4.5 m/s move, 1.6&times; sprint, 6.0 jump impulse</li>
+        <li>6 demon enemies with AI combat (patrol, chase, attack)</li>
+        <li>4 lava pit hazards with animated glow effects</li>
+        <li>2 floating health pickups with bob animation</li>
+        <li>16 dynamic lights: torches, lava glow, accent overhead, central arena</li>
+        <li>Physics-enabled gravity combat with character controller</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">C</span><span class="title">Neon Dreamscape</span>
+      <span class="phase-tag">Phase 12</span>
+      <p class="tagline">"A dark club with 6 neon pillars and floating emissive cubes."</p>
+      <p class="desc">
+        A moody neon-lit environment with 6 pillars arranged in a hexagonal pattern, each in a different
+        neon color (pink, cyan, purple, gold, blue, green). 3 floating emissive cubes bob gently overhead
+        while 6 pulsing neon point lights wash the dark floor with shifting color. The cinematic camera
+        sweeps through the space in a smooth orbit.
+      </p>
+      <div class="cmd"><span class="comment"># Enter the dreamscape</span>
+naive --scene scenes/neon_dreamscape.yaml</div>
+      <ul class="highlights">
+        <li>15 entities: 6 neon pillars, 3 emissive cubes, 6 neon lights</li>
+        <li>6 neon colors: pink, cyan, purple, gold, blue, green</li>
+        <li>Floating cubes with smooth vertical bob animation</li>
+        <li>Ultra-low ambient (0.01) for dramatic neon contrast</li>
+        <li>Pulsing point lights with intensity modulation</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">D</span><span class="title">PBR Material Gallery</span>
+      <span class="phase-tag">Phase 12</span>
+      <p class="tagline">"25 spheres, every combination of metallic and roughness."</p>
+      <p class="desc">
+        A material science showcase presenting a 5&times;5 grid of PBR spheres. Rows sweep metallic
+        from 0.0 (dielectric) to 1.0 (full metal). Columns sweep roughness from 0.0 (mirror) to 1.0
+        (fully diffuse). Four colored key lights illuminate the grid from different angles, revealing how
+        Cook-Torrance GGX lighting responds to each material parameter combination. Interactive physics
+        with ball collision sound effects.
+      </p>
+      <div class="cmd"><span class="comment"># Explore the PBR parameter space</span>
+naive --scene scenes/pbr_gallery.yaml</div>
+      <ul class="highlights">
+        <li>25 unique PBR materials (5&times; metallic &times; 5&times; roughness)</li>
+        <li>Cook-Torrance GGX shading with Fresnel and geometry terms</li>
+        <li>4 key lights: warm, cool, accent (pink), fill (green)</li>
+        <li>Circular orbit camera for all-angle viewing</li>
+        <li>Interactive physics with collision audio feedback</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">E</span><span class="title">Cosmic Splats</span>
+      <span class="phase-tag">Phase 4</span>
+      <p class="tagline">"A procedural galaxy, a floating crystal, and 4 colored lights."</p>
+      <p class="desc">
+        The original Gaussian splatting demo. A procedural splat galaxy rotates at the origin while a
+        cyan neon crystal bobs gently above a dark pedestal. Four colored point lights (purple, blue,
+        red-orange) create a cosmic atmosphere. Simple but foundational &mdash; the scene that proved
+        splat-mesh depth compositing works.
+      </p>
+      <div class="cmd"><span class="comment"># The original splat showcase</span>
+naive --scene scenes/cosmic_splats.yaml</div>
+      <ul class="highlights">
+        <li>Procedural Gaussian splat galaxy at origin</li>
+        <li>Cyan neon crystal with 45&deg; rotation and bob animation</li>
+        <li>4 colored point lights for cosmic atmosphere</li>
+        <li>Splat-mesh depth compositing proof-of-concept</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>Rendering Showcases</h2>
+  <p class="section-intro">From raw triangles to a full deferred HDR pipeline with Gaussian splatting compositing.</p>
+
+  <div class="demo-grid">
+
+    <div class="demo-card">
+      <span class="number">1</span><span class="title">Deferred Rendering Pipeline</span>
+      <span class="phase-tag">Phase 3</span>
+      <p class="tagline">"A full GPU pipeline described in 73 lines of YAML."</p>
+      <p class="desc">
+        The entire multi-pass rendering pipeline is data-driven: shadow pass, G-Buffer geometry, Gaussian splat,
+        deferred lighting (Cook-Torrance GGX), bloom, tonemapping, and FXAA &mdash; all wired through
+        <code>pipelines/render.yaml</code>. Add or reorder passes without touching Rust code.
+      </p>
+      <div class="cmd"><span class="comment"># The pipeline YAML drives everything</span>
+cat project/pipelines/render.yaml
+
+<span class="comment"># 7 passes: shadow &rarr; geometry &rarr; splat &rarr; lighting &rarr; bloom &rarr; tonemap &rarr; fxaa</span></div>
+      <ul class="highlights">
+        <li>G-Buffer: albedo (RGBA8), normals (RGBA16F), depth (D32F)</li>
+        <li>Cook-Torrance GGX PBR with shadow mapping</li>
+        <li>HDR bloom extraction + Reinhard tonemapping + FXAA</li>
+        <li>Shader reflection auto-generates bind group layouts</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">2</span><span class="title">Gaussian Splatting + Mesh Compositing</span>
+      <span class="phase-tag">Phase 4</span>
+      <p class="tagline">"3D Gaussian splats and traditional meshes, depth-composited in a single frame."</p>
+      <p class="desc">
+        Load .ply 3D Gaussian Splat captures alongside conventional glTF meshes. The engine depth-composites
+        both representations so splats and meshes coexist naturally &mdash; a NeRF-era mesh sitting inside a
+        traditionally-modeled dungeon room.
+      </p>
+      <div class="cmd"><span class="comment"># Splat compositing test scene</span>
+naive --scene scenes/splat_test.yaml</div>
+      <ul class="highlights">
+        <li>Loads .ply splat files with spherical harmonics, opacity, scale</li>
+        <li>CPU-side per-frame depth sorting for correct alpha blending</li>
+        <li>GPU storage buffers for splat data</li>
+        <li>Splat depth + mesh depth merged in the lighting pass</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">3</span><span class="title">SLANG Shader Hot-Reload</span>
+      <span class="phase-tag">Phase 1</span>
+      <p class="tagline">"Edit a shader, save the file, see the result on the next frame."</p>
+      <p class="desc">
+        Shaders are written in SLANG (with WGSL fallback) and automatically recompiled when
+        the file changes on disk. The file watcher detects modifications and the pipeline
+        re-creates GPU state seamlessly &mdash; no restart, no stutter.
+      </p>
+      <div class="cmd"><span class="comment"># Edit a shader while the engine runs</span>
+$EDITOR project/shaders/passes/deferred_light.slang
+<span class="comment"># Changes appear in real time</span></div>
+      <ul class="highlights">
+        <li>SLANG &rarr; WGSL cross-compilation via shader-slang</li>
+        <li>notify-based file watcher triggers recompilation</li>
+        <li>Graceful fallback: invalid shader keeps the last good version</li>
+        <li>Works for all 7 pipeline passes simultaneously</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">4</span><span class="title">Dynamic Torch Lighting</span>
+      <span class="phase-tag">Phase 7 + 9</span>
+      <p class="tagline">"Four torches, four unique flickers, one atmospheric dungeon."</p>
+      <p class="desc">
+        Each torch runs an independent Lua script with a random phase offset and layered
+        sine waves (3 frequencies) producing organic light flicker. The deferred lighting
+        pass accumulates all point lights with range-based attenuation.
+      </p>
+      <div class="cmd"><span class="comment"># torch_flicker.lua: layered sine waves</span>
+local f = sin(t)*0.5 + sin(t*2.3)*0.3 + sin(t*5.7)*0.2</div>
+      <ul class="highlights">
+        <li>Per-torch random phase offset (no two torches flicker alike)</li>
+        <li>Warm color [1.0, 0.7, 0.3] with 10m range</li>
+        <li>Intensity clamped to minimum 0.5 (never fully dark)</li>
+        <li>Deferred pipeline: lights are free regardless of scene geometry</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>UI &amp; Audio Showcases</h2>
+  <p class="section-intro">Immediate-mode 2D overlay, bitmap font text, screen effects, and spatial audio &mdash; all driven from Lua.</p>
+
+  <div class="demo-grid">
+
+    <div class="demo-card">
+      <span class="number">F</span><span class="title">UI &amp; Text Rendering Demo</span>
+      <span class="phase-tag">Phase 16</span>
+      <p class="tagline">"Immediate-mode 2D overlay: text, rects, animations, and screen flash."</p>
+      <p class="desc">
+        A comprehensive showcase of the Phase 16 UI system. Title bar, stats HUD panel with live FPS
+        and score, text size &amp; color palettes, animated pulsing and rainbow text, a moving progress
+        bar, auto-spawning entities with screen flash effects, and visibility toggling &mdash; all rendered
+        as a 2D overlay on top of the 3D scene using a 6&times;8 bitmap font atlas.
+      </p>
+      <div class="cmd"><span class="comment"># Run the UI showcase</span>
+naive --scene scenes/ui_demo.yaml</div>
+      <ul class="highlights">
+        <li>Bitmap font atlas: 95 ASCII glyphs, arbitrary text size scaling</li>
+        <li>Colored rectangles with alpha blending for panels and bars</li>
+        <li>Screen flash effect with auto-fade</li>
+        <li>Runtime entity spawning and visibility toggling from Lua</li>
+        <li>Animated text: pulsing alpha, rainbow color cycling, progress bar</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">G</span><span class="title">Grid UI Demo &mdash; Snake Sweeper</span>
+      <span class="phase-tag">Phase 16</span>
+      <p class="tagline">"Snake meets Minesweeper on a dynamic 7&times;7 grid with numbered tiles."</p>
+      <p class="desc">
+        A playable prototype combining Snake and Minesweeper mechanics. A 7&times;7 grid of tiles is spawned
+        at runtime via <code>entity.spawn()</code>. An auto-walking snake reveals tiles, showing Minesweeper-style
+        numbers (1-4) as UI text overlays. Hitting a mine triggers a screen flash and game-over state. Tile
+        emission colors change dynamically based on revealed content. Top-down camera with full HUD overlay.
+      </p>
+      <div class="cmd"><span class="comment"># Play Snake Sweeper</span>
+naive --scene scenes/grid_ui_demo.yaml</div>
+      <ul class="highlights">
+        <li>49 tiles + snake head spawned at runtime from Lua</li>
+        <li>Minesweeper number overlay using screen-space ui.text()</li>
+        <li>Dynamic tile emission: green (safe), colored (numbered), red (mine)</li>
+        <li>Game state machine: playing &rarr; lost with score tracking</li>
+        <li>Auto-walking snake with wall-bounce direction changes</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">H</span><span class="title">Audio Test &mdash; Snake Sweeper SFX</span>
+      <span class="phase-tag">Phase 16</span>
+      <p class="tagline">"Background music, timed sound effects, and visual audio feedback."</p>
+      <p class="desc">
+        Tests MP3 audio playback using real game assets from a snake/minesweeper game.
+        Background music fades in over 2 seconds, then a timed schedule triggers sound effects &mdash;
+        eat (food pickup), explosion (mine hit), and death (game over) &mdash; each at different volumes.
+        Every sound event gets visual feedback: screen flash, a HUD panel showing the current audio state,
+        a progress bar, countdown to the next SFX, and a fake waveform visualization.
+      </p>
+      <div class="cmd"><span class="comment"># Test audio playback with real game SFX</span>
+naive --scene scenes/audio_test.yaml</div>
+      <ul class="highlights">
+        <li>4 MP3 files: music.mp3 (background loop), eat.mp3, explosion.mp3, death.mp3</li>
+        <li>Kira audio engine with symphonia MP3 decoder</li>
+        <li>Music fade-in (2s) + SFX at scheduled intervals with varied volumes</li>
+        <li>Screen flash per sound type: green (eat), orange (explosion), red (death)</li>
+        <li>Full UI overlay: audio status panel, file legend, progress bar, waveform vis</li>
+        <li>3 indicator spheres bob in sync with sound events</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>AI &amp; Automation Showcases</h2>
+  <p class="section-intro">The "AI-Native" in nAIVE. External AI agents can observe, control, and test the game.</p>
+
+  <div class="demo-grid">
+
+    <div class="demo-card">
+      <span class="number">5</span><span class="title">Headless AI Playtesting</span>
+      <span class="phase-tag">Phase 10</span>
+      <p class="tagline">"A Lua script plays through the entire dungeon without a screen."</p>
+      <p class="desc">
+        Run the complete game loop headlessly &mdash; no GPU, no window. Lua test scripts inject
+        synthetic inputs, advance time, assert game state, and verify the full gameplay loop:
+        movement, door interaction, combat, item pickup, and win conditions.
+      </p>
+      <div class="cmd"><span class="comment"># Run the full automated test suite</span>
+naive test tests/test_relic.lua
+
+<span class="comment"># 5 tests: movement, bounds, scripts, state, playthrough</span></div>
+      <ul class="highlights">
+        <li><code>test_full_playthrough</code>: walks to door, opens it, collects relic</li>
+        <li><code>test_player_stays_in_bounds</code>: verifies all 4 walls contain the player</li>
+        <li><code>test_scripts_running</code>: confirms guardian patrols + relic bobs</li>
+        <li><code>test_game_state_initialized</code>: asserts HP=100, game_over=false</li>
+        <li>Frame-stepping and time-warping for deterministic tests</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">6</span><span class="title">MCP Server &mdash; AI Controls the Game</span>
+      <span class="phase-tag">Phase 8</span>
+      <p class="tagline">"Claude (or any LLM) can list entities, move objects, and inject input &mdash; live."</p>
+      <p class="desc">
+        The MCP server bridges JSON-RPC 2.0 over stdin/stdout to the engine's Unix domain socket.
+        An AI agent can query every entity, modify transforms, spawn/destroy objects, emit events,
+        inject keyboard/mouse input, and pause/resume the game &mdash; all through standard tool-use.
+      </p>
+      <div class="cmd"><span class="comment"># 9 MCP tools available:</span>
+naive_list_entities      <span class="comment"># See all entities + tags</span>
+naive_query_entity       <span class="comment"># Read any component</span>
+naive_modify_entity      <span class="comment"># Change transforms, lights</span>
+naive_spawn_entity       <span class="comment"># Create new entities live</span>
+naive_destroy_entity     <span class="comment"># Remove entities</span>
+naive_emit_event         <span class="comment"># Fire game events</span>
+naive_query_events       <span class="comment"># Read event log</span>
+naive_inject_input       <span class="comment"># Press keys, move mouse</span>
+naive_runtime_control    <span class="comment"># Pause / resume / status</span></div>
+      <ul class="highlights">
+        <li>Full MCP protocol compliance (2024-11-05)</li>
+        <li>Unix domain socket IPC at /tmp/naive-runtime.sock</li>
+        <li>AI can play the game, design levels, or QA test</li>
+        <li>Real-time bidirectional game state access</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">7</span><span class="title">Command Socket Live Control</span>
+      <span class="phase-tag">Phase 8</span>
+      <p class="tagline">"Pipe JSON into a socket, reshape the game world in real time."</p>
+      <p class="desc">
+        The engine listens on a Unix domain socket for JSON commands. Any process &mdash; a shell
+        script, a Python notebook, a monitoring dashboard &mdash; can query and mutate the running
+        game without any SDK or library dependency.
+      </p>
+      <div class="cmd"><span class="comment"># Teleport the player from the command line</span>
+echo '{"cmd":"modify_entity","entity_id":"player","components":{"transform":{"position":[0,1,-6]}}}' \
+  | socat - UNIX:/tmp/naive-runtime.sock
+
+<span class="comment"># List all entities</span>
+echo '{"cmd":"list_entities"}' | socat - UNIX:/tmp/naive-runtime.sock</div>
+      <ul class="highlights">
+        <li>Zero-dependency JSON protocol over Unix sockets</li>
+        <li>Thread-safe: commands queued to main thread via mpsc channel</li>
+        <li>Query + mutate any entity component</li>
+        <li>Spawn/destroy entities at runtime</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">8</span><span class="title">Guardian Goblin FSM AI</span>
+      <span class="phase-tag">Phase 6 + 9</span>
+      <p class="tagline">"73 lines of Lua, one convincing enemy."</p>
+      <p class="desc">
+        The guardian goblin demonstrates a complete finite-state-machine AI written entirely in Lua.
+        It patrols side-to-side, detects the player within 8m, chases at double speed,
+        and attacks in melee range on a cooldown timer. It takes damage and can be defeated.
+      </p>
+      <div class="cmd"><span class="comment"># Guardian state machine (simplified)</span>
+if dist &lt; attack_range then    <span class="comment">-- Melee attack</span>
+elseif dist &lt; detect_range then <span class="comment">-- Chase player</span>
+else                             <span class="comment">-- Patrol side to side</span>
+end</div>
+      <ul class="highlights">
+        <li>3 states: patrol (1.5 m/s), chase (3.0 m/s), attack (20 dmg)</li>
+        <li>Detection range: 8m, attack range: 1.8m</li>
+        <li>Cooldown-based attack interval (1.5s between strikes)</li>
+        <li>Emits events: player.damaged, player.died, enemy.defeated</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>Data-Driven Architecture Showcases</h2>
+  <p class="section-intro">Everything is YAML + Lua. The Rust engine is the runtime; the game is pure data.</p>
+
+  <div class="demo-grid">
+
+    <div class="demo-card">
+      <span class="number">9</span><span class="title">Scene-as-YAML</span>
+      <span class="phase-tag">Phase 2</span>
+      <p class="tagline">"250 lines of YAML defines an entire playable dungeon."</p>
+      <p class="desc">
+        The Relic scene declares 15 entities &mdash; player, walls, floor, ceiling, pillars, gate,
+        torches, guardian, relic, pedestal &mdash; entirely in YAML. Each entity specifies its
+        transform, mesh, material, collider, script, and light components declaratively.
+        Swap the scene file, get a completely different game.
+      </p>
+      <div class="cmd"><span class="comment"># Entity definition in scenes/relic.yaml</span>
+- id: guardian
+  tags: [enemy, guardian]
+  components:
+    transform:
+      position: [0, 0.75, -6]
+      scale: [0.8, 1.5, 0.8]
+    mesh_renderer:
+      mesh: assets/meshes/cube.gltf
+      material: assets/materials/goblin.yaml
+    script:
+      source: logic/guardian.lua</div>
+      <ul class="highlights">
+        <li>Scene, materials, pipeline, input bindings, events &mdash; all YAML</li>
+        <li>Hot-reload: edit relic.yaml and the scene rebuilds</li>
+        <li>ECS-style component composition: mix and match freely</li>
+        <li>Hierarchical entity system via hecs</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">10</span><span class="title">Live Script Hot-Reload</span>
+      <span class="phase-tag">Phase 6</span>
+      <p class="tagline">"Edit guardian.lua, save, watch the goblin change behavior mid-game."</p>
+      <p class="desc">
+        Every Lua script is watched for changes. On modification, the VM reloads the script,
+        calls <code>on_reload()</code> if defined, and the entity picks up new behavior instantly.
+        Iterate on AI logic, door animations, or pickup mechanics without restarting.
+      </p>
+      <div class="cmd"><span class="comment"># While the game is running:</span>
+$EDITOR project/logic/guardian.lua
+<span class="comment"># Change detect_range from 8 to 20</span>
+<span class="comment"># Guardian immediately becomes more aggressive</span></div>
+      <ul class="highlights">
+        <li>Per-entity sandboxed Lua environments (mlua metatables)</li>
+        <li>Dangerous stdlib disabled: no os, io, loadfile, dofile</li>
+        <li>Lifecycle hooks: init(), update(dt), on_reload()</li>
+        <li>Lua API: entity, input, events, game state, tween, audio, ui</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">11</span><span class="title">Event Bus with Schema Validation</span>
+      <span class="phase-tag">Phase 7</span>
+      <p class="tagline">"Type-checked game events defined in YAML, logged in a ring buffer."</p>
+      <p class="desc">
+        Game events (player.damaged, door.opened, item.collected, enemy.defeated, game.level_complete)
+        are defined in an event schema with required fields. The event bus validates payloads at
+        emit-time, logs to a ring buffer, and dispatches to Lua listeners.
+      </p>
+      <div class="cmd"><span class="comment"># events/schema.yaml</span>
+player.damaged:
+  description: "Player took damage"
+  fields: [amount, source]
+
+<span class="comment"># Emitted from Lua:</span>
+events.emit("player.damaged", {amount=20, source="guardian"})</div>
+      <ul class="highlights">
+        <li>8 event types with field validation</li>
+        <li>Ring buffer logging (bounded memory)</li>
+        <li>Queryable from MCP: naive_query_events</li>
+        <li>Drives game logic: death, victory, door state</li>
+      </ul>
+    </div>
+
+    <div class="demo-card">
+      <span class="number">12</span><span class="title">Physics Playground</span>
+      <span class="phase-tag">Phase 5</span>
+      <p class="tagline">"Rapier 3D physics with character controller, slopes, and autostep."</p>
+      <p class="desc">
+        The physics system integrates Rapier 3D with box, sphere, and capsule colliders.
+        The player character controller handles slope climbing, automatic step-up over
+        small obstacles, and ground snapping. Trigger volumes fire enter/exit events.
+      </p>
+      <div class="cmd"><span class="comment"># Physics test scene</span>
+naive --scene scenes/physics_test.yaml</div>
+      <ul class="highlights">
+        <li>Character controller: 0.3m radius, 1.8m height, 0.3m step</li>
+        <li>Gravity: -9.81 m/s, jump impulse: 6.0</li>
+        <li>60 Hz physics tick, frame-rate independent</li>
+        <li>Collision shapes defined declaratively in scene YAML</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>Quick Reference: All Runnable Demos</h2>
+  <p style="text-align:center;color:var(--text2)">Install with <code>brew install poro/tap/naive</code>, then run these from the repository&rsquo;s <code>project/</code> folder, or browse the 19 built-in demos with <code>naive demo</code>.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Demo</th>
+        <th>Command</th>
+        <th>GPU</th>
+        <th>Phases</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>The Relic (full game)</td>
+        <td><code>naive --scene scenes/relic.yaml</code></td>
+        <td>Yes</td>
+        <td>1-9</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>TITAN &mdash; Colosseum of Light</td>
+        <td><code>naive --scene scenes/titan.yaml</code></td>
+        <td>Yes</td>
+        <td>1-15</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>GENESIS &mdash; Birth of a World</td>
+        <td><code>naive --scene scenes/genesis.yaml</code></td>
+        <td>Yes</td>
+        <td>1-13</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>VOID &mdash; Cosmic Splatting</td>
+        <td><code>naive --scene scenes/void.yaml</code></td>
+        <td>Yes</td>
+        <td>1-4, 6-7, 15</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>INFERNO &mdash; Combat Arena</td>
+        <td><code>naive --scene scenes/inferno.yaml</code></td>
+        <td>Yes</td>
+        <td>1-9, 15</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>Neon Dreamscape</td>
+        <td><code>naive --scene scenes/neon_dreamscape.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 6-7, 12</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>PBR Material Gallery</td>
+        <td><code>naive --scene scenes/pbr_gallery.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 11-12</td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>Cosmic Splats</td>
+        <td><code>naive --scene scenes/cosmic_splats.yaml</code></td>
+        <td>Yes</td>
+        <td>1-4</td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td>Splat Compositing Test</td>
+        <td><code>naive --scene scenes/splat_test.yaml</code></td>
+        <td>Yes</td>
+        <td>1-4</td>
+      </tr>
+      <tr>
+        <td>10</td>
+        <td>Physics Playground</td>
+        <td><code>naive --scene scenes/physics_test.yaml</code></td>
+        <td>Yes</td>
+        <td>1-5</td>
+      </tr>
+      <tr>
+        <td>11</td>
+        <td>UI &amp; Text Rendering Demo</td>
+        <td><code>naive --scene scenes/ui_demo.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 6, 16</td>
+      </tr>
+      <tr>
+        <td>12</td>
+        <td>Grid UI Demo (Snake Sweeper)</td>
+        <td><code>naive --scene scenes/grid_ui_demo.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 6, 16</td>
+      </tr>
+      <tr>
+        <td>13</td>
+        <td>Audio Test (Snake Sweeper SFX)</td>
+        <td><code>naive --scene scenes/audio_test.yaml</code></td>
+        <td>Yes</td>
+        <td>1-3, 6, 11, 16</td>
+      </tr>
+      <tr>
+        <td>14</td>
+        <td>Headless Test Suite</td>
+        <td><code>naive test tests/test_relic.lua</code></td>
+        <td>No</td>
+        <td>2, 5-7, 10</td>
+      </tr>
+      <tr>
+        <td>15</td>
+        <td>MCP Server</td>
+        <td><code>cargo run --bin naive_mcp</code></td>
+        <td>No (bridge)</td>
+        <td>8</td>
+      </tr>
+      <tr>
+        <td>16</td>
+        <td>Socket Live Control</td>
+        <td><code>echo '{"cmd":"list_entities"}' | socat - UNIX:/tmp/naive-runtime.sock</code></td>
+        <td>Engine running</td>
+        <td>8</td>
+      </tr>
+          <tr>
+        <td>17</td>
+        <td>Havoc &mdash; 50,000-unit GPU swarm battle</td>
+        <td><code>naive --scene scenes/tier4_havoc.yaml</code></td>
+        <td>Yes</td>
+        <td>Tier 4</td>
+      </tr>
+</tbody>
+  </table>
+
+  <!-- =========================================================== -->
+  <h2>Suggested Live Demo Script (12 minutes)</h2>
+
+  <div class="demo-card" style="max-width: 800px; margin: 16px auto;">
+    <ol style="padding-left: 20px; color: #b0b0c8; font-size: 0.93em;">
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Launch TITAN</strong> &mdash; <code>naive --scene scenes/titan.yaml</code>. Let the cinematic camera sweep through the colosseum. Point out the 100+ entities, dual orbital rings, gemstone pedestals, and 32 dynamic lights.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Switch to GENESIS</strong> &mdash; <code>naive --scene scenes/genesis.yaml</code>. Show the multi-act creation story: spark core, rising pillars, orbiting rings, and Gaussian splat nebula.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Enter the VOID</strong> &mdash; <code>naive --scene scenes/void.yaml</code>. Demonstrate Gaussian splatting composited with mesh objects in a dark cosmic environment.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">PBR Gallery</strong> &mdash; <code>naive --scene scenes/pbr_gallery.yaml</code>. Show the 25-sphere metallic/roughness grid proving Cook-Torrance GGX correctness.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Play The Relic</strong> &mdash; <code>naive --scene scenes/relic.yaml</code>. Walk around the dungeon, open the physics-driven gate (press E), fight the guardian goblin, collect the golden relic.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Fight in INFERNO</strong> &mdash; <code>naive --scene scenes/inferno.yaml</code>. Show FPS combat with 6 demon enemies, lava pits, health pickups, and hellfire lighting.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">UI Demo</strong> &mdash; <code>naive --scene scenes/ui_demo.yaml</code>. Show the 2D overlay system: HUD panels, animated text, progress bars, entity spawning, screen flash.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Snake Sweeper</strong> &mdash; <code>naive --scene scenes/grid_ui_demo.yaml</code>. Show runtime entity spawning and UI text overlay on a dynamic game grid.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Audio Test</strong> &mdash; <code>naive --scene scenes/audio_test.yaml</code>. Demonstrate MP3 playback with background music, timed SFX, and visual audio feedback.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Hot-reload a shader</strong> &mdash; While the game runs, edit <code>deferred_light.slang</code> (change light color or attenuation). Save. Watch the lighting change in real time.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Hot-reload a script</strong> &mdash; Edit <code>guardian.lua</code>, double the detect range. Save. The goblin immediately becomes more aggressive.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Socket control</strong> &mdash; In a second terminal, use <code>socat</code> to teleport the player, spawn a new light, or list all entities via JSON commands.</li>
+      <li style="margin: 8px 0;"><strong style="color: #fff;">Headless test</strong> &mdash; Kill the window. Run <code>naive test tests/test_relic.lua</code>. The entire game plays itself with no GPU. Show all 5 tests passing.</li>
+    </ol>
+  </div>
+
+  <!-- =========================================================== -->
+  <h2>What Makes nAIVE Brilliant</h2>
+
+  <div class="demo-card" style="max-width: 800px; margin: 16px auto;">
+    <table>
+      <tr><td style="color: #e94560; font-weight: 700; width: 200px;">Zero-compile iteration</td><td>Scenes, materials, pipelines, shaders, scripts, input bindings, and event schemas are all hot-reloadable data files.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">AI-first architecture</td><td>MCP server + command socket + headless mode = an AI agent can design, play, and QA-test a game without human intervention.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">Cutting-edge rendering</td><td>Cook-Torrance GGX PBR, Gaussian splatting compositing, FXAA anti-aliasing, shadow mapping, bloom, and HDR tonemapping &mdash; all in a single data-driven pipeline.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">Full game UI</td><td>Immediate-mode 2D overlay with bitmap font text, colored rects, screen flash effects, and runtime entity spawning/destruction &mdash; all from Lua scripts.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">Spatial audio</td><td>Kira audio engine with MP3/WAV support, music fade-in/out, one-shot SFX, spatial attenuation, and Lua script control.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">From-scratch in Rust</td><td>No Unity, no Unreal, no Bevy. Custom ECS, custom renderer, custom physics integration &mdash; all type-safe Rust.</td></tr>
+      <tr><td style="color: #e94560; font-weight: 700;">16-phase engineering</td><td>Each phase builds cleanly on the last: window &rarr; scene &rarr; deferred &rarr; splats &rarr; physics &rarr; scripting &rarr; events &rarr; sockets &rarr; game &rarr; testing &rarr; PBR &rarr; bloom &rarr; genesis &rarr; rendering overhaul &rarr; advanced demos &rarr; UI overlay.</td></tr>
+    </table>
+  </div>
+
+  <div class="footer">
+    nAIVE Engine &mdash; AI-Native Interactive Visual Engine<br>
+    Rust + wgpu + Rapier + Lua + SLANG + Kira &mdash; Built in 16 phases &mdash; 16 runnable demos
+  </div>
+
+
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="container">
+    <p>nAIVE — AI-Native Interactive Visual Engine · Created by <a href="https://markollila.com" target="_blank">Mark Ollila</a> · <a href="https://github.com/poro/nAIVE" target="_blank">GitHub</a></p>
+  </div>
+</footer>
+
+</body>
+</html>

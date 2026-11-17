@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>nAIVE Engine Architecture</title>
+  <style>
+    body { background: #1a1a2e; color: #e0e0e0; font-family: system-ui; margin: 0; padding: 20px; }
+    h1 { color: #e94560; text-align: center; }
+    h2 { color: #0f3460; background: #e94560; padding: 8px 16px; border-radius: 4px; display: inline-block; }
+    .diagram { background: #16213e; border-radius: 8px; padding: 20px; margin: 20px 0; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>nAIVE - AI-Native Interactive Visual Engine</h1>
+
+  <h2>System Architecture</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+graph TB
+    subgraph CLI["CLI Layer"]
+        CLAP["clap CLI Parser<br/>init | run | test | build | demo | submit-log"]
+        MAIN["main.rs<br/>Entry Point"]
+        DEMO_CMD["Demo Browser<br/>demos.rs — 19 embedded demos"]
+        DEVLOG_CMD["Submit Log<br/>dev_log.rs — GitHub Issues API"]
+    end
+
+    subgraph ENGINE["Engine Core (engine.rs)"]
+        EL["winit Event Loop<br/>ApplicationHandler"]
+        DT["Delta Time"]
+        PAUSE["Pause State"]
+    end
+
+    subgraph ECS["ECS World (hecs)"]
+        SW["SceneWorld<br/>world + entity_registry"]
+        TRANSFORM["Transform"]
+        MESH_R["MeshRenderer"]
+        PL["PointLight"]
+        PLAYER["Player"]
+        CAM["Camera"]
+        SCRIPT_C["Script"]
+        TAGS["Tags / EntityId"]
+        CC["CharacterController"]
+        GS["GaussianSplat"]
+        HIDDEN["Hidden<br/>visibility marker"]
+        MAT_OVR["MaterialOverride<br/>runtime emission/roughness"]
+    end
+
+    subgraph SCENE["Scene System"]
+        YAML_P["YAML Parser<br/>serde_yaml"]
+        SCENE_F["SceneFile<br/>entities + settings"]
+        SPAWN["spawn_all_entities()"]
+        RECONCILE["reconcile_scene()<br/>hot-reload diff"]
+    end
+
+    subgraph RENDER["Rendering Pipeline"]
+        GPU["GpuState<br/>wgpu device/queue/surface"]
+        PIPE_YAML["Pipeline YAML<br/>DAG of passes"]
+        COMPILED["CompiledPipeline<br/>resources + passes"]
+        SHADOW["Shadow Pass<br/>directional shadow map"]
+        GBUF["G-Buffer Pass<br/>albedo + normal + depth"]
+        LIGHT["Lighting Pass<br/>Cook-Torrance GGX + shadows"]
+        BLOOM_P["Bloom Pass<br/>HDR glow extraction"]
+        TONE["Tonemap Pass<br/>HDR → SDR"]
+        FXAA_P["FXAA Pass<br/>anti-aliasing"]
+        SPLAT_P["Splat Pass<br/>Gaussian billboards"]
+        FWD["Forward Fallback"]
+    end
+
+    subgraph UI["UI Overlay (Phase 16)"]
+        FONT["BitmapFont<br/>6×8 pixel atlas, 95 glyphs"]
+        UI_R["UiRenderer<br/>immediate-mode 2D"]
+        UI_TEXT["ui.text()<br/>screen-space text"]
+        UI_RECT["ui.rect()<br/>colored rectangles"]
+        UI_FLASH["ui.flash()<br/>screen effects"]
+        ENT_CMD["EntityCommandQueue<br/>deferred spawn/destroy"]
+    end
+
+    subgraph SHADER["Shader System"]
+        SLANG["SLANG Compiler<br/>shader-slang crate"]
+        WGSL["WGSL Fallback"]
+        REFLECT["Reflection API<br/>auto bind group layouts"]
+    end
+
+    subgraph PHYSICS["Physics (Rapier 3D)"]
+        PW["PhysicsWorld<br/>rigid bodies + colliders"]
+        CHAR["Character Controller<br/>move_character()"]
+        STEP["step() + sync_to_ecs()"]
+    end
+
+    subgraph SCRIPTING["Lua Scripting (mlua)"]
+        LUA["ScriptRuntime<br/>single Lua VM"]
+        ENV["Per-Entity Environments<br/>self table + metatable"]
+        HOOKS["Lifecycle Hooks<br/>init / update / on_reload"]
+        API_IN["input API<br/>pressed / just_pressed"]
+        API_ENT["entity API<br/>position/rotation/light/scale/visible"]
+        API_CMD["entity commands<br/>spawn / destroy"]
+        API_UI["ui API<br/>text / rect / flash / screen_size"]
+        API_EVT["events API<br/>events.emit()"]
+        API_PHY["physics API<br/>raycast / overlap"]
+        API_AUD["audio API<br/>play_sfx / play_music"]
+        GAME_T["game table<br/>shared state"]
+    end
+
+    subgraph INPUT["Input System"]
+        BINDINGS["bindings.yaml<br/>action → key mapping"]
+        IS["InputState<br/>held / just_pressed / delta"]
+        SYNTH["Synthetic Injection<br/>inject_key_press()"]
+        CURSOR["Cursor Capture<br/>FPS mouse lock"]
+    end
+
+    subgraph EVENTS["Event System"]
+        EB["EventBus<br/>ring buffer log"]
+        SCHEMA["events/schema.yaml<br/>validation"]
+        EMIT["emit() / flush() / tick()"]
+    end
+
+    subgraph ASSETS["Asset System"]
+        MESH_C["MeshCache<br/>procedural cube fallback"]
+        MAT_C["MaterialCache<br/>YAML materials"]
+        SPLAT_C["SplatCache<br/>PLY parser + GPU buffers"]
+    end
+
+    subgraph HOT["Hot-Reload (notify)"]
+        WATCH["File Watcher"]
+        W_SHADER["Shader Changed"]
+        W_SCENE["Scene Changed"]
+        W_MAT["Material Changed"]
+        W_PIPE["Pipeline Changed"]
+        W_SCRIPT["Script Changed"]
+        W_SPLAT["Splat Changed"]
+    end
+
+    subgraph IPC["External Control"]
+        SOCK["Unix Domain Socket<br/>/tmp/naive-runtime.sock"]
+        CMD["Command Protocol<br/>JSON request/response"]
+        MCP["MCP Server Binary<br/>naive_mcp"]
+    end
+
+    subgraph AUDIO["Audio (Kira)"]
+        AUDIO_S["AudioSystem<br/>spatial audio"]
+    end
+
+    subgraph TWEEN["Animation"]
+        TW["TweenSystem<br/>property animation"]
+    end
+
+    subgraph FEEDBACK["Dev Feedback Loop"]
+        DEVLOG["dev.log<br/>structured feedback template"]
+        GITHUB["GitHub Issues API<br/>ureq POST"]
+        LABEL["dev-log label<br/>searchable record"]
+    end
+
+    subgraph DEMOS["Demo System"]
+        REGISTRY["DemoEntry Registry<br/>19 demos × 6 categories"]
+        EMBED["include_str! Embedded<br/>scenes + Lua + materials"]
+        TMPDIR["$TMPDIR/naive-demo/<br/>extraction target"]
+        MENU["Interactive Menu<br/>ANSI + stdin"]
+    end
+
+    CLAP --> MAIN
+    MAIN -->|"run"| EL
+    MAIN -->|"demo"| DEMO_CMD
+    MAIN -->|"submit-log"| DEVLOG_CMD
+    DEMO_CMD -->|"extract + CliArgs"| EL
+    DEVLOG_CMD -->|"POST dev.log"| GITHUB
+
+    EL -->|"WindowEvent"| IS
+    EL -->|"DeviceEvent"| IS
+    EL -->|"RedrawRequested"| DT
+
+    DT --> CHAR
+    DT --> HOOKS
+    DT --> EMIT
+    DT --> TW
+
+    YAML_P --> SCENE_F
+    SCENE_F --> SPAWN
+    SPAWN --> SW
+    SPAWN --> MESH_C
+    SPAWN --> MAT_C
+
+    SW --> TRANSFORM
+    SW --> MESH_R
+    SW --> PL
+    SW --> PLAYER
+    SW --> CAM
+    SW --> SCRIPT_C
+    SW --> CC
+    SW --> GS
+
+    IS -->|"raw ptr"| API_IN
+    SW -->|"raw mut ptr"| API_ENT
+    ENT_CMD -->|"raw mut ptr"| API_CMD
+    UI_R -->|"raw mut ptr"| API_UI
+    EB -->|"raw mut ptr"| API_EVT
+    PW -->|"raw ptr"| API_PHY
+    AUDIO_S -->|"raw mut ptr"| API_AUD
+
+    LUA --> ENV
+    ENV --> HOOKS
+    ENV --> GAME_T
+
+    CHAR --> PW
+    STEP --> SW
+
+    PIPE_YAML --> COMPILED
+    COMPILED --> SHADOW
+    COMPILED --> GBUF
+    COMPILED --> LIGHT
+    COMPILED --> BLOOM_P
+    COMPILED --> TONE
+    COMPILED --> FXAA_P
+    COMPILED --> SPLAT_P
+    SLANG --> WGSL
+    SLANG --> REFLECT
+
+    FONT --> UI_R
+    UI_R --> UI_TEXT
+    UI_R --> UI_RECT
+    UI_R --> UI_FLASH
+    ENT_CMD -->|"deferred"| SW
+
+    WATCH --> W_SHADER
+    WATCH --> W_SCENE
+    WATCH --> W_SCRIPT
+    WATCH --> W_PIPE
+
+    SOCK --> CMD
+    CMD -->|"inject_input"| SYNTH
+    CMD -->|"emit_event"| EB
+    CMD -->|"query/modify"| SW
+    MCP --> SOCK
+
+    SYNTH --> IS
+
+    REGISTRY --> EMBED
+    EMBED -->|"write to disk"| TMPDIR
+    MENU -->|"select demo"| REGISTRY
+
+    DEVLOG -->|"naive submit-log"| GITHUB
+    GITHUB --> LABEL
+
+    classDef core fill:#e94560,stroke:#0f3460,color:#fff
+    classDef ecs fill:#0f3460,stroke:#e94560,color:#fff
+    classDef render fill:#533483,stroke:#e94560,color:#fff
+    classDef script fill:#1a5276,stroke:#e94560,color:#fff
+    classDef input fill:#1e8449,stroke:#fff,color:#fff
+    classDef event fill:#b7950b,stroke:#fff,color:#000
+    classDef ui fill:#7b2d8e,stroke:#e94560,color:#fff
+    classDef feedback fill:#c0392b,stroke:#fff,color:#fff
+    classDef demo fill:#2980b9,stroke:#fff,color:#fff
+
+    class EL,DT,PAUSE core
+    class SW,TRANSFORM,MESH_R,PL,PLAYER,CAM,SCRIPT_C,CC,GS,TAGS,HIDDEN,MAT_OVR ecs
+    class GPU,COMPILED,SHADOW,GBUF,LIGHT,BLOOM_P,TONE,FXAA_P,SPLAT_P,FWD render
+    class LUA,ENV,HOOKS,API_IN,API_ENT,API_CMD,API_UI,API_EVT,API_PHY,API_AUD,GAME_T script
+    class IS,BINDINGS,SYNTH,CURSOR input
+    class EB,SCHEMA,EMIT event
+    class FONT,UI_R,UI_TEXT,UI_RECT,UI_FLASH,ENT_CMD ui
+    class DEVLOG,GITHUB,LABEL,DEVLOG_CMD feedback
+    class REGISTRY,EMBED,TMPDIR,MENU,DEMO_CMD demo
+    </pre>
+  </div>
+
+  <h2>Frame Update Sequence</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+    participant W as winit
+    participant E as Engine
+    participant I as InputState
+    participant P as PhysicsWorld
+    participant S as ScriptRuntime
+    participant Q as EntityCmdQueue
+    participant EB as EventBus
+    participant R as Renderer
+    participant U as UiRenderer
+
+    W->>E: KeyboardInput / MouseInput
+    E->>I: handle_window_event()
+
+    W->>E: RedrawRequested
+    E->>E: calculate delta_time
+
+    Note over E: Escape → release cursor
+    Note over E: Any key → capture cursor
+
+    E->>I: axis_2d() / pressed()
+    E->>P: move_character(desired_velocity)
+    P->>P: step(dt)
+    P-->>E: sync_to_ecs()
+
+    loop For each Script entity
+        E->>S: call_update(entity, dt)
+        S->>I: input.just_pressed()
+        S->>EB: events.emit()
+        S->>E: entity.set_position()
+        S->>Q: entity.spawn() / destroy()
+        S->>U: ui.text() / ui.rect()
+    end
+
+    E->>Q: process_entity_commands()
+    Q-->>E: spawn / destroy / scale / visible
+
+    E->>EB: tick(dt) + flush()
+    E->>E: update_transforms()
+
+    E->>R: execute_pipeline_to_view()
+    R->>R: Shadow Pass
+    R->>R: G-Buffer Pass
+    R->>R: Splat Pass
+    R->>R: Lighting Pass (Cook-Torrance GGX)
+    R->>R: Bloom Pass
+    R->>R: Tonemap Pass
+    R->>R: FXAA Pass
+
+    E->>U: ui.render() [LoadOp::Load]
+    U->>U: colored rects pipeline
+    U->>U: textured text pipeline
+
+    E->>E: present swapchain
+    E->>I: begin_frame() [clear transient]
+    E->>W: request_redraw()
+    </pre>
+  </div>
+
+  <h2>Data Flow: Scene Loading</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+    A["relic.yaml"] -->|"serde_yaml"| B["SceneFile"]
+    B -->|"spawn_all_entities()"| C["hecs World"]
+    C --> D["Transform"]
+    C --> E["MeshRenderer"]
+    C --> F["PointLight"]
+    C --> G["Camera + Player"]
+    C --> H["CharacterController"]
+    C --> I["Script"]
+
+    E -->|"mesh path"| J["MeshCache<br/>procedural cube"]
+    E -->|"material path"| K["MaterialCache<br/>YAML → uniforms"]
+
+    H -->|"Rapier body"| L["PhysicsWorld"]
+
+    I -->|"load .lua"| M["ScriptRuntime"]
+    M -->|"raw ptrs"| N["InputState"]
+    M -->|"raw ptrs"| O["SceneWorld"]
+    M -->|"raw ptrs"| P["EventBus"]
+    M -->|"raw ptrs"| L
+
+    style A fill:#e94560
+    style C fill:#0f3460,color:#fff
+    style L fill:#533483,color:#fff
+    style M fill:#1a5276,color:#fff
+    </pre>
+  </div>
+
+  <h2>Full Rendering Pipeline</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+    subgraph Shadow["Shadow Pass"]
+        SH1["Directional Light View"]
+        SH2["Depth-only Render<br/>shadow_depth texture"]
+    end
+
+    subgraph GBuf["G-Buffer Pass"]
+        G1["Vertex Shader<br/>MVP transform"]
+        G2["Fragment Shader<br/>output albedo, normal, depth"]
+    end
+
+    subgraph Splat["Splat Pass (optional)"]
+        S1["Billboard Quads<br/>sorted back-to-front"]
+        S2["2D Gaussian<br/>alpha blending"]
+    end
+
+    subgraph Light["Lighting Pass"]
+        L1["Fullscreen Quad"]
+        L2["Reconstruct world pos<br/>inv_view_projection × depth"]
+        L3["Cook-Torrance GGX<br/>D·F·G / (4·NdotL·NdotV)"]
+        L4["Shadow Sampling<br/>PCF soft shadows"]
+        L5["Depth Composite<br/>mesh vs splat"]
+    end
+
+    subgraph Bloom["Bloom Pass"]
+        BL1["HDR Threshold<br/>extract bright pixels"]
+        BL2["Gaussian Blur<br/>separable kernel"]
+        BL3["Additive Blend<br/>bloom + scene"]
+    end
+
+    subgraph Tone["Tonemap Pass"]
+        T1["Reinhard Tonemap"]
+        T2["Gamma Correction"]
+    end
+
+    subgraph FXAA["FXAA Pass"]
+        FX1["Edge Detection<br/>luma contrast"]
+        FX2["Subpixel Blend<br/>anti-aliased output"]
+    end
+
+    subgraph UIPass["UI Overlay Pass"]
+        UI1["Colored Rects Pipeline<br/>solid quads, alpha blend"]
+        UI2["Textured Text Pipeline<br/>6×8 bitmap font atlas"]
+        UI3["Screen Flash<br/>fullscreen fade effect"]
+    end
+
+    Shadow -->|"shadow_depth"| Light
+    GBuf -->|"albedo_rt<br/>normal_rt<br/>depth"| Light
+    Splat -->|"splat_color<br/>splat_depth"| Light
+    Light -->|"hdr_rt"| Bloom
+    Bloom -->|"bloom_rt"| Tone
+    Tone -->|"ldr_rt"| FXAA
+    FXAA -->|"swapchain"| UIPass
+    UIPass -->|"LoadOp::Load"| SCREEN["Display"]
+
+    style Shadow fill:#2c3e50,color:#fff
+    style GBuf fill:#0f3460,color:#fff
+    style Splat fill:#533483,color:#fff
+    style Light fill:#1a5276,color:#fff
+    style Bloom fill:#8e44ad,color:#fff
+    style Tone fill:#e94560,color:#fff
+    style FXAA fill:#27ae60,color:#fff
+    style UIPass fill:#7b2d8e,color:#fff
+    </pre>
+  </div>
+
+  <h2>CLI Command Flow</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TB
+    USER["User / AI Agent"] -->|"naive ..."| CLI["clap Parser"]
+
+    CLI -->|"init name"| INIT["create_project()<br/>Scaffold dirs, YAML, Lua,<br/>CLAUDE.md, dev.log"]
+    CLI -->|"run [--scene]"| RUN["Load naive.yaml<br/>→ run_engine()"]
+    CLI -->|"test [file]"| TEST["test_runner<br/>Headless Lua tests"]
+    CLI -->|"build [--target]"| BUILD["bundle_project()<br/>Standalone distribution"]
+    CLI -->|"demo [selector]"| DEMO["demos.rs"]
+    CLI -->|"submit-log"| SUBMIT["dev_log.rs"]
+    CLI -->|"publish"| PUB["publish.rs<br/>World server"]
+
+    DEMO -->|"no selector"| MENU["Interactive Menu<br/>ANSI terminal"]
+    DEMO -->|"number"| LOOKUP["Lookup by index"]
+    DEMO -->|"name"| FUZZY["Fuzzy match slug/name"]
+
+    MENU --> EXTRACT
+    LOOKUP --> EXTRACT
+    FUZZY --> EXTRACT
+
+    EXTRACT["Extract to $TMPDIR<br/>scenes + Lua + materials"] -->|"CliArgs"| ENGINE["run_engine()"]
+
+    SUBMIT -->|"Read dev.log"| VALIDATE["Validate content<br/>+ NAIVE_GITHUB_TOKEN"]
+    VALIDATE -->|"POST"| GHAPI["GitHub Issues API<br/>poro/nAIVE/issues"]
+    GHAPI -->|"Created"| RECORD["Append submission<br/>record to dev.log"]
+
+    style INIT fill:#27ae60,color:#fff
+    style RUN fill:#e94560,color:#fff
+    style TEST fill:#2980b9,color:#fff
+    style DEMO fill:#2980b9,color:#fff
+    style SUBMIT fill:#c0392b,color:#fff
+    style ENGINE fill:#e94560,color:#fff
+    style GHAPI fill:#c0392b,color:#fff
+    </pre>
+  </div>
+
+  <h2>Dev Feedback Loop — Engine Evolution</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+    subgraph SCAFFOLD["Project Scaffold"]
+        INIT2["naive init my-game"]
+        DEVLOG2["dev.log template<br/>What Worked / Pain Points<br/>Workarounds / Missing Features"]
+        CLAUDE_MD["CLAUDE.md<br/>Instructs AI agents<br/>to maintain dev.log"]
+    end
+
+    subgraph DEV["Development Phase"]
+        AGENT["AI Agent<br/>(Claude, GPT, etc.)"]
+        GAME["Game Code<br/>YAML + Lua"]
+        LOG_WRITE["Update dev.log<br/>as issues arise"]
+    end
+
+    subgraph SUBMIT2["Submission"]
+        CLI2["naive submit-log"]
+        POST2["POST to GitHub<br/>Issues API"]
+        ISSUE["GitHub Issue<br/>[Dev Log] my-game<br/>label: dev-log"]
+    end
+
+    subgraph TRIAGE["Engine Triage"]
+        REVIEW["Review dev-log issues"]
+        PATTERN["Identify patterns<br/>across projects"]
+        ROADMAP["Update engine<br/>roadmap priorities"]
+    end
+
+    subgraph ENGINE2["Engine Release"]
+        FIX["Fix pain points<br/>Add missing features"]
+        RELEASE["New nAIVE version"]
+    end
+
+    INIT2 --> DEVLOG2
+    INIT2 --> CLAUDE_MD
+    CLAUDE_MD -->|"AI reads instructions"| AGENT
+    AGENT --> GAME
+    AGENT --> LOG_WRITE
+    LOG_WRITE --> DEVLOG2
+
+    DEVLOG2 -->|"naive submit-log"| CLI2
+    CLI2 --> POST2
+    POST2 --> ISSUE
+
+    ISSUE --> REVIEW
+    REVIEW --> PATTERN
+    PATTERN --> ROADMAP
+
+    ROADMAP --> FIX
+    FIX --> RELEASE
+    RELEASE -->|"Updated engine<br/>+ demo catalog"| INIT2
+
+    style INIT2 fill:#27ae60,color:#fff
+    style AGENT fill:#2980b9,color:#fff
+    style ISSUE fill:#c0392b,color:#fff
+    style RELEASE fill:#e94560,color:#fff
+    style PATTERN fill:#b7950b,color:#000
+    </pre>
+  </div>
+
+  <h2>Demo Browser — Embedded Content Architecture</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TB
+    subgraph COMPILE["Compile Time"]
+        SRC_SCENES["project/scenes/*.yaml"]
+        SRC_LUA["project/logic/*.lua"]
+        SRC_MAT["project/assets/materials/*.yaml"]
+        SRC_PIPE["project/pipelines/render.yaml"]
+        SRC_INPUT["project/input/bindings.yaml"]
+
+        INCLUDE["include_str!()<br/>Rust compile-time embedding"]
+
+        SRC_SCENES --> INCLUDE
+        SRC_LUA --> INCLUDE
+        SRC_MAT --> INCLUDE
+        SRC_PIPE --> INCLUDE
+        SRC_INPUT --> INCLUDE
+
+        INCLUDE --> BINARY["naive binary<br/>~278KB embedded text"]
+    end
+
+    subgraph RUNTIME["Runtime — naive demo"]
+        BINARY --> SELECT["User selects demo<br/>#3 or 'particles'"]
+        SELECT --> ENTRY["DemoEntry<br/>slug + scene + scripts + materials"]
+        ENTRY --> EXTRACT2["Extract to $TMPDIR/naive-demo/"]
+
+        EXTRACT2 --> T_SCENE["scenes/demo.yaml"]
+        EXTRACT2 --> T_LUA["logic/*.lua"]
+        EXTRACT2 --> T_MAT["assets/materials/*.yaml"]
+        EXTRACT2 --> T_PIPE["pipelines/render.yaml"]
+        EXTRACT2 --> T_INPUT["input/bindings.yaml"]
+
+        T_SCENE --> ENGINE3["Engine loads<br/>project from temp dir"]
+        T_LUA --> ENGINE3
+        T_MAT --> ENGINE3
+        T_PIPE --> ENGINE3
+        T_INPUT --> ENGINE3
+    end
+
+    subgraph FALLBACKS["Engine Fallbacks"]
+        WGSL2["Hardcoded WGSL<br/>shader fallbacks"]
+        PROC["Procedural meshes<br/>cube + sphere"]
+        AUDIO2["Missing audio<br/>graceful no-op"]
+
+        ENGINE3 -.->|"no .slang files"| WGSL2
+        ENGINE3 -.->|"no .gltf files"| PROC
+        ENGINE3 -.->|"no .ogg files"| AUDIO2
+    end
+
+    style BINARY fill:#2980b9,color:#fff
+    style ENGINE3 fill:#e94560,color:#fff
+    style WGSL2 fill:#533483,color:#fff
+    style PROC fill:#533483,color:#fff
+    </pre>
+  </div>
+
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#0f3460',
+        primaryTextColor: '#e0e0e0',
+        primaryBorderColor: '#e94560',
+        lineColor: '#e94560',
+        secondaryColor: '#533483',
+        tertiaryColor: '#1a5276'
+      }
+    });
+  </script>
+</body>
+</html>
