@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nAIVE Platform PRD v5.0 — nAIVE Engine</title>
+<meta name="description" content="nAIVE: AI-Native Interactive Visual Engine. Rust + WebGPU game engine built for the AI era.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <a href="/" class="logo"><span>n</span>AIVE</a>
+    <button class="menu-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')">☰</button>
+    <div class="nav-links">
+      <a href="/">Home</a>
+          <a href="/whitepaper.html">Whitepaper</a>
+          <a href="/#install">Install</a>
+          <a href="/architecture.html">Architecture</a>
+          <a href="/demos.html">Demos</a>
+      <a href="https://github.com/poro/nAIVE" target="_blank" class="gh-btn">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+
+<div class="doc-page">
+  <div class="container-narrow">
+<div style="background:#2a2410;border:1px solid #6b5a1e;color:#f0d78c;padding:12px 16px;border-radius:8px;margin:0 auto 24px;max-width:900px;font-size:0.9rem">Archived plan from February 2026, kept for reference. Some of it shipped differently and some has not been built; see the <a href="https://github.com/poro/nAIVE" style="color:#f0d78c">repository</a> for what exists today.</div>
+    <div class="doc-header">
+      <h1>nAIVE Platform PRD v5.0</h1>
+      <div class="doc-meta"><span>🌐 Product Requirements</span><span>License: BSL 1.1</span><span>Version 5.0</span><span>Author: Mark Ollila</span></div>
+    </div>
+    
+    <div class="toc">
+      <h3>Table of Contents</h3>
+      <ul><li><a href="#1-executive-summary">1. Executive Summary</a></li>
+<li><a href="#2-platform-vision">2. Platform Vision</a></li>
+<li><a href="#3-architecture">3. Architecture</a></li>
+<li><a href="#4-server-authority-model">4. Server Authority Model</a></li>
+<li><a href="#5-networking">5. Networking</a></li>
+<li><a href="#6-server-side-prediction-reconciliation">6. Server-Side Prediction Reconciliation</a></li>
+<li><a href="#7-server-authoritative-hit-detection">7. Server-Authoritative Hit Detection</a></li>
+<li><a href="#8-interest-management">8. Interest Management</a></li>
+<li><a href="#9-ai-director">9. AI Director</a></li>
+<li><a href="#10-llm-npc-agent-runtime">10. LLM NPC Agent Runtime</a></li>
+<li><a href="#11-telegram-integration">11. Telegram Integration</a></li>
+<li><a href="#12-world-registry-and-four-word-naming">12. World Registry and Four-Word Naming</a></li>
+<li><a href="#13-matchmaking-and-instance-management">13. Matchmaking and Instance Management</a></li>
+<li><a href="#14-proof-games-platform-perspective">14. Proof Games (Platform Perspective)</a></li>
+<li><a href="#15-licensing">15. Licensing</a></li>
+<li><a href="#16-infrastructure">16. Infrastructure</a></li>
+<li><a href="#17-server-technical-specifications">17. Server Technical Specifications</a></li>
+<li><a href="#18-implementation-roadmap-server">18. Implementation Roadmap (Server)</a></li>
+<li><a href="#19-risk-assessment">19. Risk Assessment</a></li>
+<li><a href="#20-success-metrics">20. Success Metrics</a></li>
+<li><a href="#appendix-a-glossary">Appendix A: Glossary</a></li></ul>
+    </div>
+    <div class="doc-content">
+      
+
+<p><strong>Version:</strong> 5.0</p>
+<p><strong>Date:</strong> February 14, 2026</p>
+<p><strong>Author:</strong> Mark Ollila</p>
+<p><strong>License:</strong> BSL 1.1 (converts to MIT after 3 years)</p>
+<p><strong>Status:</strong> Draft</p>
+<p><strong>Classification:</strong> Confidential</p>
+<p><strong>Companion Document:</strong> nAIVE Engine PRD v5.0 (MIT)</p>
+
+<hr>
+
+<h2 id="1-executive-summary">1. Executive Summary</h2>
+
+<p>The nAIVE Platform is the server infrastructure that turns nAIVE engine games into multiplayer, shareable, AI-directed experiences. While the engine (MIT) handles rendering, physics, and gameplay on the client, the platform (BSL 1.1) handles everything that lives on a server:</p>
+
+<ul><li><strong>Multiplayer</strong> — server-authoritative game state, dual WebSocket/WebRTC transport, client-side prediction reconciliation</li>
+<li><strong>World Registry</strong> — four-word addresses (<code>black.squirrel.white.deer</code>) as the sharing mechanism</li>
+<li><strong>AI Director</strong> — server-side system that monitors players and evolves worlds in real-time</li>
+<li><strong>LLM NPC Runtime</strong> — persistent-memory NPCs with tiered inference for cost control</li>
+<li><strong>Telegram Bridge</strong> — control live worlds from a chat app</li>
+<li><strong>Matchmaking</strong> — queue-based skill matching and instance management</li>
+<li><strong>Interest Management</strong> — server-side spatial partitioning for bandwidth scaling</li>
+<li><strong>Horde Authority</strong> — simplified server-side simulation for GPU compute entity games</li>
+</ul>
+<p>The platform adds multiplayer and network services to any game built with the engine. A game developer can ship a single-player game using only MIT-licensed engine crates. The platform is optional — but it's where the network effects, community, and long-term value live.</p>
+
+<h3 id="three-proof-games">Three Proof Games</h3>
+
+<p>Each proof game escalates what the platform must handle:</p>
+
+<li><strong>Snake Sweeper</strong> — 4-player turn-based (WebSocket, 20 Hz, ~16 KB/s per client)</li>
+<li><strong>HAVOC</strong> — 4-player co-op horde survival (WebRTC, 60 Hz, 50,000 GPU entities, ~360 KB/s per client)</li>
+<li><strong>DROPZONE</strong> — 100-player battle royale (WebRTC, 30-60 Hz, 2km² map, ~300 KB/s per client)</li>
+
+<p>If the platform can handle DROPZONE, it can handle any game.</p>
+
+<hr>
+
+<h2 id="2-platform-vision">2. Platform Vision</h2>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>"make it rain in black.squirrel.white.deer"
+</code></pre></div>
+
+<p>A message sent from Telegram. Within one second, every player connected to that world sees rain particles falling, hears rain audio, and watches the lighting shift. The AI parsed "make it rain" into a weather system call. The server executed it in the world's Lua environment. State deltas flowed to all connected clients. The world changed because someone asked it to — from a chat app.</p>
+
+<p><strong>The platform's three promises:</strong></p>
+
+<p><strong>For creators:</strong> Publish your game with a four-word name. Anyone in the world can play it instantly — in a browser, no download. Multiplayer is free (you don't build it, the platform provides it).</p>
+
+<p><strong>For players:</strong> Hear about a game. Type four words. You're in. No download, no account, no app store. Your friend is already there.</p>
+
+<p><strong>For AI:</strong> You live inside the world. You remember. You adapt. You're not a tool — you're a collaborator. The Telegram bridge, the AI Director, and the LLM NPCs all run on the server, always on.</p>
+
+<hr>
+
+<h2 id="3-architecture">3. Architecture</h2>
+
+<h3 id="3-1-the-server-crate">3.1 The Server Crate</h3>
+
+<p><code>naive-server</code> is the single BSL-licensed crate. It depends on <code>naive-core</code> (MIT) for shared types but has no dependency on <code>naive-client</code>.</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>┌────────────────────────────────────────────────────────┐
+<p>│  naive-server (BSL 1.1)                                 │</p>
+<p>│                                                         │</p>
+<p>│  ├── World Manager        (tokio, runs N worlds)       │</p>
+<p>│  ├── Transport Layer      (WebSocket + WebRTC)         │</p>
+<p>│  ├── World Registry       (four-word → world ID)       │</p>
+<p>│  ├── Matchmaker           (queue, ELO, instances)      │</p>
+<p>│  ├── AI Director          (per-world adaptive system)  │</p>
+<p>│  ├── LLM NPC Runtime     (tiered inference)            │</p>
+<p>│  ├── Telegram Bridge      (teloxide, AI-parsed NL)     │</p>
+<p>│  ├── Interest Manager     (spatial partitioning)       │</p>
+<p>│  ├── Horde Grid Sim      (simplified authority)        │</p>
+<p>│  └── Per-World Instance:                               │</p>
+<p>│      ├── hecs World       (canonical ECS state)        │</p>
+<p>│      ├── Rapier Physics   (headless, no rendering)     │</p>
+<p>│      ├── mlua ScriptRuntime (Lua game logic)           │</p>
+<p>│      ├── EventBus         (typed pub/sub)              │</p>
+<p>│      └── State Broadcaster (delta → transport fan-out) │</p>
+<p>│                                                         │</p>
+<p>│  Depends on: naive-core (MIT)                          │</p>
+<p>│  Does NOT depend on: naive-client                      │</p>
+<p>└────────────────────────────────────────────────────────┘</p>
+</code></pre></div>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>toml</span></div><pre><code># Cargo.toml for naive-server
+<p>[dependencies]</p>
+<p>naive-core = { path = "../naive-core" }</p>
+<p>tokio = { version = "1", features = ["full"] }</p>
+<p>tungstenite = "0.21"      # WebSocket</p>
+<p>webrtc = "0.9"            # WebRTC DataChannels</p>
+<p>teloxide = "0.12"         # Telegram Bot API</p>
+<p>mlua = { version = "0.9", features = ["lua54"] }</p>
+<p>rapier3d = "0.18"</p>
+<p>hecs = "0.10"</p>
+<p>sqlx = { version = "0.7", features = ["sqlite"] }</p>
+</code></pre></div>
+
+<h3 id="3-2-three-layer-stack-server-perspective">3.2 Three-Layer Stack (Server Perspective)</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>                    ┌─────────────────────────────────────────────┐
+<p>                    │              CREATOR LAYER                   │</p>
+<p>                    │                                              │</p>
+<p>                    │  Claude Code ──────&gt; YAML + Lua + Assets     │</p>
+<p>                    │  NL Compiler ──────&gt; Scene Generation        │</p>
+<p>                    │  Telegram ─────────&gt; Live World Commands     │</p>
+<p>                    │  MCP Server ──────&gt; Agent Interaction        │</p>
+<p>                    └──────────────────┬──────────────────────────┘</p>
+<p>                                       │ publish / command</p>
+<p>                    ┌──────────────────▼──────────────────────────┐</p>
+<p>                    │              SERVER LAYER (this PRD)         │</p>
+<p>                    │                                              │</p>
+<p>                    │  World Registry (4-word names ↔ world IDs)  │</p>
+<p>                    │  Per-World:                                  │</p>
+<p>                    │    ├── hecs ECS    (canonical state)         │</p>
+<p>                    │    ├── Rapier      (headless physics)        │</p>
+<p>                    │    ├── mlua        (game logic scripts)      │</p>
+<p>                    │    ├── AI Agents   (LLM NPC runtime)        │</p>
+<p>                    │    ├── AI Director (adaptive evolution)      │</p>
+<p>                    │    ├── Horde Sim   (simplified grid)         │</p>
+<p>                    │    ├── Matchmaker  (queue + ELO)             │</p>
+<p>                    │    └── Broadcaster (delta → WS/WebRTC)      │</p>
+<p>                    │  Transport: WebSocket + WebRTC               │</p>
+<p>                    │  Telegram Bridge  (teloxide)                 │</p>
+<p>                    │  Asset CDN        (scene + mesh + audio)     │</p>
+<p>                    └──────────────────┬──────────────────────────┘</p>
+<p>                                       │ state deltas</p>
+<p>                    ┌──────────────────▼──────────────────────────┐</p>
+<p>                    │  CLIENT LAYER (see Engine PRD)               │</p>
+<p>                    └─────────────────────────────────────────────┘</p>
+</code></pre></div>
+
+<hr>
+
+<h2 id="4-server-authority-model">4. Server Authority Model</h2>
+
+<p><strong>The server is the single source of truth for all world state.</strong></p>
+
+<ul><li><strong>Anti-cheat by design.</strong> Clients send input events only. They cannot claim "my position is X" or "my score is Y." The server computes all state.</li>
+<li><strong>Consistent for all viewers.</strong> Every connected client sees the same world.</li>
+<li><strong>External control works naturally.</strong> Telegram commands, MCP tools, AI Director interventions all execute in the server's Lua environment.</li>
+<li><strong>Multiplayer is free.</strong> Adding a player = spawn entity + process input stream.</li>
+</ul>
+<h3 id="horde-authority-split">Horde Authority Split</h3>
+
+<p>For GPU compute entity games (HAVOC), the server is authoritative for <em>aggregate horde state</em>, not individual entity positions:</p>
+
+<div class="table-wrap"><table><thead><tr><th>What</th><th>Where</th><th>Why</th></tr></thead><tbody><tr><td>Total enemies alive</td><td>Server</td><td>Gameplay scoring</td></tr>
+<tr><td>Wave number, timing</td><td>Server</td><td>Game progression</td></tr>
+<tr><td>Damage dealt to players</td><td>Server</td><td>Anti-cheat</td></tr>
+<tr><td>Flow field</td><td>Server (computed) → Client (consumed)</td><td>Pathfinding</td></tr>
+<tr><td>Individual goblin positions</td><td>Client (GPU compute)</td><td>50K positions = 2.4 MB/tick. Impossible to replicate.</td></tr>
+<tr><td>Spawn commands</td><td>Server → Client</td><td>Authority over spawning</td></tr>
+<tr><td>Death events</td><td>Server (validated from grid counts)</td><td>Scoring</td></tr></tbody></table></div>
+<p>Sending 50,000 entity positions per tick at 60 Hz = 144 MB/s per client. Instead, the server sends flow fields (~64 KB, ~1/sec), spawn commands (~100 bytes each), death counts, and aggregate state. Each client runs the same GPU compute shaders with the same flow field. Small divergences between clients are invisible in a 50,000 entity swarm.</p>
+
+<hr>
+
+<h2 id="5-networking">5. Networking</h2>
+
+<h3 id="5-1-dual-transport-architecture">5.1 Dual Transport Architecture</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>┌─────────────────────────────────────┐
+<p>│         Transport Layer             │</p>
+<p>│                                     │</p>
+<p>│  ┌───────────┐  ┌────────────────┐ │</p>
+<p>│  │ WebSocket │  │ WebRTC         │ │</p>
+<p>│  │ (reliable)│  │ DataChannel    │ │</p>
+<p>│  │ TCP-based │  │ (unreliable)   │ │</p>
+<p>│  │ 20 Hz     │  │ 60 Hz          │ │</p>
+<p>│  └─────┬─────┘  └───────┬────────┘ │</p>
+<p>│        └───────┬────────┘          │</p>
+<p>│                │                    │</p>
+<p>│    State Delta Protocol             │</p>
+<p>│    (shared, transport-agnostic)     │</p>
+<p>└────────────────┬───────────────────┘</p>
+<p>                 │</p>
+<p>          World Instance</p>
+</code></pre></div>
+
+<p>Per-world YAML configuration selects the transport:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>network:
+<p>  transport: webrtc          # or "websocket"</p>
+<p>  tick_rate: 60              # Hz</p>
+<p>  interpolation_delay: 2     # ticks</p>
+<p>  prediction: true</p>
+<p>  interest_radius: 100.0     # meters</p>
+</code></pre></div>
+
+<p>Both transports encode the same state delta protocol. A single server can host worlds with different transports simultaneously.</p>
+
+<p><strong>WebRTC signaling:</strong> HTTPS for SDP exchange, then DataChannel for all game traffic. ICE/STUN for NAT traversal.</p>
+
+<h3 id="5-2-state-delta-protocol">5.2 State Delta Protocol</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>json</span></div><pre><code>{
+<p>  "tick": 3042,</p>
+<p>  "ack_input_tick": 3040,</p>
+<p>  "updates": [</p>
+<p>    {</p>
+<p>      "entity": "player_1",</p>
+<p>      "transform": {"position": [43.2, 0, 87.1], "rotation": [0, 45, 0]},</p>
+<p>      "health": 85,</p>
+<p>      "shield": 40</p>
+<p>    },</p>
+<p>    {</p>
+<p>      "entity": "player_2",</p>
+<p>      "transform": {"position": [51.0, 0, 82.3]},</p>
+<p>      "animation_state": "run"</p>
+<p>    },</p>
+<p>    {"spawn": {"id": "pickup_12", "type": "health_pack", "position": [40, 0, 90]}},</p>
+<p>    {"despawn": "pickup_7"}</p>
+<p>  ],</p>
+<p>  "horde": {</p>
+<p>    "flow_field_update": "base64_encoded_128x128_grid",</p>
+<p>    "spawns": [</p>
+<p>      {"count": 200, "position": [80, 0, 50], "type": "goblin_melee"}</p>
+<p>    ],</p>
+<p>    "deaths": {"total_this_tick": 47},</p>
+<p>    "alive_count": 23847,</p>
+<p>    "wave": 5</p>
+<p>  },</p>
+<p>  "audio": [</p>
+<p>    {"type": "play_sfx", "id": "explosion_3", "file": "assets/audio/boom.mp3", "position": [45, 0, 88]}</p>
+<p>  ]</p>
+<p>}</p>
+</code></pre></div>
+
+<p><strong>Bandwidth analysis:</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Scenario</th><th>Delta Size/Tick</th><th>At Tick Rate</th></tr></thead><tbody><tr><td>Snake Sweeper (4 players, 20 Hz)</td><td>~800 bytes</td><td>~16 KB/s</td></tr>
+<tr><td>HAVOC solo (1 player, 60 Hz)</td><td>~4 KB</td><td>~240 KB/s</td></tr>
+<tr><td>HAVOC co-op (4 players, 60 Hz)</td><td>~6 KB</td><td>~360 KB/s</td></tr>
+<tr><td>DROPZONE (100 players, 30 Hz)</td><td>~8 KB (per client)</td><td>~240 KB/s</td></tr>
+<tr><td>Arena shooter (16 players, 60 Hz)</td><td>~8 KB</td><td>~480 KB/s</td></tr></tbody></table></div>
+<h3 id="5-3-connection-lifecycle">5.3 Connection Lifecycle</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>1. Client resolves four-word name → server address + transport type
+<p>      GET https://registry.naive.world/resolve/black.squirrel.white.deer</p>
+<p>      → { "server": "us-east.naive.world", "world_id": "a1b2c3d4",</p>
+<p>           "transport": "webrtc", "tick_rate": 60 }</p>
+
+<p>2a. (WebSocket) Standard handshake</p>
+<p>2b. (WebRTC) HTTPS signaling → DataChannel establishment</p>
+
+<li>Server sends: full scene snapshot + horde config</li>
+<li>Client downloads assets (CDN or server, cached locally)</li>
+<li>Client builds local ECS + renderer from scene definition</li>
+<li>Server streams state deltas every tick (interest-managed)</li>
+<li>Client sends input events to server</li>
+<li>On disconnect: client state discarded, server is truth</li>
+</code></pre></div>
+
+<h3 id="5-4-latency-budgets">5.4 Latency Budgets</h3>
+
+<p><strong>Snake Sweeper (v4.0 profile):</strong></p>
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Game tick: 280ms
+<p>Input → server: 20-50ms (WebSocket)</p>
+<p>Server tick: 1-5ms</p>
+<p>Delta → client: 20-50ms</p>
+<p>Round-trip: ~60-120ms</p>
+<p>Budget remaining: 160-220ms ← generous</p>
+</code></pre></div>
+
+<p><strong>HAVOC (v5.0 profile):</strong></p>
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Game tick: 16.7ms (60 Hz)
+<p>Input → server: 5-15ms (WebRTC)</p>
+<p>Server tick: 2-5ms</p>
+<p>Delta → client: 5-15ms</p>
+<p>Perceived latency: &lt;16ms (prediction hides it)</p>
+</code></pre></div>
+
+<hr>
+
+<h2 id="6-server-side-prediction-reconciliation">6. Server-Side Prediction Reconciliation</h2>
+
+<p>Client-side prediction runs on the client (see Engine PRD Section 4.6). The server's role:</p>
+
+<li>Receive input event from client with tick number</li>
+<li>Process input authoritatively (character controller + Rapier physics)</li>
+<li>Produce authoritative position</li>
+<li>Include <code>ack_input_tick</code> in delta broadcast</li>
+<li>Client compares prediction to server state and reconciles if needed</li>
+
+<p>The server does NOT run prediction. It runs the authoritative simulation. The <code>ack_input_tick</code> tells the client "I've processed your inputs up to tick N" so the client can discard old prediction buffer entries.</p>
+
+<hr>
+
+<h2 id="7-server-authoritative-hit-detection">7. Server-Authoritative Hit Detection</h2>
+
+<p>Weapons are defined in the Engine PRD. Hit detection runs on the server:</p>
+
+<h3 id="7-1-hitscan-weapons">7.1 Hitscan Weapons</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Client sends: {action: "fire", weapon: "assault_rifle", aim_direction: [0.7, 0.1, 0.7], tick: 3042}
+<p>Server receives fire event</p>
+<p>Server rewinds entity positions to tick 3042 (lag compensation)</p>
+<p>Server raycasts from player position in aim_direction</p>
+<p>If hit: apply damage, broadcast hit event to all clients</p>
+<p>If miss: broadcast miss event (impact effect at ray endpoint)</p>
+</code></pre></div>
+
+<h3 id="7-2-lag-compensation">7.2 Lag Compensation</h3>
+
+<p>The server maintains a history buffer of entity positions (last 200ms, ~12 ticks at 60 Hz). When processing a fire event from tick 3042, the server temporarily rewinds all entities to their positions at tick 3042, performs the raycast, then restores current positions.</p>
+
+<p>This ensures that what the client saw when they fired (their view of other players' positions at the time) is what the server validates against. Without lag compensation, players would need to "lead" their shots by their latency — unacceptable for competitive games.</p>
+
+<h3 id="7-3-projectile-weapons">7.3 Projectile Weapons</h3>
+
+<p>Projectiles are ECS entities simulated on the server. Each tick: update position (physics). On collision: apply splash damage. Broadcast spawn, position updates, and explosion events to clients.</p>
+
+<hr>
+
+<h2 id="8-interest-management">8. Interest Management</h2>
+
+<p>Server-side spatial partitioning determines per-client entity visibility:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>┌─────┬─────┬─────┬─────┐
+<p>│     │     │     │     │</p>
+<p>│     │  P1 │     │     │   P1's relevance radius</p>
+<p>│     │  ●──┼─────┼──── │   covers nearby cells</p>
+<p>├─────┼─────┼─────┼─────┤</p>
+<p>│     │     │     │  P2 │   P2 is outside P1's radius</p>
+<p>│     │     │     │  ●  │   → P1 does NOT receive P2 updates</p>
+<p>│     │     │     │     │</p>
+<p>└─────┴─────┴─────┴─────┘</p>
+</code></pre></div>
+
+<p><strong>Grid-based partitioning</strong> with configurable cell size. Each client has a relevance set updated every N ticks (sticky to avoid flickering).</p>
+
+<p><strong>Bandwidth scaling:</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Players</th><th>Without Interest Mgmt</th><th>With Interest Mgmt</th><th>Savings</th></tr></thead><tbody><tr><td>4</td><td>16 entity streams</td><td>~8</td><td>50%</td></tr>
+<tr><td>16</td><td>256</td><td>~80</td><td>69%</td></tr>
+<tr><td>100</td><td>10,000</td><td>~800</td><td>92%</td></tr></tbody></table></div>
+<p>Interest management is critical for DROPZONE (100 players). Without it, each client receives 100 player updates per tick. With it, each client receives ~20-30 nearby players.</p>
+
+<p><strong>For horde data:</strong> Flow field is global (small, ~64 KB). Spawn/death events filtered by interest radius. This means clients on opposite sides of the map see slightly different horde compositions — which is fine.</p>
+
+<hr>
+
+<h2 id="9-ai-director">9. AI Director</h2>
+
+<p>Server-side system that monitors player behavior telemetry and evolves the world:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Player Telemetry → Analysis → Intervention Plan → Graduated Response
+
+<p>Intervention levels:</p>
+<p>  Subtle:         Adjust spawn rates, lighting mood, music tempo</p>
+<p>  Moderate:       Introduce new NPCs, modify terrain, create events</p>
+<p>  Significant:    Restructure layout, change rules, add mechanics</p>
+<p>  Transformative: Genre shifts (requires player opt-in)</p>
+</code></pre></div>
+
+<h3 id="9-1-snake-sweeper-director">9.1 Snake Sweeper Director</h3>
+
+<ul><li>3+ mines in a row → reduce density 20%, add food</li>
+<li>Clearing too easily → increase density, add obstacles</li>
+<li>Player stuck → flash hint showing safe path</li>
+<li>Mine circumnavigated → spawn bonus item</li>
+</ul>
+<h3 id="9-2-havoc-director">9.2 HAVOC Director</h3>
+
+<ul><li>Deaths > 3/minute → reduce wave size 30%, add health drops</li>
+<li>No deaths, high kills → increase spawn rate, add ranged/elite enemies</li>
+<li>Players cluster → spawn flanking waves from behind</li>
+<li>Vehicle found → increase density to match power spike</li>
+<li>Session > 20 min → boss wave</li>
+</ul>
+<h3 id="9-3-dropzone-director">9.3 DROPZONE Director</h3>
+
+<ul><li>Storm pacing: shrink faster when many players alive, slower when few remain</li>
+<li>Loot distribution: increase rare drops in low-traffic areas to encourage exploration</li>
+<li>Bot difficulty: AI-controlled bots (to fill lobbies) scale to player skill</li>
+<li>Supply drop placement: drops in contested areas to create engagement</li>
+</ul>
+<p><strong>Fairness guardrail:</strong> In multiplayer, the Director never gives one player a mechanical advantage.</p>
+
+<hr>
+
+<h2 id="10-llm-npc-agent-runtime">10. LLM NPC Agent Runtime</h2>
+
+<p>Entities with <code>agent_brain</code> components (defined in Engine PRD) run their inference on the server:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>- id: merchant
+<p>  components:</p>
+<p>    agent_brain:</p>
+<p>      personality: "Gruff but fair dwarven blacksmith. Remembers repeat customers."</p>
+<p>      memory_slots: 50</p>
+<p>      inference_tier: 2</p>
+</code></pre></div>
+
+<h3 id="10-1-tiered-inference">10.1 Tiered Inference</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Tier</th><th>Latency</th><th>Cost/Call</th><th>Use Case</th><th>Implementation</th></tr></thead><tbody><tr><td>1</td><td>500ms</td><td>~$0.01</td><td>Complex conversation, novel situations</td><td>Claude API (Haiku/Sonnet)</td></tr>
+<tr><td>2</td><td>50ms</td><td>~$0.001</td><td>Routine dialogue</td><td>Distilled local model (Ollama)</td></tr>
+<tr><td>3</td><td>1ms</td><td>~$0</td><td>Greetings, combat barks</td><td>Pattern match + template cache</td></tr></tbody></table></div>
+<h3 id="10-2-memory-architecture">10.2 Memory Architecture</h3>
+
+<ul><li><strong>Short-term:</strong> Last 10 interactions (full context)</li>
+<li><strong>Long-term:</strong> Vector-indexed memory store (embed interactions, retrieve relevant)</li>
+<li><strong>Personality:</strong> Immutable system prompt</li>
+<li><strong>Relationships:</strong> Per-player score (affects dialogue, trade prices)</li>
+</ul>
+<hr>
+
+<h2 id="11-telegram-integration">11. Telegram Integration</h2>
+
+<h3 id="11-1-architecture">11.1 Architecture</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>┌──────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+<p>│ Telegram  │────&gt;│ nAIVE Bot    │────&gt;│ AI Parser    │────&gt;│ World Server │</p>
+<p>│ User      │&lt;────│ (teloxide)   │&lt;────│ (Claude API) │&lt;────│ (Lua exec)   │</p>
+<p>└──────────┘     └──────────────┘     └──────────────┘     └──────────────┘</p>
+</code></pre></div>
+
+<h3 id="11-2-command-flow">11.2 Command Flow</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>User on Telegram: "make it rain in black.squirrel.white.deer"
+
+<li>Bot extracts world reference</li>
+<li>AI parser: "make it rain" → { "function": "weather.set", "args": ["rain"] }</li>
+<li>Server executes in world's Lua environment: weather.set("rain")</li>
+<li>State deltas broadcast to all clients</li>
+<li>Bot replies: "It's raining in black.squirrel.white.deer"</li>
+</code></pre></div>
+
+<h3 id="11-3-bot-commands">11.3 Bot Commands</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>/connect snake.3d.nokia.mark       — Subscribe to world events
+<p>/disconnect                        — Stop receiving updates</p>
+<p>/status                            — World stats</p>
+<p>/players                           — Connected players</p>
+<p>/worlds                            — Your published worlds</p>
+<p>/command &lt;anything&gt;                — Natural language command</p>
+</code></pre></div>
+
+<h3 id="11-4-world-notifications-push">11.4 World Notifications (Push)</h3>
+
+<p>Push events to subscribed Telegram users: high scores, player joins, wave completions, boss kills.</p>
+
+<hr>
+
+<h2 id="12-world-registry-and-four-word-naming">12. World Registry and Four-Word Naming</h2>
+
+<h3 id="12-1-why-four-words">12.1 Why Four Words</h3>
+
+<p>URLs fail for games. Nobody remembers <code>https://naive.world/a1b2c3d4-5678-...</code></p>
+
+<p><code>black.squirrel.white.deer</code> — you can tell someone this across the room.</p>
+
+<p>~2,000 curated words → 16 trillion unique addresses. Pattern: <code>{adjective}.{noun}.{adjective}.{noun}</code>.</p>
+
+<h3 id="12-2-registry-architecture">12.2 Registry Architecture</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>sql</span></div><pre><code>-- SQLite schema
+<p>CREATE TABLE worlds (</p>
+<p>    id         TEXT PRIMARY KEY,</p>
+<p>    name       TEXT UNIQUE,           -- four-word address</p>
+<p>    owner      TEXT,</p>
+<p>    server     TEXT,                  -- server hostname</p>
+<p>    transport  TEXT DEFAULT 'websocket',</p>
+<p>    tick_rate  INTEGER DEFAULT 20,</p>
+<p>    created    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,</p>
+<p>    status     TEXT DEFAULT 'active', -- active, paused, archived</p>
+<p>    config     TEXT                   -- JSON</p>
+<p>);</p>
+
+<p>CREATE TABLE matches (</p>
+<p>    id             TEXT PRIMARY KEY,</p>
+<p>    world_template TEXT,              -- four-word name of template</p>
+<p>    instance_id    TEXT,</p>
+<p>    players        TEXT,              -- JSON array</p>
+<p>    started        TIMESTAMP,</p>
+<p>    status         TEXT DEFAULT 'lobby'</p>
+<p>);</p>
+
+<p>CREATE TABLE dictionary (</p>
+<p>    word       TEXT PRIMARY KEY,</p>
+<p>    category   TEXT,                  -- noun, adjective</p>
+<p>    syllables  INTEGER</p>
+<p>);</p>
+</code></pre></div>
+
+<h3 id="12-3-rest-api">12.3 REST API</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>GET  /resolve/{w1}.{w2}.{w3}.{w4}   → { server, world_id, transport, tick_rate }
+<p>POST /register                        → { name, server, owner, transport }</p>
+<p>GET  /browse                          → { category, sort, page }</p>
+<p>POST /publish                         → { name, assets[] }</p>
+<p>POST /matchmake                       → { game_type, player_id, region }</p>
+<p>GET  /match/{match_id}                → { status, players, instance }</p>
+<p>GET  /health/{world_id}               → { tick_rate, players, uptime }</p>
+</code></pre></div>
+
+<h3 id="12-4-player-identity">12.4 Player Identity</h3>
+
+<ul><li><strong>Anonymous:</strong> Random four-word player name</li>
+<li><strong>Telegram:</strong> Uses Telegram username</li>
+<li><strong>Persistent:</strong> Optional account for ELO, stats, achievements</li>
+</ul>
+<hr>
+
+<h2 id="13-matchmaking-and-instance-management">13. Matchmaking and Instance Management</h2>
+
+<h3 id="13-1-queue-based-matchmaking">13.1 Queue-Based Matchmaking</h3>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Player → selects game mode → enters queue
+<p>  → Matchmaker groups by ping region + skill (ELO ±200)</p>
+<p>  → Server spins up world instance</p>
+<p>  → Players receive four-word address</p>
+<p>  → On match end → results → back to queue or exit</p>
+<p>  → Instance torn down after disconnect + 60s grace</p>
+</code></pre></div>
+
+<h3 id="13-2-elo-mmr">13.2 ELO/MMR</h3>
+
+<ul><li>New players: 1000 ELO</li>
+<li>Win: +25 × (1 - expected_win_probability)</li>
+<li>Loss: -25 × expected_win_probability</li>
+</ul>
+<h3 id="13-3-instance-management">13.3 Instance Management</h3>
+
+<ul><li>Each match = fresh world instance (~50-100 MB memory)</li>
+<li>Instance pool with warm-start (pre-loaded scenes) for <3s match start</li>
+<li>A single 4-vCPU server runs ~20 concurrent HAVOC matches or ~5 DROPZONE matches</li>
+</ul>
+<hr>
+
+<h2 id="14-proof-games-platform-perspective">14. Proof Games (Platform Perspective)</h2>
+
+<h3 id="14-1-snake-sweeper">14.1 Snake Sweeper</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Attribute</th><th>Value</th></tr></thead><tbody><tr><td>Transport</td><td>WebSocket</td></tr>
+<tr><td>Tick rate</td><td>20 Hz</td></tr>
+<tr><td>Players</td><td>1-4</td></tr>
+<tr><td>Bandwidth/client</td><td>~16 KB/s</td></tr>
+<tr><td>Server memory</td><td>~50 MB</td></tr>
+<tr><td>Platform features exercised</td><td>World registry, WebSocket transport, Telegram bridge, AI Director</td></tr></tbody></table></div>
+<h3 id="14-2-havoc">14.2 HAVOC</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Attribute</th><th>Value</th></tr></thead><tbody><tr><td>Transport</td><td>WebRTC DataChannel</td></tr>
+<tr><td>Tick rate</td><td>60 Hz</td></tr>
+<tr><td>Players</td><td>1-4 co-op</td></tr>
+<tr><td>Bandwidth/client</td><td>~360 KB/s</td></tr>
+<tr><td>Server memory</td><td>~100 MB</td></tr>
+<tr><td>Platform features</td><td>WebRTC, prediction reconciliation, horde authority, interest mgmt, AI Director, matchmaking</td></tr></tbody></table></div>
+<h3 id="14-3-dropzone-battle-royale">14.3 DROPZONE (Battle Royale)</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Attribute</th><th>Value</th></tr></thead><tbody><tr><td>Transport</td><td>WebRTC DataChannel</td></tr>
+<tr><td>Tick rate</td><td>30 Hz (100 players) → 60 Hz (<50 alive)</td></tr>
+<tr><td>Players</td><td>100 (solos) / 25 squads of 4</td></tr>
+<tr><td>Map</td><td>2km × 2km, 32×32 chunks</td></tr>
+<tr><td>Bandwidth/client</td><td>~300 KB/s</td></tr>
+<tr><td>Server memory</td><td>~500 MB</td></tr></tbody></table></div>
+<p><strong>What DROPZONE adds to the platform:</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>System</th><th>Description</th></tr></thead><tbody><tr><td>Storm system</td><td>Shrinking circle, server-authoritative position/radius/damage</td></tr>
+<tr><td>Loot spawner</td><td>YAML loot tables → spawn entities at predefined positions</td></tr>
+<tr><td>Bus/dropship</td><td>Moving entity, player detach, parachute physics</td></tr>
+<tr><td>Spectator mode</td><td>Camera follows another player post-elimination</td></tr>
+<tr><td>100-player lobby</td><td>Matchmaker queues 100, countdown, hot-start instance</td></tr>
+<tr><td>Dynamic tick rate</td><td>30 Hz with 100 players → 60 Hz when <50 alive</td></tr>
+<tr><td>Building (stretch)</td><td>Grid-snapped placement, material harvesting, structure health</td></tr></tbody></table></div>
+<p><strong>Loot tables:</strong></p>
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span>yaml</span></div><pre><code>loot_table:
+<p>  floor_spawn:</p>
+<p>    common:     { prob: 0.40, items: [pistol, smg, bandages] }</p>
+<p>    uncommon:   { prob: 0.30, items: [assault_rifle, shotgun, shield_cells] }</p>
+<p>    rare:       { prob: 0.20, items: [sniper_rifle, rocket_launcher, med_kit] }</p>
+<p>    epic:       { prob: 0.08, items: [scar, heavy_shotgun, chug_jug] }</p>
+<p>    legendary:  { prob: 0.02, items: [gold_scar, mythic_item] }</p>
+</code></pre></div>
+
+<p><strong>DROPZONE performance targets:</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Metric</th><th>Target</th></tr></thead><tbody><tr><td>Players</td><td>100</td></tr>
+<tr><td>Map</td><td>2km × 2km</td></tr>
+<tr><td>Server tick rate</td><td>30-60 Hz</td></tr>
+<tr><td>Bandwidth/client</td><td class="winner"><300 KB/s</td></tr>
+<tr><td>Server memory/match</td><td>~500 MB</td></tr>
+<tr><td>Match duration</td><td>~20 min</td></tr>
+<tr><td>Match start time</td><td class="winner"><5s from lobby fill</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="15-licensing">15. Licensing</h2>
+
+<h3 id="15-1-bsl-1-1-business-source-license">15.1 BSL 1.1 (Business Source License)</h3>
+
+<p><code>naive-server</code> is licensed under BSL 1.1.</p>
+
+<p><strong>What you CAN do:</strong></p>
+<ul><li>Self-host your own game servers using naive-server</li>
+<li>Modify the server code for your games</li>
+<li>Use it in commercial production</li>
+<li>Run servers for your studio, tournaments, private communities</li>
+<li>Read the source, learn from it, contribute to it</li>
+</ul>
+<p><strong>What you CANNOT do:</strong></p>
+<ul><li>Offer nAIVE world hosting as a commercial service that competes with the nAIVE platform</li>
+<li>Specifically: "managed hosting where customers upload nAIVE worlds and you charge for hosting them"</li>
+</ul>
+<p><strong>The Additional Use Grant:</strong> The specific restriction is: you may not use this software to provide a Managed nAIVE World Hosting Service (a service where third parties upload nAIVE world definitions and you host and serve them for a fee).</p>
+
+<p><strong>3-year change date:</strong> BSL 1.1 converts to MIT automatically three years after each release. Code released in 2026 becomes MIT in 2029. This is baked into the license text — it's not a promise, it's a legal obligation.</p>
+
+<h3 id="15-2-why-bsl-not-mit">15.2 Why BSL (Not MIT)</h3>
+
+<p>The server contains the platform infrastructure — the world registry, matchmaking, AI Director, and hosting orchestration. Without protection, a well-funded competitor could:</p>
+
+<li>Fork the server</li>
+<li>Build a competing "nAIVE Cloud" hosting service</li>
+<li>Undercut the nAIVE platform on price (subsidized by their other business)</li>
+<li>Capture the network effects that the nAIVE community built</li>
+
+<p>BSL prevents this specific scenario while allowing every legitimate use:</p>
+
+<div class="table-wrap"><table><thead><tr><th>Use Case</th><th>Allowed?</th></tr></thead><tbody><tr><td>Self-host your game's servers</td><td class="winner">Yes</td></tr>
+<tr><td>Modify server code for your game</td><td class="winner">Yes</td></tr>
+<tr><td>Run a tournament server</td><td class="winner">Yes</td></tr>
+<tr><td>Use in commercial production</td><td class="winner">Yes</td></tr>
+<tr><td>Start a "nAIVE World Hosting" business</td><td>No</td></tr></tbody></table></div>
+<p>The 3-year conversion ensures the code becomes fully open eventually.</p>
+
+<h3 id="15-3-cla-requirements">15.3 CLA Requirements</h3>
+
+<p>Contributors to <code>naive-server</code> sign a Contributor License Agreement granting the project the right to relicense. This ensures the 3-year MIT conversion isn't blocked.</p>
+
+<h3 id="15-4-prior-art">15.4 Prior Art</h3>
+
+<p>Other BSL projects: MariaDB, CockroachDB, HashiCorp (Terraform), Sentry. The model is well-understood by the open-source community.</p>
+
+<hr>
+
+<h2 id="16-infrastructure">16. Infrastructure</h2>
+
+<h3 id="16-1-early-days-beelink-cloudflare">16.1 Early Days: Beelink + Cloudflare</h3>
+
+<p>The platform starts on minimal hardware:</p>
+
+<div class="code-block"><div class="code-header"><span class="code-dot r"></span><span class="code-dot y"></span><span class="code-dot g"></span><span></span></div><pre><code>Beelink EQ14 Mini PC
+<p>  CPU: Intel N150 (up to 3.6 GHz)</p>
+<p>  RAM: 16 GB DDR4</p>
+<p>  Storage: 500 GB NVMe + 2 TB M.2</p>
+<p>  Network: 1 Gbps dual LAN</p>
+
+<p>  Running: naive-server + cloudflared tunnel</p>
+<p>  Capacity: ~50 concurrent worlds (Snake Sweeper class)</p>
+<p>             ~10 concurrent HAVOC matches</p>
+</code></pre></div>
+
+<p><strong>Cloudflare stack:</strong></p>
+<ul><li><strong>cloudflared tunnel:</strong> Already running. Routes traffic to Beelink without exposing IP.</li>
+<li><strong>Workers:</strong> Registry API, auth, rate limiting</li>
+<li><strong>D1:</strong> World registry database (SQLite-compatible)</li>
+<li><strong>R2:</strong> Asset CDN (scene files, meshes, audio, textures)</li>
+<li><strong>Pages:</strong> Web portal, WASM client hosting at <code>play.naive.world</code></li>
+</ul>
+<p><strong>Monthly cost:</strong> ~$15-40 (Cloudflare free tier + paid Workers for scale)</p>
+
+<h3 id="16-2-growth-vps">16.2 Growth: VPS</h3>
+
+<p>When the Beelink is saturated:</p>
+<ul><li>4 vCPU, 8 GB RAM VPS: ~$40/month → ~100 worlds, ~20 HAVOC matches</li>
+<li>8 vCPU, 16 GB RAM: ~$80/month → ~200 worlds, ~5 DROPZONE matches</li>
+</ul>
+<h3 id="16-3-scale-horizontal">16.3 Scale: Horizontal</h3>
+
+<p>Multiple server instances behind load balancer. World migration between servers for balancing. Cloudflare Workers route clients to the correct regional server.</p>
+
+<hr>
+
+<h2 id="17-server-technical-specifications">17. Server Technical Specifications</h2>
+
+<h3 id="17-1-server-requirements">17.1 Server Requirements</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Resource</th><th>Per World (Snake Sweeper)</th><th>Per World (HAVOC)</th><th>Per Match (DROPZONE)</th></tr></thead><tbody><tr><td>CPU</td><td>1 core</td><td>2 cores</td><td>4 cores</td></tr>
+<tr><td>Memory</td><td>~50 MB</td><td>~100 MB</td><td>~500 MB</td></tr>
+<tr><td>Network/client</td><td>~16 KB/s</td><td>~360 KB/s</td><td>~300 KB/s</td></tr></tbody></table></div>
+<h3 id="17-2-capacity-planning">17.2 Capacity Planning</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Hardware</th><th>Snake Sweeper Worlds</th><th>HAVOC Matches</th><th>DROPZONE Matches</th></tr></thead><tbody><tr><td>Beelink EQ14 (N150, 16 GB)</td><td>~50</td><td>~10</td><td>~2</td></tr>
+<tr><td>4-vCPU VPS (8 GB)</td><td>~100</td><td>~20</td><td>~5</td></tr>
+<tr><td>8-vCPU VPS (32 GB)</td><td>~200</td><td>~40</td><td>~10</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="18-implementation-roadmap-server">18. Implementation Roadmap (Server)</h2>
+
+<p><strong>Phase 1 (Weeks 1-4): Headless Server + WebSocket</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Week</th><th>Deliverable</th></tr></thead><tbody><tr><td>1-2</td><td>Feature-flagged Cargo build: <code>naive-server</code> compiles without wgpu</td></tr>
+<tr><td>3</td><td>WebSocket state streaming: server broadcasts deltas</td></tr>
+<tr><td>4</td><td>World registry: SQLite, four-word name resolution, REST API</td></tr></tbody></table></div>
+<p><strong>Phase 2 (Weeks 5-8): Multiplayer + Telegram</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Week</th><th>Deliverable</th></tr></thead><tbody><tr><td>5-6</td><td>Multiplayer Snake Sweeper: 2-4 players on shared minefield</td></tr>
+<tr><td>7</td><td>Telegram bridge v2: AI-parsed NL commands</td></tr>
+<tr><td>8</td><td>AI Director v1: adaptive difficulty for Snake Sweeper</td></tr></tbody></table></div>
+<p><strong>Phase 3 (Weeks 9-16): Fast Netcode</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Weeks</th><th>Deliverable</th></tr></thead><tbody><tr><td>9-10</td><td>WebRTC DataChannel transport layer</td></tr>
+<tr><td>11-12</td><td>Server-side prediction acknowledgment + lag compensation</td></tr>
+<tr><td>13-14</td><td>Interest management: grid-based spatial partitioning</td></tr>
+<tr><td>15-16</td><td>Matchmaking: queue service, ELO, instance management</td></tr></tbody></table></div>
+<p><strong>Phase 4 (Weeks 17-24): HAVOC Server</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Weeks</th><th>Deliverable</th></tr></thead><tbody><tr><td>17-18</td><td>Horde grid simulator (simplified server-side horde authority)</td></tr>
+<tr><td>19-20</td><td>Server-authoritative weapon hit detection + lag compensation</td></tr>
+<tr><td>21-22</td><td>AI Director v2: HAVOC wave adaptation</td></tr>
+<tr><td>23-24</td><td>LLM NPC runtime: tiered inference for boss encounters</td></tr></tbody></table></div>
+<p><strong>Phase 5 (Weeks 25-32): DROPZONE Server</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Weeks</th><th>Deliverable</th></tr></thead><tbody><tr><td>25-26</td><td>100-player instance management, dynamic tick rate</td></tr>
+<tr><td>27-28</td><td>Storm system (server-authoritative shrinking circle)</td></tr>
+<tr><td>29-30</td><td>Loot spawner, supply drops, spectator mode</td></tr>
+<tr><td>31-32</td><td>Building system (stretch), 100-player load testing</td></tr></tbody></table></div>
+<p><strong>Phase 6 (Weeks 33-40): Platform</strong></p>
+
+<div class="table-wrap"><table><thead><tr><th>Weeks</th><th>Deliverable</th></tr></thead><tbody><tr><td>33-34</td><td>Asset CDN via Cloudflare R2</td></tr>
+<tr><td>35-36</td><td>Web portal: world browser at naive.world</td></tr>
+<tr><td>37-38</td><td>World forking, permissions (public/private/invite)</td></tr>
+<tr><td>39-40</td><td>Analytics dashboard, platform monitoring</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="19-risk-assessment">19. Risk Assessment</h2>
+
+<div class="table-wrap"><table><thead><tr><th>Risk</th><th>Severity</th><th>Mitigation</th><th>Fallback</th></tr></thead><tbody><tr><td>WebRTC complexity</td><td>Medium</td><td>Use webrtc-rs crate, HTTPS signaling</td><td>WebSocket with prediction for moderate-speed games</td></tr>
+<tr><td>100-player scaling (DROPZONE)</td><td>High</td><td>Interest management, dynamic tick rate</td><td>Cap at 50 players initially</td></tr>
+<tr><td>Horde desync between clients</td><td>Low</td><td>Deterministic compute shaders, periodic correction snapshots</td><td>Invisible at 50K — 0.5m difference unnoticeable</td></tr>
+<tr><td>LLM API cost at scale</td><td>High</td><td>Tiered inference: Tier 3 cache handles 60%+ at zero cost</td><td>Behavior trees with LLM-generated cache</td></tr>
+<tr><td>BSL license misunderstanding</td><td>Medium</td><td>Clear docs, FAQ, examples</td><td>Community outreach</td></tr>
+<tr><td>Beelink hardware limits</td><td>Low</td><td>VPS migration path at $40/month</td><td>Cloudflare Workers for stateless components</td></tr>
+<tr><td>Four-word squatting</td><td>Low</td><td>16 trillion address space</td><td>Inactive worlds archived after 90 days</td></tr>
+<tr><td>Telegram bot rate limits</td><td>Low</td><td>Command queue, 1 cmd/sec/user</td><td>Direct WebSocket API as alternative</td></tr></tbody></table></div>
+<hr>
+
+<h2 id="20-success-metrics">20. Success Metrics</h2>
+
+<h3 id="20-1-technical-metrics">20.1 Technical Metrics</h3>
+
+<div class="table-wrap"><table><thead><tr><th>Metric</th><th>Target</th></tr></thead><tbody><tr><td>Server tick rate (Snake Sweeper, 4 players)</td><td>20 Hz sustained</td></tr>
+<tr><td>Server tick rate (HAVOC, 4 players)</td><td>60 Hz sustained</td></tr>
+<tr><td>Server tick rate (DROPZONE, 100 players)</td><td>30 Hz sustained</td></tr>
+<tr><td>State delta latency (WebRTC)</td><td class="winner"><15ms</td></tr>
+<tr><td>Match start time (warm instance)</td><td class="winner"><3s</td></tr>
+<tr><td>Concurrent worlds (Beelink)</td><td>50+</td></tr>
+<tr><td>Concurrent HAVOC matches (4-vCPU VPS)</td><td>20+</td></tr>
+<tr><td>Telegram command → visible change</td><td class="winner"><1 second</td></tr>
+<tr><td>NPC response (Tier 1)</td><td class="winner"><500ms</td></tr>
+<tr><td>NPC response (Tier 3)</td><td class="winner"><5ms</td></tr></tbody></table></div>
+<h3 id="20-2-experience-metrics">20.2 Experience Metrics</h3>
+
+<ul><li>Snake Sweeper: 4 players with no perceptible desync</li>
+<li>HAVOC: 4 players co-op with smooth gameplay</li>
+<li>DROPZONE: 100 players competitive with fair hit registration</li>
+<li>Telegram "/command" changes live world within 1 second</li>
+<li>Sharing a four-word address is the only step to join</li>
+<li>AI Director interventions rated "helpful" or "invisible" by >70%</li>
+<li>NPC conversations feel meaningfully different across sessions</li>
+</ul>
+<hr>
+
+<h2 id="appendix-a-glossary">Appendix A: Glossary</h2>
+
+<div class="table-wrap"><table><thead><tr><th>Term</th><th>Definition</th></tr></thead><tbody><tr><td><strong>Four-word address</strong></td><td>Human-memorable world ID: <code>black.squirrel.white.deer</code></td></tr>
+<tr><td><strong>State delta</strong></td><td>Compact update with only changed entity components</td></tr>
+<tr><td><strong>Server authority</strong></td><td>Server computes all state; clients only render</td></tr>
+<tr><td><strong>Tick rate</strong></td><td>Server updates per second (10-60 Hz)</td></tr>
+<tr><td><strong>AI Director</strong></td><td>Server-side system that monitors and adapts worlds</td></tr>
+<tr><td><strong>Interest management</strong></td><td>Spatial culling to limit per-client bandwidth</td></tr>
+<tr><td><strong>Lag compensation</strong></td><td>Server rewinds state to validate hits at client's view time</td></tr>
+<tr><td><strong>Horde authority</strong></td><td>Server tracks aggregate horde state, not individual positions</td></tr>
+<tr><td><strong>BSL 1.1</strong></td><td>Business Source License — all use except competing hosting service</td></tr>
+<tr><td><strong>Change date</strong></td><td>3 years after release, BSL converts to MIT automatically</td></tr>
+<tr><td><strong>WebRTC DataChannel</strong></td><td>Browser-native UDP-like transport for low-latency networking</td></tr>
+<tr><td><strong>ELO/MMR</strong></td><td>Skill rating for matchmaking</td></tr>
+<tr><td><strong>Instance</strong></td><td>A fresh world spun up for a single match</td></tr>
+<tr><td><strong>Flow field</strong></td><td>Server-computed pathfinding grid sent to clients for horde sim</td></tr>
+<tr><td><strong>naive-client</strong></td><td>MIT crate: renderer, audio, input, physics, scripting, all engine modules</td></tr>
+<tr><td><strong>naive-core</strong></td><td>MIT crate: shared types, components, scene format, serialization</td></tr>
+<tr><td><strong>naive-runtime</strong></td><td class="poor">MIT crate: single-process game binary (thin CLI that uses naive-client)</td></tr>
+<tr><td><strong>naive-server</strong></td><td>BSL crate: world manager, transport, registry, Director, matchmaking</td></tr></tbody></table></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="container">
+    <p>nAIVE — AI-Native Interactive Visual Engine · Created by <a href="https://markollila.com" target="_blank">Mark Ollila</a> · <a href="https://github.com/poro/nAIVE" target="_blank">GitHub</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
