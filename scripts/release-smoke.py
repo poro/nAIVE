@@ -56,6 +56,170 @@ def wait_until(predicate, description, timeout=10):
     raise AssertionError(description)
 
 
+CONSTRUCTION_ENTITIES = ("initial_controller", "initial_trimesh")
+
+
+def construction_counts(socket_path):
+    return {identifier: command(socket_path, "query_events",
+        filter=f"release.construction_checked.{identifier}")["count"]
+        for identifier in CONSTRUCTION_ENTITIES}
+
+
+def verify_construction(socket_path, expected_counts=None):
+    """Real game hooks must observe the completed authored ECS and physics."""
+    expected_counts = expected_counts or dict.fromkeys(CONSTRUCTION_ENTITIES, 1)
+    wait_until(lambda: all(construction_counts(socket_path)[identifier] >= expected
+                          for identifier, expected in expected_counts.items()),
+               f"construction hooks did not finish: expected {expected_counts}")
+    counts = construction_counts(socket_path)
+    assert counts == expected_counts, (counts, expected_counts)
+    player = command(socket_path, "query_entity", entity_id="initial_controller",
+                     component="player")["player"]
+    assert abs(player["height"] - 1.8) < 0.0001, player
+    assert abs(player["radius"] - 0.3) < 0.0001, player
+    light = command(socket_path, "query_entity", entity_id="initial_trimesh",
+                    component="point_light")["point_light"]
+    assert light["intensity"] == 3, light
+    command(socket_path, "run_lua", code='''
+        assert(entity.get_health("initial_controller") == 55)
+        assert(entity.get_health("initial_trimesh") == 33)
+        local x, y, z = entity.get_position("initial_trimesh")
+        local hit, distance = physics.raycast(x + 1.5, y + 3, z, 0, -1, 0, 5)
+        assert(hit and math.abs(distance - 3) < 0.01, "scaled trimesh ray missed")
+        local hit, id, distance = physics.hitscan(x + 1.5, y + 3, z, 0, -1, 0, 5)
+        assert(hit and id == "initial_trimesh" and math.abs(distance - 3) < 0.01)
+    ''')
+    return counts
+
+
+def wait_for_runtime(process, socket_path, log_path, timeout=60):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"runtime exited with {process.returncode}; see {log_path}")
+        try:
+            return command(socket_path, "list_entities")["entities"]
+        except (OSError, KeyError, RuntimeError):
+            time.sleep(0.1)
+    raise TimeoutError(f"runtime did not become ready; see {log_path}")
+
+
+def stop_process(process):
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def replace_scene_text(path, contents):
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(contents)
+    temporary.replace(path)
+
+
+def verify_editor_construction(binary, game, temporary):
+    """Exercise actual editor startup and both unchanged/structural reloads."""
+    socket_path = temporary / "control" / "editor.sock"
+    log_path = temporary / "editor.log"
+    with log_path.open("w") as log:
+        # Edit discovers naive.yaml in cwd; the original project was removed.
+        process = subprocess.Popen([binary, "--socket", socket_path, "edit",
+                                    "--scene", "scenes/main.yaml"],
+                                   cwd=game, stdout=log, stderr=log)
+        try:
+            wait_for_runtime(process, socket_path, log_path)
+            counts = verify_construction(socket_path)
+            command(socket_path, "runtime_control", action="pause")
+            command(socket_path, "run_lua", code='physics.set_velocity("initial_trimesh", 3, 0, 0)')
+            before = command(socket_path, "query_entity", entity_id="initial_trimesh",
+                             component="transform")["transform"]["position"]
+            scene_path = game / "scenes" / "main.yaml"
+            source = scene_path.read_text()
+            updated = source + "\n  - id: reload_marker\n    components:\n      transform: {position: [50, 0, 0]}\n"
+            replace_scene_text(scene_path, updated)
+            wait_until(lambda: command(socket_path, "run_lua",
+                code='return entity.exists("reload_marker")')["result"] == "true",
+                "editor did not reload the marker entity", timeout=20)
+            after = command(socket_path, "query_entity", entity_id="initial_trimesh",
+                            component="transform")["transform"]["position"]
+            assert all(abs(a - b) < 0.000001 for a, b in zip(before, after)), (before, after)
+            command(socket_path, "run_lua", code='''
+                local vx, vy, vz = physics.get_velocity("initial_trimesh")
+                assert(math.abs(vx - 3) < 0.0001 and vy == 0 and vz == 0,
+                    "unrelated reload rebuilt the live trimesh body")
+            ''')
+            assert construction_counts(socket_path) == counts, "unrelated reload reinitialized scripts"
+
+            # A real physics transform/scale change must replace only that body.
+            moved = updated.replace("position: [15, 0, 0]", "position: [25, 0, 0]", 1)
+            moved = moved.replace("scale: [4, 1, 4]", "scale: [6, 1, 6]", 1)
+            assert moved != updated and "position: [25, 0, 0]" in moved
+            replace_scene_text(scene_path, moved)
+            wait_until(lambda: abs(command(socket_path, "query_entity",
+                entity_id="initial_trimesh", component="transform")["transform"]["position"][0] - 25) < 0.0001,
+                "editor did not replace the moved trimesh", timeout=20)
+            command(socket_path, "runtime_control", action="resume")
+            expected = {**counts, "initial_trimesh": counts["initial_trimesh"] + 1}
+            verify_construction(socket_path, expected)
+            command(socket_path, "runtime_control", action="pause")
+            command(socket_path, "run_lua", code='''
+                local old_hit = physics.raycast(15, 3, 0, 0, -1, 0, 5)
+                assert(not old_hit, "structural reload left the old trimesh collider")
+                local hit, id, distance = physics.hitscan(27.5, 3, 0, 0, -1, 0, 5)
+                assert(hit and id == "initial_trimesh" and math.abs(distance - 3) < 0.01,
+                    "structural reload did not recook the moved/scaled geometry")
+            ''')
+            assert construction_counts(socket_path) == expected, "controller or trimesh initialized twice"
+        except Exception:
+            log.flush()
+            print("Packaged editor log:", file=sys.stderr, flush=True)
+            print(log_path.read_text(errors="replace")[-64 * 1024:], file=sys.stderr, flush=True)
+            raise
+        finally:
+            stop_process(process)
+    print("Packaged editor construction and reload checks passed", flush=True)
+
+
+def verify_editor_startup_recovery(binary, game, temporary, reload_timeout=20):
+    """An invalid initial scene must not hide valid actors on its next reload."""
+    source = (game / "scenes" / "main.yaml").read_text()
+    expected_ids = {line[len("  - id: "):].strip()
+                    for line in source.splitlines() if line.startswith("  - id: ")}
+    assert set(CONSTRUCTION_ENTITIES) <= expected_ids
+    scene_path = game / "scenes" / "startup-recovery.yaml"
+    invalid = source + ("\n  - id: late_invalid_asset\n    components:\n"
+        "      mesh_renderer:\n        mesh: assets/missing-editor-startup.glb\n"
+        "        material: procedural:default\n")
+    replace_scene_text(scene_path, invalid)
+    socket_path = temporary / "control" / "recovery.sock"
+    log_path = temporary / "editor-recovery.log"
+    with log_path.open("w") as log:
+        process = subprocess.Popen([binary, "--socket", socket_path, "edit",
+                                    "--scene", "scenes/startup-recovery.yaml"],
+                                   cwd=game, stdout=log, stderr=log)
+        try:
+            entities = wait_for_runtime(process, socket_path, log_path)
+            assert not entities, "failed initial preflight left partial live entities"
+            assert construction_counts(socket_path) == dict.fromkeys(CONSTRUCTION_ENTITIES, 0)
+            replace_scene_text(scene_path, source)
+            wait_until(lambda: expected_ids == {entity["id"] for entity in
+                command(socket_path, "list_entities")["entities"]},
+                "corrected editor scene did not materialize all unchanged actor IDs",
+                timeout=reload_timeout)
+            verify_construction(socket_path)
+        except Exception:
+            log.flush()
+            print("Packaged editor startup recovery log:", file=sys.stderr, flush=True)
+            print(log_path.read_text(errors="replace")[-64 * 1024:], file=sys.stderr, flush=True)
+            raise
+        finally:
+            stop_process(process)
+    print("Packaged editor startup recovery check passed", flush=True)
+
+
 def check_mcp_test_execution(release, socket_path, game):
     """The same bridge must answer ordinary calls while a test is in flight."""
     bridge = subprocess.Popen([release / "naive_mcp", socket_path], cwd=game,
@@ -325,18 +489,9 @@ def main():
             [binary, "--socket", socket_path],
             cwd=temporary, stdout=log, stderr=log)
         try:
-            deadline = time.monotonic() + 60
-            while time.monotonic() < deadline:
-                if process.poll() is not None:
-                    raise RuntimeError(f"runtime exited with {process.returncode}; see {log_path}")
-                try:
-                    entities = command(socket_path, "list_entities")["entities"]
-                    break
-                except (OSError, KeyError, RuntimeError):
-                    time.sleep(0.1)
-            else:
-                raise TimeoutError(f"runtime did not become ready; see {log_path}")
+            entities = wait_for_runtime(process, socket_path, log_path)
             assert "smoke_cube" in {entity["id"] for entity in entities}
+            verify_construction(socket_path)
             # Exercise MCP stdio -> typed request -> secured socket -> Lua.
             request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
                 "name": "naive_run_lua", "arguments": {"code":
@@ -361,6 +516,19 @@ def main():
             assert command(socket_path, "query_entity", entity_id="smoke_sphere", component="transform")["transform"]["position"][0] == 2
             command(socket_path, "runtime_control", action="resume")
             check_mcp_test_execution(release, socket_path, game)
+
+            # Rejected scene assets preserve the live scene and its undo history.
+            (game / "scenes" / "invalid-construction.yaml").write_text(
+                "name: Invalid construction\nentities:\n  - id: invalid_construction\n"
+                "    components:\n      mesh_renderer:\n"
+                "        mesh: assets/missing.glb\n        material: procedural:default\n")
+            log_offset = log_path.stat().st_size
+            command(socket_path, "run_lua", code='scene.load("scenes/invalid-construction.yaml")')
+            wait_until(lambda: b"Scene replacement failed:" in log_path.read_bytes()[log_offset:]
+                       and b"invalid_construction" in log_path.read_bytes()[log_offset:],
+                       "invalid scene replacement did not report its preflight failure", timeout=20)
+            command(socket_path, "query_entity", entity_id="initial_controller", component="player")
+            assert command(socket_path, "undo")["undone"] == "run_lua", "failed scene load erased undo history"
 
             # Authoring round trip: preserve script, health, physics and flags.
             initialized_before_save = command(socket_path, "query_events", filter="release.initialized")["count"]
@@ -416,6 +584,7 @@ def main():
             # Reopening a saved scene exercises on_destroy setters and physics reload.
             # The bus preserves event history across transitions.
             stale_before = command(socket_path, "query_events", filter="release.stale_event")["count"]
+            construction_before = construction_counts(socket_path)
             command(socket_path, "spawn_entity", entity_id="transition_marker", components={"transform": {}})
             command(socket_path, "run_lua", code='scene.load("scenes/roundtrip.yaml")')
             wait_until(lambda: command(socket_path, "run_lua", code='return entity.exists("transition_marker")')["result"] == "false",
@@ -426,6 +595,8 @@ def main():
             command(socket_path, "benchmark", frames=2)
             stale_after = command(socket_path, "query_events", filter="release.stale_event")["count"]
             assert stale_after == stale_before, f"old scene event reached new scene listeners: {stale_before} -> {stale_after}"
+            verify_construction(socket_path, {identifier: count + 1
+                for identifier, count in construction_before.items()})
             # Save confinement must apply in the actual packaged engine too.
             with socket.socket(socket.AF_UNIX) as stream:
                 stream.settimeout(10)
@@ -444,12 +615,9 @@ def main():
                   file=sys.stderr, flush=True)
             raise
         finally:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+            stop_process(process)
+    verify_editor_construction(binary, game, temporary)
+    verify_editor_startup_recovery(binary, game, temporary)
     print(f"Release smoke passed. Artifacts: {temporary}")
 
 

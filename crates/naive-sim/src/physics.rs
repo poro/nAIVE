@@ -50,6 +50,9 @@ pub const FIXED_TIMESTEP: f32 = 1.0 / 120.0;
 /// of falling ever further behind.
 pub const MAX_STEPS_PER_FRAME: u32 = 8;
 
+/// CPU vertices and triangle indices supplied to collider construction.
+pub type PhysicsTrimesh = (Vec<rapier3d::math::Vector>, Vec<[u32; 3]>);
+
 /// Rigid body component attached to entities.
 #[derive(Debug, Clone)]
 pub struct RigidBody {

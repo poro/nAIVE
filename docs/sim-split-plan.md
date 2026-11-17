@@ -28,7 +28,7 @@ What blocks moving the rest (found by following each module's imports):
 
 | Module | Why it is GPU-bound today |
 |---|---|
-| `world` (`SceneWorld`, spawning) | Native spawning still uploads through GPU caches; the headless path uses the shared CPU asset catalog. Both use the same asset decoders. The constructors still need a unified upload boundary. |
+| `world` (`SceneWorld`, spawning) | Native and headless paths now resolve assets through `SpawnAssetResolver` and use one CPU constructor. Native GPU cache access lives in `world/native_assets.rs`; world state and script component types still live in `naive-client`. |
 | `scripting` and `scripting/*` | Presentation APIs use CPU contracts, but audio and runtime mesh/texture operations still refer to native adapters. |
 | `sim`, `swarm_api`, `test_runner` | Through `world` and `scripting`. |
 | `scene_snapshot` | Looks up mesh and material paths in the GPU caches. |
@@ -40,12 +40,18 @@ What blocks moving the rest (found by following each module's imports):
    own in `naive-sim`; the engine maps winit events onto them at the edge.
    Bindings files, Lua and `inject_input` keep their key names. Moved
    `input`.
-2. **Shared CPU assets.** *Implemented; constructor extraction remains.*
+2. **Shared CPU assets and construction.** *Implemented; crate extraction remains.*
    Fallible mesh, material, texture and splat decoders are shared by the native
    GPU caches and the headless asset catalog. Missing or invalid assets fail
    instead of producing placeholder geometry. Headless mesh handles retain
    vertices, triangles, skeletons and clips; trimesh colliders use the authored
-   scale. Move `world` and `scene_snapshot` after consolidating upload adapters.
+   scale. Native and headless asset resolvers feed one constructor in
+   `world/construction.rs`, including authored entities, ordinary deferred
+   spawns, projectiles and dynamic objects. Game/editor startup, scene
+   replacement and structural reloads all use this boundary; script and
+   animation initialization follow construction. Move `SceneWorld` and
+   `scene_snapshot` into `naive-sim` after extracting script component types
+   and renderer-independent asset path lookups.
 3. **Script side effects as commands.** *Partially implemented.* UI drawing,
    camera projection/picking, shake, particle updates and animation clocks use
    common CPU implementations. Headless tests register the corresponding Lua

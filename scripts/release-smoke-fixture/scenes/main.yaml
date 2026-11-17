@@ -50,3 +50,23 @@ entities:
       mesh_renderer:
         mesh: procedural:cube
         material: procedural:default
+  - id: initial_controller
+    components:
+      transform:
+        position: [20, 3, 0]
+      character_controller: {height: 1.8, radius: 0.3}
+      # The character capsule takes precedence over this unused mesh collider.
+      collider: {shape: trimesh}
+      health: {max: 55}
+      script: {source: logic/construction.lua}
+  - id: initial_trimesh
+    components:
+      transform:
+        position: [15, 0, 0]
+        scale: [4, 1, 4]
+      mesh_renderer: {mesh: "procedural:plane", material: "procedural:default"}
+      rigid_body: {type: dynamic, mass: 1, ccd: true}
+      collider: {shape: trimesh}
+      health: {max: 33}
+      point_light: {intensity: 3}
+      script: {source: logic/construction.lua}
