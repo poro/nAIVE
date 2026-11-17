@@ -81,6 +81,18 @@ The shared command types and MCP tool schemas live in `naive-core/src/command.rs
 Lua APIs are grouped under `scripting/`; GPU swarm setup, flow-field solving,
 CPU reference simulation and shader code live under `swarm/`.
 
+Trimesh collider cooking uses a cache per physics world, with least recently
+used entries evicted above 64 entries or 8 MiB of input geometry key bytes.
+This byte limit covers stored vertex/index keys, not the total cooked-shape heap.
+Keys match the exact vertex and triangle index contents after mesh scale is
+applied; changes to the resulting scaled geometry cause a new cook. The first
+cook retains VHACD resolution 256 and concavity 0.002. Run
+`cargo run --release --locked -p naive-sim --example collider_cooking -- 64`
+for a reproducible cold add followed by warm adds of the same procedural cube.
+The optional count is 1–10000 (default 64). The example prints cold time, warm
+median/max and cache statistics: unchanged geometry should show one cook and
+one hit per warm add. Timings have no pass/fail threshold.
+
 `naive test --timeout-seconds 30` and MCP `run_tests` use the same supervised
 subprocess. The whole suite, including discovery, has a hard deadline (default
 30 seconds, configurable from 1 to 300). The worker is killed and reaped on
