@@ -89,7 +89,41 @@ def verify_construction(socket_path, expected_counts=None):
         local hit, id, distance = physics.hitscan(x + 1.5, y + 3, z, 0, -1, 0, 5)
         assert(hit and id == "initial_trimesh" and math.abs(distance - 3) < 0.01)
     ''')
+    verify_runtime_mesh(socket_path)
     return counts
+
+
+RUNTIME_MESHES = iter(range(1000))
+
+
+def verify_runtime_mesh(socket_path):
+    """A mesh created and spawned in one frame is drawn and collides as itself.
+
+    The wedge's slanted face (height 0.75 under the ray) is no stock shape, so
+    a stand-in cube or a missing body fails the ray.
+    """
+    n = next(RUNTIME_MESHES)
+    x = 40 + 10 * n
+    command(socket_path, "run_lua", code=f'''
+        mesh.create("release_wedge", {{{{0,0,0}},{{2,0,0}},{{0,0,2}},{{0,1,0}}}},
+            {{0,2,1, 0,1,3, 0,3,2, 1,2,3}}, {{}})
+        entity.spawn_ex({{id = "release_wedge_{n}", mesh = "runtime:release_wedge",
+            material = "procedural:default", position = {{{x}, 0, 0}},
+            collider = {{shape = "trimesh"}}}})
+    ''')
+
+    def wedge_collides():
+        try:
+            command(socket_path, "run_lua", code=f'''
+                local hit, id, distance = physics.hitscan({x} + 0.25, 5, 0.25, 0, -1, 0, 10)
+                assert(hit and id == "release_wedge_{n}" and math.abs(distance - 4.25) < 0.05,
+                    tostring(id) .. " " .. tostring(distance))
+            ''')
+            return True
+        except RuntimeError:
+            return False
+
+    wait_until(wedge_collides, "a runtime mesh spawned in its creation frame did not collide as itself")
 
 
 def wait_for_runtime(process, socket_path, log_path, timeout=60):

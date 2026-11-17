@@ -63,7 +63,47 @@ fn validate_indices(positions: &[[f32; 3]], indices: &[u32]) -> Result<(), Asset
     Ok(())
 }
 
+/// Prefix of meshes created at run time with Lua `mesh.create`.
+pub const RUNTIME_MESH_PREFIX: &str = "runtime:";
+
+/// Validate `mesh.create` data and build the CPU mesh that the renderer and
+/// physics both use. Missing normals point up; missing UVs are zero.
+pub fn runtime_mesh(
+    positions: &[[f32; 3]],
+    normals: &[[f32; 3]],
+    uvs: &[[f32; 2]],
+    indices: &[u32],
+) -> Result<CpuMesh, AssetError> {
+    validate_indices(positions, indices)?;
+    let vertices = positions
+        .iter()
+        .enumerate()
+        .map(|(i, &position)| CpuVertex {
+            position,
+            normal: normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
+            tex_coords: uvs.get(i).copied().unwrap_or([0.0, 0.0]),
+            color: [1.0, 1.0, 1.0, 1.0],
+            joint_indices: [0, 0, 0, 0],
+            joint_weights: [1.0, 0.0, 0.0, 0.0],
+        })
+        .collect();
+    Ok(CpuMesh {
+        vertices,
+        indices: indices.to_vec(),
+        skin: None,
+        images: vec![],
+        base_color_image: None,
+    })
+}
+
 pub fn load_mesh(root: &Path, path: &str) -> Result<CpuMesh, AssetError> {
+    if let Some(name) = path.strip_prefix(RUNTIME_MESH_PREFIX) {
+        // Runtime meshes exist only once mesh.create has registered them.
+        return Err(AssetError(format!(
+            "runtime mesh '{name}' does not exist: call mesh.create(\"{name}\", ...) before \
+             spawning it"
+        )));
+    }
     if let Some(shape) = path.strip_prefix("procedural:") {
         let (vertices, indices) = match shape {
             "cube" => cube_geometry(),

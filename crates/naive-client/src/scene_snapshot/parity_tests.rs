@@ -361,14 +361,16 @@ entities:
     }
     pair.assert_error("Cannot resolve material asset for 'a_runtime'");
 
-    let generated = pair.meshes.insert_runtime_mesh(
-        &device,
-        "triangle",
+    let triangle = naive_sim::assets::runtime_mesh(
         &[[0., 0., 0.], [1., 0., 0.], [0., 0., 1.]],
         &[],
         &[],
         &[0, 1, 2],
-    );
+    )
+    .unwrap();
+    let generated = pair
+        .meshes
+        .insert_runtime_mesh(&device, "triangle", &triangle);
     for (world, mesh_handle, material_handle) in [
         (&mut pair.native, generated, native_material),
         (

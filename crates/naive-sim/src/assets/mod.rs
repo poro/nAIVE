@@ -56,6 +56,19 @@ impl AssetCatalog {
         self.mesh_paths.insert(path.into(), handle);
         Ok(handle)
     }
+    /// Register a mesh created at run time (`mesh.create`) as
+    /// `runtime:<name>`. Like the native mesh cache, the first definition of
+    /// a name is kept.
+    pub fn insert_runtime_mesh(&mut self, name: &str, mesh: CpuMesh) -> MeshHandle {
+        let key = format!("{RUNTIME_MESH_PREFIX}{name}");
+        if let Some(&handle) = self.mesh_paths.get(&key) {
+            return handle;
+        }
+        let handle = MeshHandle(self.meshes.len());
+        self.meshes.push(mesh);
+        self.mesh_paths.insert(key, handle);
+        handle
+    }
     pub fn mesh_data(&self, h: MeshHandle) -> Option<&CpuMesh> {
         self.meshes.get(h.0)
     }

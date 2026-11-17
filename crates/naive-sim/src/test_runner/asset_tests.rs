@@ -184,3 +184,145 @@ fn headless_deferred_spawns_reuse_cooking_and_respect_mesh_scale_and_world_reset
     );
     assert_eq!(physics.collider_set.len(), 1);
 }
+
+/// A wedge whose slanted face no stock shape has: a ray down at (0.25, 0.25)
+/// meets it at height 0.75.
+const WEDGE_SCRIPT: &str = r#"
+function init()
+    mesh.create('wedge', {{0,0,0},{2,0,0},{0,0,2},{0,1,0}}, {0,2,1, 0,1,3, 0,3,2, 1,2,3}, {})
+    entity.spawn_ex({id='wedge', mesh='runtime:wedge', material='procedural:default',
+        position={0,0,0}, collider={shape='trimesh'}})
+end
+"#;
+
+fn scripted_scene(project: &Project, script: &str) {
+    project.write("game.lua", script);
+    project.write(
+        "scene.yaml",
+        "name: Runtime\nentities:\n  - id: author\n    components:\n      transform: {}\n      script: {source: game.lua}\n",
+    );
+}
+
+#[test]
+fn runtime_meshes_are_available_to_spawns_in_the_same_frame() {
+    let project = Project::new();
+    scripted_scene(&project, WEDGE_SCRIPT);
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    runner.step_frames(2);
+    assert!(runner.take_errors().is_empty());
+
+    let world = runner.scene_world.borrow();
+    let entity = world.entity_registry["wedge"];
+    let mesh_handle = world
+        .world
+        .get::<&crate::components::MeshRenderer>(entity)
+        .unwrap()
+        .mesh_handle;
+    let catalog = runner.asset_catalog.borrow();
+    assert_eq!(
+        catalog.mesh_name_for_handle(mesh_handle).as_deref(),
+        Some("runtime:wedge")
+    );
+    let mesh = catalog.mesh_data(mesh_handle).unwrap();
+    let positions: Vec<_> = mesh.vertices.iter().map(|v| v.position).collect();
+    assert_eq!(
+        positions,
+        [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [0.0, 1.0, 0.0]
+        ]
+    );
+    assert_eq!(mesh.indices, [0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]);
+
+    // Physics uses the same triangles.
+    let (_, distance, _) = runner
+        .physics_world
+        .borrow()
+        .raycast(glam::Vec3::new(0.25, 5.0, 0.25), glam::Vec3::NEG_Y, 10.0)
+        .unwrap();
+    assert!((distance - 4.25).abs() < 0.05, "{distance}");
+}
+
+#[test]
+fn bad_or_missing_runtime_meshes_fail_with_their_reason() {
+    let project = Project::new();
+    scripted_scene(
+        &project,
+        "function init() mesh.create('broken', {{0,0,0},{1,0,0},{0,1,0}}, {0,1,7}, {}) end",
+    );
+    let mut runner = TestRunner::new(&project.0);
+    let error = runner.load_scene("scene.yaml").unwrap_err();
+    assert!(error.contains("mesh.create 'broken'"), "{error}");
+
+    scripted_scene(
+        &project,
+        "function init() entity.spawn_ex({id='ghost', mesh='runtime:ghost', material='procedural:default'}) end",
+    );
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    runner.step_frame();
+    let errors = runner.take_errors();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("runtime mesh 'ghost'") && e.contains("mesh.create")),
+        "{errors:?}"
+    );
+}
+
+/// The demos that create meshes at run time get those meshes, not a stand-in.
+#[test]
+fn demo_runtime_meshes_come_from_their_scripts() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../project");
+    let mut runner = TestRunner::new(&root);
+
+    runner.load_scene("scenes/tier3_showcase.yaml").unwrap();
+    runner.step_frames(2);
+    {
+        let world = runner.scene_world.borrow();
+        let catalog = runner.asset_catalog.borrow();
+        for i in 1..=5 {
+            let entity = world.entity_registry[&format!("diamond_{i}")];
+            let renderer = world
+                .world
+                .get::<&crate::components::MeshRenderer>(entity)
+                .unwrap();
+            assert_eq!(
+                catalog
+                    .mesh_name_for_handle(renderer.mesh_handle)
+                    .as_deref(),
+                Some("runtime:diamond")
+            );
+            let mesh = catalog.mesh_data(renderer.mesh_handle).unwrap();
+            assert_eq!((mesh.vertices.len(), mesh.indices.len()), (6, 24));
+            assert_eq!(mesh.vertices[0].position, [0.0, 1.2, 0.0]);
+        }
+    }
+
+    runner.load_scene("scenes/procedural_world.yaml").unwrap();
+    runner.step_seconds(1.0);
+    let world = runner.scene_world.borrow();
+    let catalog = runner.asset_catalog.borrow();
+    let (_, &bridge) = world
+        .entity_registry
+        .iter()
+        .find(|(id, _)| id.starts_with("bridge_"))
+        .expect("the procedural world builds its bridge");
+    let renderer = world
+        .world
+        .get::<&crate::components::MeshRenderer>(bridge)
+        .unwrap();
+    assert_eq!(
+        catalog
+            .mesh_name_for_handle(renderer.mesh_handle)
+            .as_deref(),
+        Some("runtime:bridge")
+    );
+    let mesh = catalog.mesh_data(renderer.mesh_handle).unwrap();
+    // 13 arch segments' edges, two vertices each, two triangles per segment.
+    assert_eq!((mesh.vertices.len(), mesh.indices.len()), (26, 72));
+    assert_eq!(mesh.vertices[0].position, [-4.0, 0.0, -0.75]);
+}

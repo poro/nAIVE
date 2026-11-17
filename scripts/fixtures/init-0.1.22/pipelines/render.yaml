@@ -1,0 +1,98 @@
+version: 1
+settings:
+  vsync: true
+  hdr: true
+
+resources:
+  - name: gbuffer_albedo
+    type: texture_2d
+    format: rgba8
+    size: viewport
+  - name: gbuffer_normal
+    type: texture_2d
+    format: rgba16f
+    size: viewport
+  - name: gbuffer_depth
+    type: texture_2d
+    format: depth32f
+    size: viewport
+  - name: gbuffer_emission
+    type: texture_2d
+    format: rgba16f
+    size: viewport
+  - name: hdr_buffer
+    type: texture_2d
+    format: rgba16f
+    size: viewport
+  - name: bloom_buffer
+    type: texture_2d
+    format: rgba16f
+    size: viewport/2
+  - name: ldr_buffer
+    type: texture_2d
+    format: rgba8
+    size: viewport
+  - name: shadow_map
+    type: texture_2d
+    format: depth32f
+    # Four shadow cascades, each a 2048 x 2048 quarter.
+    size: "[4096, 4096]"
+
+passes:
+  - name: shadow_pass
+    type: shadow
+    shader: shaders/passes/shadow.slang
+    inputs:
+      scene_meshes: auto
+    outputs:
+      depth: shadow_map
+
+  - name: geometry_pass
+    type: rasterize
+    shader: shaders/passes/gbuffer.slang
+    inputs:
+      scene_meshes: auto
+      scene_materials: auto
+    outputs:
+      color: gbuffer_albedo
+      emission: gbuffer_emission
+      normal: gbuffer_normal
+      depth: gbuffer_depth
+
+  - name: lighting_pass
+    type: fullscreen
+    shader: shaders/passes/deferred_light.slang
+    inputs:
+      gbuffer_albedo: gbuffer_albedo
+      gbuffer_normal: gbuffer_normal
+      gbuffer_depth: gbuffer_depth
+      gbuffer_emission: gbuffer_emission
+      shadow_map: shadow_map
+      scene_lights: auto
+    outputs:
+      color: hdr_buffer
+
+  - name: bloom_pass
+    type: fullscreen
+    shader: shaders/passes/bloom.slang
+    inputs:
+      hdr: hdr_buffer
+    outputs:
+      color: bloom_buffer
+
+  - name: tonemap_pass
+    type: fullscreen
+    shader: shaders/passes/tonemap.slang
+    inputs:
+      hdr: hdr_buffer
+      bloom: bloom_buffer
+    outputs:
+      color: ldr_buffer
+
+  - name: fxaa_pass
+    type: fullscreen
+    shader: shaders/passes/fxaa.slang
+    inputs:
+      ldr: ldr_buffer
+    outputs:
+      color: swapchain

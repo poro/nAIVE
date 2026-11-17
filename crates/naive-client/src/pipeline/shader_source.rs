@@ -2,7 +2,107 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{PassDef, PassType, PipelineError};
+use super::{PassDef, PassType, PipelineError, PipelineFile};
+
+/// The pipeline schema this engine writes. In version 2 every pass names a
+/// project shader that must exist, or an engine shader explicitly
+/// (`builtin:<name>`). Version 1 is what `naive init` and the demo wrote up to
+/// 0.1.22; [`migrate_pipeline`] gives those files their 0.1.22 meaning.
+pub const CURRENT_PIPELINE_VERSION: u32 = 2;
+
+/// Map a version 1 pipeline onto explicit shader references, returning one
+/// note per pass whose reference changed. Version 2 pipelines are unchanged.
+///
+/// Version 1 meant:
+/// - rasterize and shadow passes always used the engine's G-buffer and shadow
+///   shaders, whatever file they named;
+/// - a fullscreen or splat pass used its project shader when the file
+///   existed (still required to compile, now strictly), and otherwise the
+///   engine shader its pass name matched (`splat`, `light`, `bloom`,
+///   `tonemap`, `fxaa`).
+pub fn migrate_pipeline(
+    pipeline: &mut PipelineFile,
+    project_root: &Path,
+) -> Result<Vec<String>, PipelineError> {
+    match pipeline.version {
+        CURRENT_PIPELINE_VERSION => return Ok(Vec::new()),
+        1 => {}
+        other => {
+            return Err(PipelineError::InvalidFormat(format!(
+                "Unsupported pipeline version {other}; this engine reads versions 1 and \
+                 {CURRENT_PIPELINE_VERSION}"
+            )))
+        }
+    }
+    let mut notes = Vec::new();
+    for pass in &mut pipeline.passes {
+        if pass.shader.starts_with("builtin:") {
+            continue;
+        }
+        let builtin = match PassType::from_name(&pass.pass_type) {
+            Some(PassType::Rasterize) => Some("gbuffer"),
+            Some(PassType::Shadow) => Some("shadow"),
+            Some(PassType::Fullscreen | PassType::Splat)
+                if !project_shader_exists(project_root, &pass.shader) =>
+            {
+                legacy_builtin_for_pass_name(&pass.name)
+            }
+            _ => None,
+        };
+        if let Some(name) = builtin {
+            let reference = format!("builtin:{name}");
+            notes.push(format!(
+                "pass '{}': '{}' -> '{reference}'",
+                pass.name, pass.shader
+            ));
+            pass.shader = reference;
+        }
+    }
+    Ok(notes)
+}
+
+/// The 0.1.22 fallback for a fullscreen or splat pass without its shader.
+fn legacy_builtin_for_pass_name(name: &str) -> Option<&'static str> {
+    if name.contains("splat") && !name.contains("light") {
+        Some("gaussian_splat")
+    } else if name.contains("light") {
+        Some("deferred_light")
+    } else if name.contains("bloom") {
+        Some("bloom")
+    } else if name.contains("tonemap") {
+        Some("tonemap")
+    } else if name.contains("fxaa") {
+        Some("fxaa")
+    } else {
+        None
+    }
+}
+
+/// A shader source, or the WGSL `naive build` compiled from it, inside the
+/// project. Escaping references count as missing here and fail later.
+fn project_shader_exists(project_root: &Path, reference: &str) -> bool {
+    crate::project_path::resolve(project_root, reference)
+        .is_ok_and(|path| path.exists() || crate::shader::precompiled_wgsl_path(&path).exists())
+}
+
+/// Load a project pipeline and give a version 1 file its 0.1.22 meaning,
+/// logging each pass it maps.
+pub fn load_project_pipeline(
+    path: &Path,
+    project_root: &Path,
+) -> Result<PipelineFile, PipelineError> {
+    let mut pipeline = super::load_pipeline(path)?;
+    let notes = migrate_pipeline(&mut pipeline, project_root)?;
+    if !notes.is_empty() {
+        tracing::warn!(
+            "{} is a version 1 pipeline; using its 0.1.22 shaders ({}). Write these \
+             references and `version: {CURRENT_PIPELINE_VERSION}` to make them explicit.",
+            path.display(),
+            notes.join("; ")
+        );
+    }
+    Ok(pipeline)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FullscreenRole {
@@ -107,6 +207,119 @@ pub(crate) fn load_pass_shader(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pipeline(version: u32, passes: &[(&str, &str, &str)]) -> PipelineFile {
+        let passes: String = passes
+            .iter()
+            .map(|(name, kind, shader)| {
+                format!("  - {{name: {name}, type: {kind}, shader: '{shader}'}}\n")
+            })
+            .collect();
+        serde_norway::from_str(&format!("version: {version}\npasses:\n{passes}")).unwrap()
+    }
+
+    fn shaders(pipeline: &PipelineFile) -> Vec<&str> {
+        pipeline
+            .passes
+            .iter()
+            .map(|pass| pass.shader.as_str())
+            .collect()
+    }
+
+    fn temp_project(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "naive-pipeline-migration-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("shaders/passes")).unwrap();
+        root
+    }
+
+    #[test]
+    fn a_pipeline_from_the_0_1_22_init_keeps_its_engine_shaders() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/fixtures/init-0.1.22");
+        let pipeline = load_project_pipeline(&root.join("pipelines/render.yaml"), &root).unwrap();
+        assert_eq!(
+            shaders(&pipeline),
+            [
+                "builtin:shadow",
+                "builtin:gbuffer",
+                "builtin:deferred_light",
+                "builtin:bloom",
+                "builtin:tonemap",
+                "builtin:fxaa",
+            ]
+        );
+        for pass in &pipeline.passes {
+            load_pass_shader(&root, pass, false).unwrap();
+        }
+    }
+
+    #[test]
+    fn version_1_maps_only_what_0_1_22_ignored_or_fell_back_from() {
+        let root = temp_project("v1");
+        for file in ["gbuffer.slang", "tonemap.slang"] {
+            std::fs::write(root.join("shaders/passes").join(file), "// project shader").unwrap();
+        }
+        let mut file = pipeline(
+            1,
+            &[
+                // 0.1.22 never read mesh-pass shaders, even existing ones.
+                ("gbuffer", "rasterize", "shaders/passes/gbuffer.slang"),
+                ("shadows", "shadow", "shaders/passes/shadow.slang"),
+                // An existing fullscreen shader is the project's.
+                ("tonemap", "fullscreen", "shaders/passes/tonemap.slang"),
+                // A missing one fell back by its pass name ...
+                (
+                    "lighting",
+                    "fullscreen",
+                    "shaders/passes/deferred_light.slang",
+                ),
+                ("splats", "splat", "shaders/passes/gaussian_splat.slang"),
+                // ... unless no engine shader matched it.
+                ("vignette", "fullscreen", "shaders/passes/vignette.slang"),
+                ("fxaa", "fullscreen", "builtin:fxaa"),
+            ],
+        );
+        let notes = migrate_pipeline(&mut file, &root).unwrap();
+        assert_eq!(
+            shaders(&file),
+            [
+                "builtin:gbuffer",
+                "builtin:shadow",
+                "shaders/passes/tonemap.slang",
+                "builtin:deferred_light",
+                "builtin:gaussian_splat",
+                "shaders/passes/vignette.slang",
+                "builtin:fxaa",
+            ]
+        );
+        assert_eq!(notes.len(), 4, "{notes:?}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn version_2_references_are_strict_and_other_versions_are_rejected() {
+        let root = temp_project("v2");
+        let mut file = pipeline(
+            2,
+            &[(
+                "lighting",
+                "fullscreen",
+                "shaders/passes/deferred_light.slang",
+            )],
+        );
+        assert!(migrate_pipeline(&mut file, &root).unwrap().is_empty());
+        assert_eq!(shaders(&file), ["shaders/passes/deferred_light.slang"]);
+        let error = load_pass_shader(&root, &file.passes[0], false).unwrap_err();
+        assert!(error.to_string().contains("Required shader"), "{error}");
+
+        let mut file = pipeline(3, &[("lighting", "fullscreen", "builtin:deferred_light")]);
+        let error = migrate_pipeline(&mut file, &root).unwrap_err();
+        assert!(error.to_string().contains("version 3"), "{error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn explicit_engine_shader_selects_layout_independently_of_pass_name() {
