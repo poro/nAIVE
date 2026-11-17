@@ -607,6 +607,9 @@ naive test
 
 # Run a specific test file
 naive test tests/test_combat.lua
+
+# Bound the complete suite, including discovery (default 30 seconds; max 300)
+naive test --timeout-seconds 60
 ```
 
 ### Writing Tests
@@ -617,6 +620,13 @@ Game script load, initialization, update, collision and event-listener errors fa
 the test, even when the test catches a Lua error or subsequently loads another
 scene. Missing configured files, discovery errors, and runs that discover no tests
 exit with a failure status. A passing command therefore means tests actually ran.
+
+Tests run in a supervised subprocess. Exceeding the suite deadline terminates
+the worker and fails the command. Discovery and each test also have CPU, memory
+and wall-time limits, including Rust frame waits. Test Lua cannot access the
+filesystem/process libraries, runtime code generation or finalizers. Through
+MCP, `naive_run_tests` accepts `timeout_seconds`, leaves the editor responsive
+and rejects another suite while one is active.
 
 ```lua
 -- tests/test_player.lua

@@ -44,6 +44,7 @@ pub mod sky;
 pub mod splat;
 pub mod swarm;
 pub mod swarm_api;
+pub mod test_execution;
 pub mod test_runner;
 pub mod texture_cache;
 pub mod ui;

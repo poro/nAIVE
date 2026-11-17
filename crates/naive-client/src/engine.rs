@@ -121,6 +121,7 @@ pub struct Engine {
     pub editor_command_log: Vec<(String, std::time::Instant)>,
     /// Scene snapshots taken before each undoable command, newest last.
     pub(crate) undo_stack: Vec<commands::UndoEntry>,
+    pub(crate) test_jobs: crate::test_execution::TestJobs,
     pub editor_scene_path: Option<PathBuf>,
 
     // Surface config shared with scripting API
@@ -189,6 +190,7 @@ impl Engine {
             editor_camera: None,
             editor_command_log: Vec::new(),
             undo_stack: Vec::new(),
+            test_jobs: crate::test_execution::TestJobs::default(),
             editor_scene_path: None,
             shared_surface_config: None,
             texture_resources: None,

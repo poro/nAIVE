@@ -106,3 +106,49 @@ fn game_script_failures_exit_nonzero_and_clean_scripts_pass() {
         String::from_utf8_lossy(&result.stdout)
     );
 }
+
+#[test]
+fn discovery_and_test_body_loops_fail_with_a_bounded_exit() {
+    let project = Project::new("");
+    for source in [
+        "while true do end",
+        "function test_loop() while true do end end",
+        "function test_loop() while true do pcall(function() while true do end end) end end",
+    ] {
+        project.write("tests/test_loop.lua", source);
+        let started = std::time::Instant::now();
+        assert_failure(project.test(&["--timeout-seconds", "2"]), "limit");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+}
+
+#[test]
+fn suite_deadline_kills_rust_waits_and_results_survive_lua_print_output() {
+    let project = Project::new("");
+    project.write(
+        "tests/test_wait.lua",
+        "function test_wait() wait_frames(1000000000000) end",
+    );
+    let started = std::time::Instant::now();
+    assert_failure(project.test(&["--timeout-seconds", "1"]), "timed out");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    project.write(
+        "tests/test_wait.lua",
+        "print('not worker JSON'); function test_ok() log.info('kept test output') end",
+    );
+    let output = project.test(&[]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("kept test output"));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout)
+            .matches("OK test_ok")
+            .count(),
+        1
+    );
+    project.write(
+        "tests/test_wait.lua",
+        "function test_output() print(string.rep('x', 2 * 1024 * 1024)) end",
+    );
+    assert_failure(project.test(&[]), "output exceeded");
+    assert_failure(project.test(&["--timeout-seconds", "0"]), "between 1 and");
+}

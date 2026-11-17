@@ -9,10 +9,54 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+pub const DEFAULT_TEST_TIMEOUT_SECONDS: u32 = 30;
+pub const MAX_TEST_TIMEOUT_SECONDS: u32 = 300;
+
+/// A hard suite deadline shared by CLI, socket and MCP validation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub struct TestTimeoutSeconds(u32);
+
+impl TestTimeoutSeconds {
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for TestTimeoutSeconds {
+    fn default() -> Self {
+        Self(DEFAULT_TEST_TIMEOUT_SECONDS)
+    }
+}
+
+impl TryFrom<u32> for TestTimeoutSeconds {
+    type Error = String;
+    fn try_from(seconds: u32) -> Result<Self, Self::Error> {
+        if (1..=MAX_TEST_TIMEOUT_SECONDS).contains(&seconds) {
+            Ok(Self(seconds))
+        } else {
+            Err(format!(
+                "Test timeout must be between 1 and {MAX_TEST_TIMEOUT_SECONDS} seconds"
+            ))
+        }
+    }
+}
+
+impl From<TestTimeoutSeconds> for u32 {
+    fn from(timeout: TestTimeoutSeconds) -> Self {
+        timeout.0
+    }
+}
+
 trait Argument {
     fn schema() -> Value;
     fn required() -> bool {
         true
+    }
+}
+impl Argument for TestTimeoutSeconds {
+    fn schema() -> Value {
+        json!({"type":"integer", "minimum":1, "maximum":MAX_TEST_TIMEOUT_SECONDS, "default":DEFAULT_TEST_TIMEOUT_SECONDS})
     }
 }
 impl Argument for String {
@@ -165,8 +209,9 @@ commands! {
         frames: Option<u32> => "Frames to run (default 240)"
     };
     GpuTimings => "gpu_timings", "GPU milliseconds per frame over the last 60 frames, for the whole frame and per render pass (the swarm step is \"swarms\"), from timestamp queries. On screen with vsync the GPU slows to fit the display refresh, so use naive_benchmark to measure headroom.", {};
-    RunTests => "run_tests", "Run the project's Lua tests headlessly inside the running engine (the scene on screen is not touched) and return each test's result with its error. Use after changing scripts or scenes to check gameplay still works.", {
-        file: Option<String> => "One test file relative to the project, e.g. tests/test_combat.lua. Omit to run every test that naive.yaml configures."
+    RunTests => "run_tests", "Run the project's Lua tests in an isolated worker while the engine stays responsive, and return each test's result. One suite runs at a time; timed-out work is terminated. The scene on screen is not touched.", {
+        file: Option<String> => "One test file relative to the project, e.g. tests/test_combat.lua. Omit to run every test that naive.yaml configures.",
+        timeout_seconds: Option<TestTimeoutSeconds> => "Hard deadline for the whole suite, including discovery, in seconds (1-300; default 30)."
     };
     ScreenshotDiff => "screenshot_diff", "Compare two PNG captures inside the project (for example a capture_frame from before and after a change): report how many pixels changed and by how much, and write a diff image that shows the changed pixels in red over a dimmed copy of the second image.", {
         a: String => "First PNG, relative to the project, e.g. captures/before.png",
@@ -177,6 +222,19 @@ commands! {
     Undo => "undo", "Undo the last spawn_entity, destroy_entity, modify_entity or run_lua by restoring the scene as it was before it. Scripts restart from init; Lua variables and velocities are not restored. Up to 32 steps; a change made while the scene held state a scene file cannot represent cannot be undone.", {};
     RunLua => "run_lua", "Run Lua in the running engine, sandboxed with instruction and memory limits. Tables: entity (spawn, spawn_dynamic, destroy, get_position/set_position, get_rotation/set_rotation, set_scale, find_by_tag, damage, heal, set_base_color, set_emission, ...), physics (apply_impulse, apply_force, set_velocity, raycast, hitscan), events (emit, on, off), audio (play_sfx, play_music, stop_music), particles (spawn_burst), camera (shake, world_to_screen), animation, mesh, input and swarm. Use it for batch edits and anything the other tools do not cover.", {
         code: String => "Lua code to run. Its return value and print() output are returned."
+    }
+}
+
+impl Command {
+    /// Leave time for a bounded worker to be terminated and its error returned.
+    pub fn response_timeout(&self) -> std::time::Duration {
+        let seconds = match self {
+            Self::RunTests {
+                timeout_seconds, ..
+            } => timeout_seconds.unwrap_or_default().get() + 5,
+            _ => 5,
+        };
+        std::time::Duration::from_secs(u64::from(seconds))
     }
 }
 
@@ -357,5 +415,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_deadlines_are_validated_and_shared_with_response_timeouts() {
+        for seconds in [0, 301] {
+            assert!(CommandRequest::from_tool(
+                "naive_run_tests",
+                &json!({"timeout_seconds": seconds})
+            )
+            .is_err());
+        }
+        for (arguments, expected) in [(json!({}), 35), (json!({"timeout_seconds": 10}), 15)] {
+            let request = CommandRequest::from_tool("naive_run_tests", &arguments).unwrap();
+            assert_eq!(
+                request.validate().unwrap().response_timeout().as_secs(),
+                expected
+            );
+        }
+        let schema = CommandKind::RunTests.tool_definition();
+        assert_eq!(
+            schema["inputSchema"]["properties"]["timeout_seconds"]["maximum"],
+            MAX_TEST_TIMEOUT_SECONDS
+        );
+        assert_eq!(Command::ListEntities {}.response_timeout().as_secs(), 5);
     }
 }

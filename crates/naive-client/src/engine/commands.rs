@@ -58,6 +58,33 @@ pub(crate) struct UndoEntry {
     scene: Result<crate::scene::SceneFile, String>,
 }
 
+/// Keep an undo snapshot pending until the command's outcome is known. Errors
+/// after entering user code can leave scene changes that still need undo.
+struct PendingUndo {
+    entry: Option<UndoEntry>,
+    may_have_changed: bool,
+}
+
+impl PendingUndo {
+    fn new(entry: Option<UndoEntry>) -> Self {
+        Self {
+            entry,
+            may_have_changed: false,
+        }
+    }
+
+    fn commit(self, succeeded: bool, stack: &mut Vec<UndoEntry>) {
+        if succeeded || self.may_have_changed {
+            if let Some(entry) = self.entry {
+                stack.push(entry);
+                if stack.len() > UNDO_LIMIT {
+                    stack.remove(0);
+                }
+            }
+        }
+    }
+}
+
 impl Engine {
     /// Process commands from the command socket.
     /// Editor-enhanced commands (spawn with mesh, save_scene, etc.) are handled here
@@ -152,6 +179,11 @@ impl Engine {
                 }
             }
 
+            if kind == CommandKind::RunTests {
+                self.test_jobs.start(self.project_root.clone(), pending);
+                continue;
+            }
+
             let undoable = matches!(
                 kind,
                 CommandKind::SpawnEntity
@@ -159,20 +191,26 @@ impl Engine {
                     | CommandKind::ModifyEntity
                     | CommandKind::RunLua
             );
-            if undoable {
-                self.record_undo(kind.name());
-            }
+            let entry = if undoable {
+                self.snapshot_undo(kind.name())
+            } else {
+                None
+            };
+            let mut undo = PendingUndo::new(entry);
             let response = match kind {
-                CommandKind::RunTests => self.handle_run_tests(&pending.request),
                 CommandKind::ScreenshotDiff => self.handle_screenshot_diff(&pending.request),
                 CommandKind::Undo => self.handle_undo(),
-                CommandKind::SpawnEntity => self.handle_spawn_entity(&pending.request),
+                CommandKind::SpawnEntity => {
+                    self.handle_spawn_entity(&pending.request, &mut undo.may_have_changed)
+                }
                 CommandKind::DestroyEntity => self.handle_destroy_entity(&pending.request),
                 CommandKind::SaveScene => self.handle_save_scene(&pending.request),
                 CommandKind::GetSceneYaml => self.handle_get_scene_yaml(),
                 CommandKind::SetCamera => self.handle_set_camera(&pending.request),
                 CommandKind::EditorStatus => self.handle_editor_status(),
-                CommandKind::RunLua => self.handle_run_lua(&pending.request),
+                CommandKind::RunLua => {
+                    self.handle_run_lua(&pending.request, &mut undo.may_have_changed)
+                }
                 CommandKind::CaptureFrame => self.handle_capture_frame(&pending.request),
                 CommandKind::GpuTimings => self.handle_gpu_timings(),
                 CommandKind::Benchmark => self.handle_benchmark(&pending.request),
@@ -189,10 +227,7 @@ impl Engine {
                     )
                 }
             };
-            // A command that failed changed nothing, so it has no undo step.
-            if undoable && response.status != "ok" {
-                self.undo_stack.pop();
-            }
+            undo.commit(response.status == "ok", &mut self.undo_stack);
             let _ = pending.responder.send(response);
         }
     }
@@ -200,9 +235,9 @@ impl Engine {
     /// Snapshot the scene before an undoable command. A scene that cannot be
     /// snapshotted leaves a step that explains why it cannot be undone, so
     /// that undo never silently skips over a change.
-    fn record_undo(&mut self, label: &str) {
+    fn snapshot_undo(&self, label: &str) -> Option<UndoEntry> {
         let scene = match &self.scene_world {
-            None => return,
+            None => return None,
             Some(world) if world.borrow().entity_registry.len() > UNDO_MAX_ENTITIES => {
                 Err(format!(
                     "the scene had more than {UNDO_MAX_ENTITIES} entities, too many to snapshot"
@@ -210,28 +245,33 @@ impl Engine {
             }
             Some(_) => self.snapshot_scene_file(),
         };
-        self.undo_stack.push(UndoEntry {
+        Some(UndoEntry {
             label: label.to_string(),
             scene,
-        });
-        if self.undo_stack.len() > UNDO_LIMIT {
-            self.undo_stack.remove(0);
-        }
+        })
     }
 
     pub(super) fn handle_undo(&mut self) -> crate::command::CommandResponse {
         use crate::command::CommandResponse;
-        let Some(entry) = self.undo_stack.pop() else {
+        let Some(entry) = self.undo_stack.last() else {
             return CommandResponse::error("Nothing to undo");
         };
-        match entry.scene {
+        match &entry.scene {
             Err(reason) => {
                 CommandResponse::error(format!("Cannot undo {}: {}", entry.label, reason))
             }
             Ok(scene) => {
+                // replace_scene tears down the current scene before its GPU
+                // check, so reject an unavailable rebuild before calling it.
+                if self.gpu.is_none() {
+                    return CommandResponse::error("No GPU to rebuild the scene with");
+                }
+                let scene = scene.clone();
+                let label = entry.label.clone();
                 if self.replace_scene(scene) {
+                    self.undo_stack.pop();
                     CommandResponse::ok(json!({
-                        "undone": entry.label,
+                        "undone": label,
                         "remaining": self.undo_stack.len(),
                     }))
                 } else {
@@ -239,67 +279,6 @@ impl Engine {
                 }
             }
         }
-    }
-
-    /// Run Lua tests headlessly, in their own worlds; the running scene is
-    /// not touched.
-    pub(super) fn handle_run_tests(
-        &mut self,
-        req: &crate::command::CommandRequest,
-    ) -> crate::command::CommandResponse {
-        use crate::command::CommandResponse;
-        let files = match req.params.get("file").and_then(|v| v.as_str()) {
-            Some(file) => match crate::project_path::resolve(&self.project_root, file) {
-                Ok(path) if path.is_file() => vec![path],
-                Ok(_) => return CommandResponse::error(format!("Test file not found: {file}")),
-                Err(error) => return CommandResponse::error(error),
-            },
-            None => {
-                let config =
-                    match crate::project_config::load_config(&self.project_root.join("naive.yaml"))
-                    {
-                        Ok(config) => config,
-                        Err(error) => return CommandResponse::error(error.to_string()),
-                    };
-                match crate::project_config::discover_test_files(&config, &self.project_root) {
-                    Ok(files) => files,
-                    Err(error) => return CommandResponse::error(error),
-                }
-            }
-        };
-        let root = self
-            .project_root
-            .canonicalize()
-            .unwrap_or_else(|_| self.project_root.clone());
-        let mut tests = Vec::new();
-        let (mut passed, mut failed) = (0, 0);
-        for file in &files {
-            let shown = file
-                .strip_prefix(&root)
-                .unwrap_or(file)
-                .display()
-                .to_string();
-            for result in crate::test_runner::run_test_file(&self.project_root, file) {
-                if result.passed {
-                    passed += 1;
-                } else {
-                    failed += 1;
-                }
-                tests.push(json!({
-                    "file": shown,
-                    "name": result.name,
-                    "passed": result.passed,
-                    "error": result.error,
-                    "game_time": result.game_time,
-                }));
-            }
-        }
-        CommandResponse::ok(json!({
-            "passed": passed,
-            "failed": failed,
-            "files": files.len(),
-            "tests": tests,
-        }))
     }
 
     pub(super) fn handle_screenshot_diff(
@@ -348,6 +327,7 @@ impl Engine {
     pub(super) fn handle_spawn_entity(
         &mut self,
         req: &crate::command::CommandRequest,
+        may_have_changed: &mut bool,
     ) -> crate::command::CommandResponse {
         use crate::command::CommandResponse;
         let definition = match crate::command::spawn_definition(req) {
@@ -408,6 +388,9 @@ impl Engine {
             );
         }
         if let Some(runtime) = self.script_runtime.as_mut() {
+            // A failing init hook can change other entities before the newly
+            // spawned entity is removed below.
+            *may_have_changed = true;
             if let Err(error) =
                 crate::sim::initialize_pending_scripts(&world, runtime, &self.project_root)
             {
@@ -574,6 +557,7 @@ impl Engine {
         CommandResponse::ok(json!({
             "editor_mode": self.args.editor_mode,
             "entity_count": entity_count,
+            "tests_running": self.test_jobs.is_running(),
             "scene_path": scene_path,
             "camera": camera_info,
         }))
@@ -583,6 +567,7 @@ impl Engine {
     pub(super) fn handle_run_lua(
         &mut self,
         req: &crate::command::CommandRequest,
+        may_have_changed: &mut bool,
     ) -> crate::command::CommandResponse {
         use crate::command::CommandResponse;
         use serde_json::json;
@@ -621,6 +606,7 @@ impl Engine {
             env.set("print", print_fn)?;
 
             let chunk = lua.load(code).set_name("run_lua").set_environment(env);
+            *may_have_changed = true;
             let value = script_runtime.run_limited(|| chunk.eval::<mlua::Value>())?;
 
             // Format return value
@@ -836,7 +822,131 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-    use super::write_scene_file;
+    use super::*;
+
+    fn undo_entry(label: impl Into<String>) -> UndoEntry {
+        UndoEntry {
+            label: label.into(),
+            scene: crate::scene::parse_scene("name: undo test\nentities: []"),
+        }
+    }
+
+    #[test]
+    fn failed_no_op_commands_do_not_trim_a_full_undo_history() {
+        let mut stack: Vec<_> = (0..UNDO_LIMIT).map(|i| undo_entry(i.to_string())).collect();
+        PendingUndo::new(Some(undo_entry("failed validation"))).commit(false, &mut stack);
+        assert_eq!(stack.len(), UNDO_LIMIT);
+        assert_eq!(stack.first().unwrap().label, "0");
+        assert_eq!(stack.last().unwrap().label, (UNDO_LIMIT - 1).to_string());
+
+        // A command without a loaded scene has no snapshot to insert or remove.
+        PendingUndo::new(None).commit(false, &mut stack);
+        assert_eq!(stack.len(), UNDO_LIMIT);
+        assert_eq!(stack.first().unwrap().label, "0");
+
+        PendingUndo::new(Some(undo_entry("successful change"))).commit(true, &mut stack);
+        assert_eq!(stack.len(), UNDO_LIMIT);
+        assert_eq!(stack.first().unwrap().label, "1");
+        assert_eq!(stack.last().unwrap().label, "successful change");
+    }
+
+    #[test]
+    fn failed_lua_keeps_its_scene_snapshot_and_failed_undo_keeps_history() {
+        let mut engine = Engine::new(CliArgs {
+            command: None,
+            scene: None,
+            pipeline: None,
+            project: ".".to_string(),
+            socket: "/tmp/unused-naive-undo-test.sock".to_string(),
+            hud: false,
+            editor_mode: false,
+        });
+        let scene = crate::scene::parse_scene(
+            "name: undo test\nentities:\n  - id: target\n    components:\n      transform:\n        position: [2, 0, 0]\n",
+        )
+        .unwrap();
+        let world = Rc::new(RefCell::new(SceneWorld::new()));
+        let physics = Rc::new(RefCell::new(PhysicsWorld::new(glam::Vec3::ZERO)));
+        crate::world::spawn_all_entities_headless(
+            &mut world.borrow_mut(),
+            &scene,
+            &mut physics.borrow_mut(),
+        );
+        let runtime = ScriptRuntime::new();
+        runtime
+            .register_entity_api(world.clone(), physics.clone())
+            .unwrap();
+        engine.scene_world = Some(world.clone());
+        engine.physics_world = Some(physics);
+        engine.script_runtime = Some(runtime);
+        engine.undo_stack.push(undo_entry("previous change"));
+        let request = serde_json::from_value(json!({
+            "cmd": "run_lua",
+            "code": "entity.set_position('target', 9, 0, 0); error('after mutation')",
+        }))
+        .unwrap();
+        let mut undo = PendingUndo::new(engine.snapshot_undo("run_lua"));
+        let response = engine.handle_run_lua(&request, &mut undo.may_have_changed);
+        assert_eq!(response.status, "error");
+        assert!(response.message.unwrap().contains("after mutation"));
+        undo.commit(false, &mut engine.undo_stack);
+        assert_eq!(engine.undo_stack.len(), 2);
+        let saved = engine.undo_stack.last().unwrap().scene.as_ref().unwrap();
+        assert_eq!(
+            saved.entities[0]
+                .components
+                .transform
+                .as_ref()
+                .unwrap()
+                .position,
+            [2., 0., 0.]
+        );
+
+        // Rebuilding is unavailable without a GPU. Neither the undo entry nor
+        // the live scene may be consumed by this failed attempt.
+        for _ in 0..2 {
+            assert_eq!(engine.handle_undo().status, "error");
+            assert_eq!(engine.undo_stack.len(), 2);
+            assert_eq!(engine.undo_stack.last().unwrap().label, "run_lua");
+            let world = world.borrow();
+            let entity = world.entity_registry["target"];
+            assert_eq!(
+                world.world.get::<&Transform>(entity).unwrap().position.x,
+                9.
+            );
+        }
+
+        let mut blocked = undo_entry("unrepresentable change");
+        blocked.scene = Err("transient projectile".to_string());
+        engine.undo_stack.push(blocked);
+        for _ in 0..2 {
+            let response = engine.handle_undo();
+            assert_eq!(response.status, "error");
+            assert!(response.message.unwrap().contains("transient projectile"));
+            assert_eq!(engine.undo_stack.len(), 3);
+        }
+
+        // Missing entities and missing Lua runtimes are definite no-op errors.
+        let mut undo = PendingUndo::new(engine.snapshot_undo("destroy_entity"));
+        let request = serde_json::from_value(json!({
+            "cmd": "destroy_entity", "entity_id": "missing",
+        }))
+        .unwrap();
+        let response = engine.handle_destroy_entity(&request);
+        assert_eq!(response.status, "error");
+        undo.commit(false, &mut engine.undo_stack);
+        assert_eq!(engine.undo_stack.len(), 3);
+        engine.script_runtime = None;
+        undo = PendingUndo::new(engine.snapshot_undo("run_lua"));
+        let request =
+            serde_json::from_value(json!({"cmd": "run_lua", "code": "return 1"})).unwrap();
+        let response = engine.handle_run_lua(&request, &mut undo.may_have_changed);
+        assert_eq!(response.status, "error");
+        undo.commit(false, &mut engine.undo_stack);
+        assert_eq!(engine.undo_stack.len(), 3);
+        engine.scene_world = None;
+        assert!(engine.snapshot_undo("destroy_entity").is_none());
+    }
 
     #[test]
     fn atomic_scene_save_replaces_complete_document_and_cleans_failed_writes() {

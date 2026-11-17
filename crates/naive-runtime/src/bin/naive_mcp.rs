@@ -6,6 +6,8 @@
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use naive_core::command::{Command, CommandRequest, CommandResponse};
 use serde_json::{json, Value};
@@ -13,14 +15,22 @@ use serde_json::{json, Value};
 const DEFAULT_SOCKET: &str = "/tmp/naive-runtime.sock";
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
+struct TestRequestGuard(Arc<AtomicBool>);
+
+impl Drop for TestRequestGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 fn main() {
     let socket_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| DEFAULT_SOCKET.into());
 
     let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
+    let mut test_job: Option<std::thread::JoinHandle<()>> = None;
+    let test_running = Arc::new(AtomicBool::new(false));
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -42,6 +52,46 @@ fn main() {
             continue;
         }
 
+        if test_job.is_some() && !test_running.load(Ordering::Acquire) {
+            let _ = test_job.take().unwrap().join();
+        }
+        if method == "tools/call" && request["params"]["name"] == "naive_run_tests" {
+            if test_job.is_some() {
+                write_response(&tool_error(
+                    id,
+                    "A test suite is already running; retry after it finishes",
+                ));
+                continue;
+            }
+            let worker_id = id.clone();
+            let worker_socket = socket_path.clone();
+            let worker_running = test_running.clone();
+            test_running.store(true, Ordering::Release);
+            match std::thread::Builder::new()
+                .name("naive-mcp-tests".into())
+                .spawn(move || {
+                    let running = TestRequestGuard(worker_running);
+                    let response = std::panic::catch_unwind(|| {
+                        handle_tools_call(worker_id.clone(), &request, &worker_socket)
+                    })
+                    .unwrap_or_else(|_| tool_error(worker_id, "Test request failed"));
+                    // Admission must reopen before the client can receive this
+                    // reply and immediately submit another test request.
+                    drop(running);
+                    write_response(&response);
+                }) {
+                Ok(job) => test_job = Some(job),
+                Err(error) => {
+                    test_running.store(false, Ordering::Release);
+                    write_response(&tool_error(
+                        id,
+                        &format!("Could not start test request: {error}"),
+                    ));
+                }
+            }
+            continue;
+        }
+
         let response = match method {
             "initialize" => handle_initialize(id),
             "tools/list" => handle_tools_list(id),
@@ -49,10 +99,33 @@ fn main() {
             _ => json_rpc_error(id, -32601, &format!("Method not found: {}", method)),
         };
 
-        let j = serde_json::to_string(&response).unwrap_or_default();
-        let _ = writeln!(stdout, "{}", j);
-        let _ = stdout.flush();
+        write_response(&response);
     }
+    // A client may close stdin after one request and still expect its reply.
+    if let Some(job) = test_job {
+        let _ = job.join();
+    }
+}
+
+fn write_response(response: &Value) {
+    let json = serde_json::to_string(response).unwrap_or_default();
+    // Hold the process-wide stdout lock through the complete response so the
+    // test thread cannot interleave bytes with ordinary command responses.
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    let _ = writeln!(stdout, "{json}");
+    let _ = stdout.flush();
+}
+
+fn tool_error(id: Option<Value>, message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "content": [{"type": "text", "text": format!("Error: {message}")}],
+            "isError": true
+        }
+    })
 }
 
 fn handle_initialize(id: Option<Value>) -> Value {
@@ -113,11 +186,11 @@ fn handle_tools_call(id: Option<Value>, request: &Value, socket_path: &str) -> V
 }
 
 fn send_command(socket_path: &str, command: &CommandRequest) -> Result<CommandResponse, String> {
-    command.validate()?;
+    let response_timeout = command.validate()?.response_timeout();
     let mut stream = UnixStream::connect(socket_path)
         .map_err(|e| format!("Cannot connect to {}: {}", socket_path, e))?;
     stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .set_read_timeout(Some(response_timeout))
         .map_err(|e| format!("set_read_timeout: {}", e))?;
 
     stream
