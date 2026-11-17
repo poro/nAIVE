@@ -149,7 +149,9 @@ jobs:
         env:
           WGPU_BACKEND: vulkan
           RUST_BACKTRACE: "1"
-        run: xvfb-run -a python3 scripts/release-smoke.py
+        run: |
+          xvfb-run -a python3 scripts/release-smoke.py
+          xvfb-run -a python3 scripts/release-smoke.py --slang
 
   check-web:
     name: Check (WebAssembly)

@@ -49,7 +49,7 @@ resources:
 passes:
   - name: shadow_pass
     type: shadow
-    shader: shaders/passes/shadow.slang
+    shader: builtin:shadow
     inputs:
       scene_meshes: auto
     outputs:
@@ -57,7 +57,7 @@ passes:
 
   - name: geometry_pass
     type: rasterize
-    shader: shaders/passes/gbuffer.slang
+    shader: builtin:gbuffer
     inputs:
       scene_meshes: auto
       scene_materials: auto
@@ -69,7 +69,7 @@ passes:
 
   - name: splat_pass
     type: splat
-    shader: shaders/passes/gaussian_splat.slang
+    shader: builtin:gaussian_splat
     inputs:
       scene_splats: auto
     outputs:
@@ -78,7 +78,7 @@ passes:
 
   - name: lighting_pass
     type: fullscreen
-    shader: shaders/passes/deferred_light.slang
+    shader: builtin:deferred_light
     inputs:
       gbuffer_albedo: gbuffer_albedo
       gbuffer_normal: gbuffer_normal
@@ -93,7 +93,7 @@ passes:
 
   - name: bloom_pass
     type: fullscreen
-    shader: shaders/passes/bloom.slang
+    shader: builtin:bloom
     inputs:
       hdr: hdr_buffer
     outputs:
@@ -101,7 +101,7 @@ passes:
 
   - name: tonemap_pass
     type: fullscreen
-    shader: shaders/passes/tonemap.slang
+    shader: builtin:tonemap
     inputs:
       hdr: hdr_buffer
       bloom: bloom_buffer
@@ -110,7 +110,7 @@ passes:
 
   - name: fxaa_pass
     type: fullscreen
-    shader: shaders/passes/fxaa.slang
+    shader: builtin:fxaa
     inputs:
       ldr: ldr_buffer
     outputs:

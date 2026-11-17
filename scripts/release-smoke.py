@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Build, bundle and exercise a release with a real display/GPU (or Xvfb + Vulkan).
 
-Default: builtin WGSL/no SDK. Pass --slang to build the `naive` CLI with Slang
-as a separate check. Either way the bundle ships naive-player, built without
-Slang, and must run independently of the source checkout and vendor/.
+Default: use checked-in WGSL without the SDK. Pass --slang to require fresh
+compilation of the fixture's custom pass. Either way the bundle ships
+naive-player, built without Slang. --bundle verifies an existing release app
+after copying it away from its source project.
 Artifacts and logs are retained in the printed temporary directory on failure.
 """
 
 import argparse
 import json
+import os
 import queue
+import plistlib
 from pathlib import Path
 import shutil
 import socket
@@ -138,6 +141,7 @@ def verify_png(path):
     width, height = dimensions
     raw = zlib.decompress(compressed)
     stride, previous, pixels, cursor = width * 3, bytearray(width * 3), set(), 0
+    decoded = bytearray()
     if len(raw) != height * (stride + 1):
         raise AssertionError("PNG scanline length is incorrect")
     for _ in range(height):
@@ -164,18 +168,107 @@ def verify_png(path):
                 raise AssertionError("unknown PNG scanline filter")
             row[i] = (row[i] + prediction) & 255
         pixels.update(bytes(row[i:i + 3]) for i in range(0, stride, 3))
+        decoded.extend(row)
         previous = row
     # A valid image of a clear/background only is not a rendering success.
     if len(pixels) < 8:
         raise AssertionError(f"capture has only {len(pixels)} colors; scene may be blank")
     print(f"Captured {width}x{height} PNG with {len(pixels)} colors", flush=True)
+    return width, height, decoded
+
+
+def verify_custom_shader(path):
+    """These edge colors are emitted only by the fixture's custom shader."""
+    width, height, pixels = verify_png(path)
+    for x_fraction, expected in [(0.1, (0, 255, 255)), (0.9, (255, 0, 255))]:
+        for y_fraction in [0.25, 0.5, 0.75]:
+            x, y = int(width * x_fraction), int(height * y_fraction)
+            offset = (y * width + x) * 3
+            actual = tuple(pixels[offset:offset + 3])
+            if any(abs(a - e) > 2 for a, e in zip(actual, expected)):
+                raise AssertionError(f"custom shader marker missing at ({x}, {y}): {actual}, expected {expected}")
+    print("Custom packaged shader rendered cyan and magenta markers", flush=True)
+
+
+def bundle_paths(bundle):
+    if bundle.suffix == ".app":
+        with (bundle / "Contents" / "Info.plist").open("rb") as plist:
+            executable = plistlib.load(plist)["CFBundleExecutable"]
+        return (bundle / "Contents" / "MacOS" / executable,
+                bundle / "Contents" / "Resources" / "game")
+    binaries = [path for path in bundle.iterdir() if path.is_file() and path.stat().st_mode & 0o111]
+    if len(binaries) != 1:
+        raise AssertionError(f"expected one player executable in {bundle}")
+    return binaries[0], bundle / "game"
+
+
+def verify_player_libraries(binary):
+    linker = ["otool", "-L"] if sys.platform == "darwin" else ["ldd"]
+    libraries = subprocess.check_output(linker + [str(binary)], text=True)
+    if "slang" in libraries.lower():
+        raise AssertionError(f"shipped player links Slang:\n{libraries}")
+
+
+def verify_existing_bundle(source):
+    """Verify the actual release app, retaining its signed source for packaging."""
+    temporary = Path(tempfile.mkdtemp(prefix="naive-demo-release-"))
+    bundle = temporary / source.name
+    shutil.copytree(source, bundle)
+    binary, game = bundle_paths(bundle)
+    verify_player_libraries(binary)
+    control = temporary / "control"
+    control.mkdir(mode=0o700)
+    socket_path = control / "runtime.sock"
+    log_path = temporary / "runtime.log"
+    with log_path.open("w") as log:
+        # No run subcommand, no source project cwd: exercise app game discovery.
+        environment = os.environ.copy()
+        environment["RUST_LOG"] = "info"
+        process = subprocess.Popen([binary, "--socket", socket_path],
+                                   cwd=temporary, stdout=log, stderr=log, env=environment)
+        try:
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    raise RuntimeError(f"release app exited with {process.returncode}")
+                try:
+                    entities = command(socket_path, "list_entities")["entities"]
+                    if not entities:
+                        raise AssertionError("release demo has no entities")
+                    break
+                except (OSError, KeyError, RuntimeError):
+                    time.sleep(0.1)
+            else:
+                raise TimeoutError("relocated release app did not become ready")
+            command(socket_path, "capture_frame", path="captures/release-verification.png")
+            verify_png(game / "captures" / "release-verification.png")
+            log.flush()
+            runtime_log = log_path.read_text(errors="replace")
+            if "Render pipeline compiled successfully" not in runtime_log:
+                raise AssertionError("release app did not load its packaged render pipeline")
+        except Exception:
+            log.flush()
+            print(log_path.read_text(errors="replace")[-64 * 1024:], file=sys.stderr, flush=True)
+            raise
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+    print(f"Relocated release app passed. Artifacts: {temporary}", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-build", action="store_true", help="use existing release binaries")
-    parser.add_argument("--slang", action="store_true", help="build with Slang instead of builtin WGSL")
+    parser.add_argument("--slang", action="store_true", help="require fresh Slang compilation of the custom pass")
+    parser.add_argument("--bundle", type=Path, help="verify an existing release app or Linux bundle")
     args = parser.parse_args()
+    if args.bundle:
+        verify_existing_bundle(args.bundle.resolve(strict=True))
+        return
     repo = Path(__file__).resolve().parent.parent
     if not args.no_build:
         build = ["cargo", "build", "--release", "--locked", "-p", "naive-runtime", "--bins"]
@@ -191,7 +284,17 @@ def main():
     print(f"Release smoke artifacts: {temporary}", flush=True)
     project = temporary / "project"
     shutil.copytree(repo / "scripts" / "release-smoke-fixture", project)
-    run([release / "naive", "build"], project)
+    marker = Path("assets/effects/release_marker.slang.wgsl")
+    if args.slang:
+        # A checked-in artifact must not conceal a compiler or discovery bug.
+        (project / marker).unlink()
+    # The standalone player also exposes build. Use it to guarantee the
+    # checked-in-artifact path really runs without Slang, even with --no-build
+    # after a Slang-enabled CLI was built for the other smoke mode.
+    builder = release / ("naive" if args.slang else "naive-player")
+    if not args.slang:
+        verify_player_libraries(builder)
+    run([builder, "build"], project)
     bundles = list((project / "dist").iterdir())
     if len(bundles) != 1:
         raise AssertionError("expected exactly one release bundle")
@@ -199,16 +302,13 @@ def main():
     # references to unpackaged project content.
     bundle = temporary / bundles[0].name
     shutil.move(str(bundles[0]), bundle)
-    if bundle.suffix == ".app":
-        binary = bundle / "Contents" / "MacOS" / "release-smoke"
-        game = bundle / "Contents" / "Resources" / "game"
-    else:
-        binary = bundle / "release-smoke"
-        game = bundle / "game"
-    linker = ["otool", "-L"] if sys.platform == "darwin" else ["ldd"]
-    libraries = subprocess.check_output(linker + [str(binary)], text=True)
-    if "slang" in libraries.lower():
-        raise AssertionError(f"shipped player links Slang:\n{libraries}")
+    # Remove the source fixture so no source-only content can mask omissions.
+    shutil.rmtree(project)
+    binary, game = bundle_paths(bundle)
+    artifact = game / marker
+    if not artifact.is_file() or artifact.stat().st_size == 0:
+        raise AssertionError("custom pass has no packaged WGSL artifact")
+    verify_player_libraries(binary)
     result = subprocess.run([binary, "test"], cwd=game, capture_output=True,
                             text=True, timeout=60, check=True)
     print(result.stdout, end="", flush=True)
@@ -250,7 +350,7 @@ def main():
             returned = json.loads(response["result"]["content"][0]["text"])
             assert returned["data"]["result"] == "release-ok", returned
             command(socket_path, "capture_frame", path="captures/release.png")
-            verify_png(game / "captures" / "release.png")
+            verify_custom_shader(game / "captures" / "release.png")
 
             # A failing live command may have edited the scene and must be undoable.
             command(socket_path, "runtime_control", action="pause")

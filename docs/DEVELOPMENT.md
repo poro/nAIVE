@@ -36,10 +36,36 @@ exercise already-built release binaries.
 it on its own (`cargo build --release -p naive-player`): cargo unifies features
 across packages built together, so building it in the same invocation as
 `naive-runtime`'s default features would link Slang into it. For that reason it
-is not a default workspace member. With Slang, `naive build` compiles each
-`shaders/**/*.slang` to WGSL and writes it next to the source as
-`<name>.slang.wgsl`; without Slang, the engine loads that file in place of
-compiling. Files with no entry points are imported modules and are skipped.
+is not a default workspace member. `naive build` inspects every packaged
+pipeline YAML, including the configured default pipeline outside `pipelines/`.
+Each referenced project shader is required, wherever it lives inside the
+project. With Slang, `.slang` entry points compile to `<name>.slang.wgsl`;
+without Slang, that precompiled artifact must already exist. Direct `.wgsl`
+references and artifact-only projects are also supported. Compilation errors,
+invalid artifacts, and missing entry points fail the build before replacing an
+existing bundle. Import-only modules compile as dependencies of referenced
+entry points; they are not guessed from compiler error messages.
+
+Pipelines select engine shaders explicitly with `shader: builtin:gbuffer`,
+`builtin:shadow`, `builtin:gaussian_splat`, `builtin:deferred_light`,
+`builtin:bloom`, `builtin:tonemap`, or `builtin:fxaa`. New projects and the demo
+use these declarations and can be bundled without the SDK. To migrate an older
+pipeline that intended the stock engine shaders, replace its corresponding
+`shaders/passes/<name>.slang` references with these `builtin:` references.
+Keep filesystem references for custom shaders and supply compiled artifacts
+when building without Slang. A familiar pass name no longer permits a failed
+custom shader to fall back silently to engine WGSL. Mesh shaders must use the
+engine's instanced storage-buffer layout; `builtin:gbuffer` and
+`builtin:shadow` provide that layout. Built-in fullscreen shaders select their
+binding layout independently of the pass name. Custom fullscreen passes retain
+the existing name convention: `tonemap`, `fxaa`, or `bloom` in the pass name
+selects that layout; other names select the lighting layout.
+
+The release smoke fixture ends with a custom pass outside `shaders/` and checks
+its cyan/magenta pixel markers in the relocated Slang-free player. `--slang`
+removes its checked-in artifact to prove fresh compilation. Release publishing
+also waits for tests and launches a relocated copy of the final macOS demo app,
+checking that its packaged deferred pipeline loads and renders.
 
 The Slang-free job deliberately installs no SDK. It tests built-in WGSL and
 headless simulation; it does not validate runtime Slang compilation. The web

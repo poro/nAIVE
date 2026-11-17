@@ -18,6 +18,7 @@ use super::resource::{
     LightingUniforms, PassType, PointLightUniform, ShadowUniforms, MAX_LIGHTS,
     SHADOW_UNIFORM_STRIDE,
 };
+use super::shader_source::FullscreenRole;
 use super::{CompiledPass, CompiledPipeline, RenderDebugState};
 
 // ---------------------------------------------------------------------------
@@ -228,7 +229,10 @@ pub fn execute_pipeline_to_view(
         let pass = &compiled.passes[pass_idx];
 
         // Skip passes disabled via debug toggles
-        if !debug.bloom_enabled && pass.name == "bloom_pass" {
+        if !debug.bloom_enabled
+            && pass.pass_type == PassType::Fullscreen
+            && pass.fullscreen_role() == FullscreenRole::Bloom
+        {
             // Clear bloom buffer to black so tonemap reads zero bloom
             if let Some(resource) = compiled.resources.get("bloom_buffer") {
                 let _clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -887,9 +891,7 @@ fn execute_fullscreen_pass(
     swapchain_view: &wgpu::TextureView,
     timer: Option<&GpuTimer>,
 ) {
-    let is_tonemap = pass.name.contains("tonemap");
-    let is_bloom = pass.name.contains("bloom");
-    let is_fxaa = pass.name.contains("fxaa");
+    let role = pass.fullscreen_role();
     let writes_to_swapchain = pass.color_targets.iter().any(|t| t == "swapchain");
 
     // Determine the output view
@@ -928,17 +930,17 @@ fn execute_fullscreen_pass(
 
         render_pass.set_pipeline(&pass.pipeline);
 
-        if is_fxaa {
+        if role == FullscreenRole::Fxaa {
             // FXAA: group 0 = LDR texture + sampler
             if let Some(bg) = &compiled.fxaa_bind_group {
                 render_pass.set_bind_group(0, bg, &[]);
             }
-        } else if is_tonemap {
+        } else if role == FullscreenRole::Tonemap {
             // Tonemap: group 0 = HDR texture + sampler + bloom texture
             if let Some(bg) = &compiled.tonemap_bind_group {
                 render_pass.set_bind_group(0, bg, &[]);
             }
-        } else if is_bloom {
+        } else if role == FullscreenRole::Bloom {
             // Bloom: group 0 = HDR texture + sampler
             if let Some(bg) = &compiled.bloom_bind_group {
                 render_pass.set_bind_group(0, bg, &[]);
