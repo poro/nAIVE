@@ -6,7 +6,7 @@ use crate::components::*;
 use crate::physics::{self, CharacterController, PhysicsShape, PhysicsTrimesh, PhysicsWorld};
 use crate::scene::{EntityDef, SceneFile};
 
-use super::{SceneEntityDefinition, SceneWorld};
+use super::{euler_degrees_to_quat, parse_collider_shape, SceneEntityDefinition, SceneWorld};
 
 /// Resolve backend-specific assets without exposing GPU resources to construction.
 pub trait SpawnAssetResolver {
@@ -387,7 +387,7 @@ fn attach_definition_components(world: &mut World, entity: hecs::Entity, definit
     if let Some(script) = &components.script {
         let _ = world.insert_one(
             entity,
-            crate::scripting::Script {
+            Script {
                 source: script.source.clone().into(),
                 initialized: false,
             },
@@ -462,39 +462,4 @@ fn attach_definition_components(world: &mut World, entity: hecs::Entity, definit
             },
         );
     }
-}
-
-/// Parse a shape from a collider definition.
-/// For trimesh shapes, returns a Trimesh with empty data — caller must resolve with mesh cache.
-pub fn parse_collider_shape(col_def: &crate::scene::ColliderDef) -> PhysicsShape {
-    match col_def.shape.as_str() {
-        "sphere" => PhysicsShape::Sphere {
-            radius: col_def.radius.unwrap_or(0.5),
-        },
-        "capsule" => PhysicsShape::Capsule {
-            half_height: col_def.half_height.unwrap_or(0.5),
-            radius: col_def.radius.unwrap_or(0.3),
-        },
-        "trimesh" => PhysicsShape::Trimesh {
-            vertices: Vec::new(),
-            indices: Vec::new(),
-        },
-        _ => {
-            let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-            PhysicsShape::Box {
-                half_extents: glam::Vec3::from(he),
-            }
-        }
-    }
-}
-
-/// Convert Euler degrees [pitch, yaw, roll] to a Quaternion.
-pub fn euler_degrees_to_quat(euler: [f32; 3]) -> glam::Quat {
-    let [pitch, yaw, roll] = euler;
-    glam::Quat::from_euler(
-        glam::EulerRot::YXZ,
-        yaw.to_radians(),
-        pitch.to_radians(),
-        roll.to_radians(),
-    )
 }

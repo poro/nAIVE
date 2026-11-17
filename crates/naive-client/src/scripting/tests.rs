@@ -1,4 +1,5 @@
 use super::*;
+use std::path::PathBuf;
 
 #[test]
 fn script_loads_and_reloads_stay_inside_the_project() {

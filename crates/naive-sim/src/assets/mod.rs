@@ -59,6 +59,12 @@ impl AssetCatalog {
     pub fn mesh_data(&self, h: MeshHandle) -> Option<&CpuMesh> {
         self.meshes.get(h.0)
     }
+    /// Return the original asset name registered for a loaded CPU mesh.
+    pub fn mesh_name_for_handle(&self, handle: MeshHandle) -> Option<String> {
+        self.mesh_paths
+            .iter()
+            .find_map(|(name, &candidate)| (candidate == handle).then(|| name.clone()))
+    }
     pub fn material(&mut self, path: &str) -> Result<MaterialHandle, AssetError> {
         if let Some(h) = self.material_paths.get(path) {
             return Ok(*h);
@@ -68,6 +74,12 @@ impl AssetCatalog {
         self.materials.push(data);
         self.material_paths.insert(path.into(), handle);
         Ok(handle)
+    }
+    /// Return the original asset name registered for a loaded CPU material.
+    pub fn material_name_for_handle(&self, handle: MaterialHandle) -> Option<String> {
+        self.material_paths
+            .iter()
+            .find_map(|(name, &candidate)| (candidate == handle).then(|| name.clone()))
     }
     /// Validate and retain the exact CPU splat data used by native uploads.
     pub fn validate_splat(&mut self, path: &str) -> Result<SplatHandle, AssetError> {
@@ -82,5 +94,15 @@ impl AssetCatalog {
     }
     pub fn splat_data(&self, handle: SplatHandle) -> Option<&SplatData> {
         self.splats.get(handle.0)
+    }
+}
+
+impl crate::scene_snapshot::SnapshotAssetLookup for AssetCatalog {
+    fn mesh_name(&self, handle: MeshHandle) -> Option<String> {
+        self.mesh_name_for_handle(handle)
+    }
+
+    fn material_name(&self, handle: MaterialHandle) -> Option<String> {
+        self.material_name_for_handle(handle)
     }
 }

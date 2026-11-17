@@ -19,7 +19,7 @@ mod tests;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 use mlua::prelude::*;
@@ -51,12 +51,7 @@ pub type SharedEventBus = Rc<RefCell<EventBus>>;
 pub type SharedAudioSystem = Rc<RefCell<AudioSystem>>;
 pub type SharedParticleSystem = Rc<RefCell<crate::particles::ParticleSystem>>;
 
-/// Script component attached to entities.
-#[derive(Debug, Clone)]
-pub struct Script {
-    pub source: PathBuf,
-    pub initialized: bool,
-}
+pub use naive_sim::components::Script;
 
 pub use naive_sim::presentation::CameraShakeState;
 

@@ -19,19 +19,23 @@ top. That gives:
 action state, with nAIVE's own `Key` and `MouseButton`), `project_path`
 (path confinement), validated CPU `assets`, `particles`, animation playback
 helpers and `presentation` (camera matrices, viewport, UI intents and shake).
+It also owns `world` (ECS scene state and retained authoring metadata), the
+plain `Script` component, and `scene_snapshot` (scene document generation).
+Snapshots use read-only asset-name lookups implemented by the CPU asset
+catalog and the native cache adapter.
 `naive-client` re-exports the original three modules, so
 `crate::physics::…`, `crate::input::…` and `crate::project_path::…` keep
-working there. The engine turns winit events into `input::InputEvent`s in
-`engine/winit_input.rs`.
+working there. Client world and scripting paths re-export the shared state
+and component types, preserving ECS type identity. The engine turns winit
+events into `input::InputEvent`s in `engine/winit_input.rs`.
 
 What blocks moving the rest (found by following each module's imports):
 
 | Module | Why it is GPU-bound today |
 |---|---|
-| `world` (`SceneWorld`, spawning) | Native and headless paths now resolve assets through `SpawnAssetResolver` and use one CPU constructor. Native GPU cache access lives in `world/native_assets.rs`; world state and script component types still live in `naive-client`. |
+| Native spawning and reconciliation | Both paths resolve assets through `SpawnAssetResolver` and use one CPU constructor. Native GPU cache access lives in `world/native_assets.rs`; construction, reconciliation and deferred queues still live in `naive-client`. Scene state and authoring metadata live in `naive-sim`. |
 | `scripting` and `scripting/*` | Presentation APIs use CPU contracts, but audio and runtime mesh/texture operations still refer to native adapters. |
 | `sim`, `swarm_api`, `test_runner` | Through `world` and `scripting`. |
-| `scene_snapshot` | Looks up mesh and material paths in the GPU caches. |
 | `swarm` | The CPU reference (`swarm/cpu.rs`, `swarm/flow.rs`) is GPU-free; the module also holds the GPU pipeline (`swarm/gpu.rs`). |
 
 ## Steps, one pull request each
@@ -49,9 +53,13 @@ What blocks moving the rest (found by following each module's imports):
    `world/construction.rs`, including authored entities, ordinary deferred
    spawns, projectiles and dynamic objects. Game/editor startup, scene
    replacement and structural reloads all use this boundary; script and
-   animation initialization follow construction. Move `SceneWorld` and
-   `scene_snapshot` into `naive-sim` after extracting script component types
-   and renderer-independent asset path lookups.
+   animation initialization follow construction. `SceneWorld`, retained
+   authoring definitions, unsupported-state markers and the plain `Script`
+   component now live in `naive-sim`. Snapshot generation also lives there,
+   with `SnapshotAssetLookup` supplying mesh/material paths from either the
+   CPU catalog or a native cache adapter. Existing native save/undo APIs
+   delegate to the shared generator. Construction and deferred command
+   processing remain in the client for a later extraction.
 3. **Script side effects as commands.** *Partially implemented.* UI drawing,
    camera projection/picking, shake, particle updates and animation clocks use
    common CPU implementations. Headless tests register the corresponding Lua

@@ -5,8 +5,10 @@ mod parity_tests;
 mod spawning;
 
 pub(crate) use construction::preflight_scene;
-pub use construction::{
-    euler_degrees_to_quat, parse_collider_shape, spawn_entity_with_resolver, SpawnAssetResolver,
+pub use construction::{spawn_entity_with_resolver, SpawnAssetResolver};
+pub use naive_sim::world::{
+    euler_degrees_to_quat, parse_collider_shape, SceneEntityDefinition, SceneWorld,
+    UnsavedRuntimeState,
 };
 pub(crate) use spawning::preflight_scene_native;
 pub use spawning::{
@@ -19,8 +21,6 @@ pub use spawning::{spawn_all_entities_headless, spawn_entity_headless};
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-
-use hecs::World;
 
 use crate::components::*;
 use crate::material::MaterialCache;
@@ -126,17 +126,6 @@ impl SpawnCommand {
     }
 }
 
-/// Authoring information that cannot be recovered from opaque GPU/physics
-/// handles. Keeping it on the ECS entity gives it the same lifetime as the
-/// entity, including scene clears and structural reloads.
-#[derive(Clone)]
-pub struct SceneEntityDefinition(pub EntityDef);
-
-/// Runtime edits without a scene-file representation must not disappear when
-/// the editor saves the scene. The operation that creates such state records
-/// its reason here, and the snapshot reports it to the caller.
-pub struct UnsavedRuntimeState(pub String);
-
 /// Collider specification for runtime-spawned entities.
 pub struct SpawnColliderSpec {
     pub shape: String,
@@ -201,31 +190,6 @@ pub fn destroy_runtime_entity(scene_world: &mut SceneWorld, id: &str) -> bool {
         true
     } else {
         false
-    }
-}
-
-/// Central scene state: the ECS world plus entity name registry.
-pub struct SceneWorld {
-    pub world: World,
-    /// Maps YAML entity IDs to hecs Entity handles.
-    pub entity_registry: HashMap<String, hecs::Entity>,
-    /// The currently loaded scene file (for hot-reload diffing).
-    pub current_scene: Option<SceneFile>,
-}
-
-impl SceneWorld {
-    pub fn new() -> Self {
-        Self {
-            world: World::new(),
-            entity_registry: HashMap::new(),
-            current_scene: None,
-        }
-    }
-}
-
-impl Default for SceneWorld {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -464,7 +428,7 @@ fn definition_changed<T: serde::Serialize>(old: &T, new: &T) -> bool {
 /// Returns `true` if the entity needs a full destroy+respawn (structural change).
 #[allow(clippy::too_many_arguments)]
 fn patch_entity(
-    world: &mut World,
+    world: &mut hecs::World,
     entity: hecs::Entity,
     old_def: &EntityDef,
     new_def: &EntityDef,

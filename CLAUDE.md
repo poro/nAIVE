@@ -17,7 +17,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | Crate | Purpose |
 |-------|---------|
 | `naive-core` | Scene schema, shared types, typed command requests/responses and MCP tool schemas |
-| `naive-sim` | CPU physics, input, project paths, validated asset decoding, particles, animation playback helpers and presentation contracts (camera/viewport/UI intents). Must never depend on wgpu/winit/kira; CI checks. Native world/script adapters remain in `naive-client`. Plan: `docs/sim-split-plan.md` |
+| `naive-sim` | Scene state and authoring snapshots, CPU physics, input, project paths, validated asset decoding, particles, animation playback helpers and presentation contracts (camera/viewport/UI intents). Must never depend on wgpu/winit/kira; CI checks. Native spawning and script runtime adapters remain in `naive-client`. Plan: `docs/sim-split-plan.md` |
 | `naive-client` | Engine loop, renderer, scripting, world management |
 | `naive-runtime` | CLI binary (`naive`, `naive-runtime`, `naive_mcp`) |
 | `naive-player` | `naive` built without Slang; `naive build` ships it in game bundles. Build it alone (`cargo build -p naive-player`) so feature unification cannot link Slang into it |
@@ -34,11 +34,14 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/engine/commands.rs` | Editor/MCP dispatch, entity creation, persistence, Lua evaluation, frame capture and benchmarking |
 | `crates/naive-client/src/sim.rs` | GPU-free frame steps shared by the engine and the headless test runner (character controller, fixed physics steps, collision/event dispatch, collision damage, projectiles, health, entity destruction, script updates). Collect what a script callback needs first, release every borrow, then call the script. |
 | `crates/naive-sim/src/physics.rs` | `PhysicsWorld` — Rapier3D wrapper (bodies, colliders, CCD, impulse/force) |
-| `crates/naive-client/src/world.rs` | `SceneWorld` (ECS + registry), `EntityCommandQueue`, entity spawning, pooling |
+| `crates/naive-sim/src/world.rs` | Canonical `SceneWorld` (ECS + registry), retained authoring definitions, unsupported-state markers and pure scene conversion helpers |
+| `crates/naive-sim/src/components.rs` | Core component re-exports and the shared plain `Script` component; client import paths preserve type identity |
+| `crates/naive-client/src/world.rs` | Shared state re-exports, `EntityCommandQueue`, entity spawning, reconciliation and pooling |
 | `crates/naive-client/src/world/construction.rs` | Shared asset resolver/preflight and the sole CPU entity constructor, including physics; no device or GPU cache inputs |
 | `crates/naive-client/src/world/native_assets.rs` | Native GPU cache adapter for the shared asset resolver |
 | `crates/naive-client/src/world/spawning.rs` | Native/headless compatibility wrappers and shared projectile/dynamic recipes and finishers |
-| `crates/naive-client/src/scene_snapshot.rs` | Scene-authoring snapshots from retained entity definitions and supported live ECS values; rejects unrepresentable runtime edits |
+| `crates/naive-sim/src/scene_snapshot.rs` | Scene-authoring snapshots from retained definitions and live ECS values through read-only asset-name lookups; rejects unrepresentable runtime edits |
+| `crates/naive-client/src/scene_snapshot.rs` | Native cache lookup adapter and compatible snapshot entry point for save, undo and editor commands |
 | `crates/naive-client/src/scripting.rs` | Sandboxed Lua runtime, CPU/memory limits, shared API handles, script loading, hooks and hot reload |
 | `crates/naive-client/src/scripting/` | Lua API registration split by domain (`base`, `input`, `physics`, `entity`, `events`, `audio`, `lifecycle`, `mesh`, `camera`, `particles`, `ui`, `animation`); regression tests in `tests.rs` |
 | `crates/naive-client/src/renderer.rs` | wgpu render pipeline, instance buffers, particles |
