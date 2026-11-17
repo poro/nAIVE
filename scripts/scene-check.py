@@ -6,6 +6,9 @@ with mesh.create), that its frame renders, and that a paused scene captures
 the same pixels twice. Run under a display (xvfb-run on Linux CI).
 
 usage: scripts/scene-check.py [--binary PATH]   (default: target/release/naive)
+
+The editor camera follows raw mouse motion even while paused, so on a desktop
+keep the mouse still while this runs; CI's virtual display has no mouse.
 """
 
 import argparse
@@ -83,10 +86,13 @@ def check_scene(binary, project, scene, check, temporary):
             assert "Pipeline compilation failed" not in text, "pipeline failed"
             assert "Entity spawn failed" not in text, "an entity failed to spawn"
             command(socket_path, "runtime_control", action="pause")
-            command(socket_path, "set_camera", position=[0.0, 6.0, 14.0], look_at=[0.0, 1.0, 0.0])
             first, second = (f"captures/scene-check-{stem}-{n}.png" for n in (1, 2))
-            command(socket_path, "capture_frame", path=first)
-            command(socket_path, "capture_frame", path=second)
+            for path in (first, second):
+                # The editor camera still follows the mouse while paused, so
+                # place it again right before each capture.
+                command(socket_path, "set_camera", position=[0.0, 6.0, 14.0],
+                        look_at=[0.0, 1.0, 0.0])
+                command(socket_path, "capture_frame", path=path)
             smoke.verify_png(project / first)
             assert (project / first).read_bytes() == (project / second).read_bytes(), \
                 "a paused scene captured different pixels twice"
