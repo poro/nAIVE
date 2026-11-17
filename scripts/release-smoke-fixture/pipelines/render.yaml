@@ -1,0 +1,38 @@
+version: 1
+settings:
+  vsync: true
+  hdr: true
+resources:
+  - {name: gbuffer_albedo, type: texture_2d, format: rgba8}
+  - {name: gbuffer_normal, type: texture_2d, format: rgba16f}
+  - {name: gbuffer_depth, type: texture_2d, format: depth32f}
+  - {name: gbuffer_emission, type: texture_2d, format: rgba16f}
+  - {name: hdr_buffer, type: texture_2d, format: rgba16f}
+  - {name: bloom_buffer, type: texture_2d, format: rgba16f, size: viewport/2}
+  - {name: ldr_buffer, type: texture_2d, format: rgba8}
+passes:
+  - name: geometry_pass
+    type: rasterize
+    shader: builtin:gbuffer
+    inputs: {scene_meshes: auto, scene_materials: auto}
+    outputs: {color: gbuffer_albedo, normal: gbuffer_normal, emission: gbuffer_emission, depth: gbuffer_depth}
+  - name: resolve_scene
+    type: fullscreen
+    shader: builtin:deferred_light
+    inputs: {albedo: gbuffer_albedo, normal: gbuffer_normal, depth: gbuffer_depth, emission: gbuffer_emission}
+    outputs: {color: hdr_buffer}
+  - name: extract_glow
+    type: fullscreen
+    shader: builtin:bloom
+    inputs: {hdr: hdr_buffer}
+    outputs: {color: bloom_buffer}
+  - name: display_transform
+    type: fullscreen
+    shader: builtin:tonemap
+    inputs: {hdr: hdr_buffer, bloom: bloom_buffer}
+    outputs: {color: ldr_buffer}
+  - name: fxaa_release_marker
+    type: fullscreen
+    shader: assets/effects/release_marker.slang
+    inputs: {ldr: ldr_buffer}
+    outputs: {color: swapchain}

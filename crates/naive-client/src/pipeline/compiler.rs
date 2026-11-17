@@ -12,6 +12,7 @@ use super::resource::{
     allocate_resources, GpuResource, LightingUniforms, PassType, ShadowUniforms,
     SHADOW_UNIFORM_STRIDE,
 };
+use super::shader_source::FullscreenRole;
 use super::{CompiledPass, CompiledPipeline};
 
 // ---------------------------------------------------------------------------
@@ -230,10 +231,10 @@ pub fn compile_pipeline(
         });
         color_targets = output_pairs.iter().map(|(_, v)| v.to_string()).collect();
 
-        // Compile the shader (try SLANG first, then fallback)
-        let shader_path = crate::project_path::resolve(project_root, &pass_def.shader)
-            .map_err(PipelineError::ShaderError)?;
-        let wgsl_source = compile_pass_shader(&shader_path, &pass_def.name, pass_type)?;
+        let has_splat_resources =
+            resources.contains_key("splat_color") && resources.contains_key("splat_depth");
+        let (shader_path, wgsl_source) =
+            super::shader_source::load_pass_shader(project_root, pass_def, has_splat_resources)?;
 
         // Create the render pipeline for this pass
         let pipeline = match pass_type {
@@ -249,7 +250,8 @@ pub fn compile_pipeline(
                 Some(&skin_bind_group_layout),
             ),
             PassType::Fullscreen => {
-                if pass_def.name.contains("tonemap") {
+                let role = super::shader_source::fullscreen_role(&pass_def.shader, &pass_def.name);
+                if role == FullscreenRole::Tonemap {
                     // Tonemap pass: outputs to ldr_buffer (rgba8) if it exists, else swapchain
                     let tonemap_output_format = resources
                         .get("ldr_buffer")
@@ -266,14 +268,14 @@ pub fn compile_pipeline(
                     tonemap_bind_group_layout = Some(layout);
                     tonemap_bind_group = Some(bg);
                     pipeline
-                } else if pass_def.name.contains("fxaa") {
+                } else if role == FullscreenRole::Fxaa {
                     // FXAA pass: reads LDR buffer, writes to swapchain
                     let (layout, bg, pipeline) =
                         create_fxaa_pipeline(device, &wgsl_source, &resources, surface_format);
                     fxaa_bind_group_layout = Some(layout);
                     fxaa_bind_group = Some(bg);
                     pipeline
-                } else if pass_def.name.contains("bloom") {
+                } else if role == FullscreenRole::Bloom {
                     // Bloom pass: reads HDR buffer, outputs to bloom_buffer
                     let (layout, bg, pipeline) = create_bloom_pipeline(
                         device,
@@ -287,21 +289,11 @@ pub fn compile_pipeline(
                     pipeline
                 } else {
                     // Lighting pass: inputs from G-buffer
-                    let has_splat_resources = resources.contains_key("splat_color")
-                        && resources.contains_key("splat_depth");
-
-                    // Use splat-compositing shader if splat resources exist
-                    let lighting_wgsl = if has_splat_resources {
-                        crate::shader::get_deferred_light_with_splats_wgsl()
-                    } else {
-                        wgsl_source.clone()
-                    };
-
                     if has_splat_resources {
                         let (gb_layout, gb_bg, sc_layout, sc_bg, pipeline) =
                             create_lighting_pipeline_with_splats(
                                 device,
-                                &lighting_wgsl,
+                                &wgsl_source,
                                 &color_targets,
                                 &resources,
                                 &camera_state.bind_group_layout,
@@ -449,58 +441,6 @@ pub fn compile_pipeline(
         skin_bind_group_layout: Some(skin_bind_group_layout),
         skin_bind_group: Some(skin_bind_group),
     })
-}
-
-/// Compile a pass shader: try SLANG, fallback to WGSL.
-///
-/// Passes that draw meshes (rasterize and shadow) always use the engine's own
-/// shaders, whatever the pipeline file names: they read each entity's data
-/// from a storage buffer by instance index, which the executor's instanced
-/// draws depend on.
-fn compile_pass_shader(
-    shader_path: &Path,
-    pass_name: &str,
-    pass_type: PassType,
-) -> Result<String, PipelineError> {
-    match pass_type {
-        PassType::Rasterize => return Ok(crate::shader::get_gbuffer_wgsl()),
-        PassType::Shadow => return Ok(crate::shader::get_shadow_depth_wgsl()),
-        _ => {}
-    }
-
-    if shader_path.exists() {
-        match crate::shader::compile_slang_to_wgsl_public(shader_path) {
-            Ok(wgsl) => {
-                tracing::info!("Shader for pass '{}': {:?}", pass_name, shader_path);
-                return Ok(wgsl);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "SLANG compilation failed for pass '{}': {}, using WGSL fallback",
-                    pass_name,
-                    e
-                );
-            }
-        }
-    }
-
-    // Use fallback WGSL
-    let wgsl = match pass_name {
-        name if name.contains("splat") && !name.contains("light") => {
-            crate::shader::get_splat_render_wgsl()
-        }
-        name if name.contains("light") => crate::shader::get_deferred_light_wgsl(),
-        name if name.contains("bloom") => crate::shader::get_bloom_wgsl(),
-        name if name.contains("tonemap") => crate::shader::get_tonemap_wgsl(),
-        name if name.contains("fxaa") => crate::shader::get_fxaa_wgsl(),
-        _ => {
-            return Err(PipelineError::ShaderError(format!(
-                "No fallback WGSL for pass '{}'",
-                pass_name
-            )));
-        }
-    };
-    Ok(wgsl)
 }
 
 /// Create a rasterize (geometry) pipeline with MRT outputs.
