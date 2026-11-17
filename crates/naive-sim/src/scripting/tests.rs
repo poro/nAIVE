@@ -305,6 +305,7 @@ fn tight_limits() -> ScriptLimits {
     ScriptLimits {
         instructions_per_call: 200_000,
         memory_bytes: 16 * 1024 * 1024,
+        ..ScriptLimits::default()
     }
 }
 
@@ -907,4 +908,55 @@ fn backtracking_patterns_hit_the_cpu_limit() {
         "{reports:?}"
     );
     assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}
+
+#[test]
+fn work_the_instruction_count_cannot_see_hits_the_time_limit() {
+    let mut runtime = ScriptRuntime::with_limits(ScriptLimits {
+        wall_time_per_call: std::time::Duration::from_millis(200),
+        ..ScriptLimits::default()
+    });
+    let entity = hecs::World::new().reserve_entity();
+    // `next` on an emptied table scans its free slots: little VM work per call.
+    load(
+        &mut runtime,
+        entity,
+        "sparse_next",
+        r#"
+        local t = {}
+        for i = 1, 200000 do t[i] = i end
+        for i = 1, 200000 do t[i] = nil end
+        function update()
+            while true do next(t) end
+        end
+    "#,
+    )
+    .unwrap();
+    runtime.set_entity_string_id(entity, "scanner").unwrap();
+    let started = std::time::Instant::now();
+    runtime.call_update(entity, 0.016);
+    let reports = runtime.take_limit_reports();
+    assert!(
+        reports.len() == 1 && reports[0].contains("CPU"),
+        "{reports:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn a_call_over_its_limit_does_not_block_engine_lua_afterwards() {
+    let mut runtime = ScriptRuntime::with_limits(tight_limits());
+    let entity = hecs::World::new().reserve_entity();
+    load(
+        &mut runtime,
+        entity,
+        "then_host",
+        "function update() while true do end end",
+    )
+    .unwrap();
+    runtime.call_update(entity, 0.016);
+    assert_eq!(runtime.take_limit_reports().len(), 1);
+    // Lua the engine runs outside a call still has its own budget.
+    let value: i64 = runtime.lua.load("return 40 + 2").eval().unwrap();
+    assert_eq!(value, 42);
 }

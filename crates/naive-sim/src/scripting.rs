@@ -67,6 +67,10 @@ pub struct ScriptLimits {
     pub instructions_per_call: u64,
     /// Memory the Lua state may hold, in bytes.
     pub memory_bytes: usize,
+    /// Wall-clock time one call may take. A backstop for work the instruction
+    /// count cannot see (see `crate::sandbox`); checked whenever the budget
+    /// is charged, so a stop can come up to one hook interval late.
+    pub wall_time_per_call: std::time::Duration,
 }
 
 impl Default for ScriptLimits {
@@ -74,6 +78,7 @@ impl Default for ScriptLimits {
         Self {
             instructions_per_call: 50_000_000,
             memory_bytes: 256 * 1024 * 1024,
+            wall_time_per_call: std::time::Duration::from_secs(4),
         }
     }
 }
@@ -98,6 +103,14 @@ struct CallBudget {
     /// triggers, its own setup code) since the last call began. They get the
     /// same limit, so no path into Lua is unlimited.
     host_used: Cell<u64>,
+    /// Set once code outside a call has gone over the limit. Kept apart from
+    /// `exhausted`, which callers read after a call returns.
+    host_exhausted: Cell<bool>,
+    wall_time: std::time::Duration,
+    /// When the outermost call in progress began.
+    started: Cell<std::time::Instant>,
+    /// The call in progress ran out of wall-clock time.
+    timed_out: Cell<bool>,
 }
 
 impl CallBudget {
@@ -105,27 +118,38 @@ impl CallBudget {
     /// work from the sandbox (`crate::sandbox`).
     fn charge(self: &Rc<Self>, lua: &Lua, units: u64) -> LuaResult<()> {
         let in_call = self.depth.get() > 0;
-        let counter = if in_call { &self.used } else { &self.host_used };
-        if !self.exhausted.get() {
+        let (counter, stopped) = if in_call {
+            (&self.used, &self.exhausted)
+        } else {
+            (&self.host_used, &self.host_exhausted)
+        };
+        if !stopped.get() {
             let used = counter.get().saturating_add(units);
             counter.set(used);
-            if used <= self.limit {
+            let late = in_call && self.started.get().elapsed() > self.wall_time;
+            if used <= self.limit && !late {
                 return Ok(());
             }
-            self.exhausted.set(true);
+            stopped.set(true);
+            self.timed_out.set(late && used <= self.limit);
             // Check before every instruction from here on. With a wider
             // interval, a script that catches the error with `pcall`
             // inside a loop would keep running between checks.
             install_cpu_hook(lua, self.clone(), 1)?;
         }
-        Err(LuaError::RuntimeError(if in_call {
+        Err(LuaError::RuntimeError(if !in_call {
             format!(
-                "script exceeded its CPU limit of {} instructions in one call",
+                "Lua code run outside a script call exceeded the CPU limit of {} instructions",
                 self.limit
+            )
+        } else if self.timed_out.get() {
+            format!(
+                "script exceeded its CPU limit of {:.1} s in one call",
+                self.wall_time.as_secs_f64()
             )
         } else {
             format!(
-                "Lua code run outside a script call exceeded the CPU limit of {} instructions",
+                "script exceeded its CPU limit of {} instructions in one call",
                 self.limit
             )
         }))
@@ -232,6 +256,10 @@ impl ScriptRuntime {
             exhausted: Cell::new(false),
             depth: Cell::new(0),
             host_used: Cell::new(0),
+            host_exhausted: Cell::new(false),
+            wall_time: limits.wall_time_per_call,
+            started: Cell::new(std::time::Instant::now()),
+            timed_out: Cell::new(false),
         });
         let charge: crate::sandbox::Charge = {
             let budget = budget.clone();
@@ -281,9 +309,9 @@ impl ScriptRuntime {
 
         let budget = &self.budget;
         if budget.depth.get() == 0 {
-            if budget.exhausted.get() {
-                // Code outside a call hit the limit; go back to the normal
-                // interval for this call.
+            if budget.exhausted.get() || budget.host_exhausted.get() {
+                // Something hit the limit since the last call; go back to the
+                // normal interval for this call.
                 if let Err(e) = install_cpu_hook(&self.lua, budget.clone(), HOOK_INTERVAL) {
                     tracing::warn!("Could not restore the Lua CPU hook interval: {}", e);
                 }
@@ -291,6 +319,9 @@ impl ScriptRuntime {
             budget.used.set(0);
             budget.host_used.set(0);
             budget.exhausted.set(false);
+            budget.host_exhausted.set(false);
+            budget.timed_out.set(false);
+            budget.started.set(std::time::Instant::now());
         }
         budget.depth.set(budget.depth.get() + 1);
         let result = {

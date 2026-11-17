@@ -6,16 +6,18 @@ use mlua::prelude::*;
 
 use super::{create_lua, Charge, SandboxOptions};
 
-/// A sandbox whose charges count against `limit`, without an instruction
-/// hook, so only library work is measured.
+/// A sandbox whose library charges and VM instructions count against
+/// `limit`, as in the game and test VMs. `used` reports library charges only.
 fn sandbox(limit: u64) -> (Lua, Rc<Cell<u64>>) {
     let used = Rc::new(Cell::new(0u64));
+    let instructions = Rc::new(Cell::new(0u64));
     let charge: Charge = {
         let used = used.clone();
+        let instructions = instructions.clone();
         Rc::new(move |_lua, units| {
             let total = used.get().saturating_add(units);
             used.set(total);
-            if total > limit {
+            if total.saturating_add(instructions.get()) > limit {
                 Err(LuaError::runtime("budget exceeded"))
             } else {
                 Ok(())
@@ -26,7 +28,21 @@ fn sandbox(limit: u64) -> (Lua, Rc<Cell<u64>>) {
         memory_bytes: 64 * 1024 * 1024,
         allow_load: true,
     };
-    (create_lua(options, charge).unwrap(), used)
+    let lua = create_lua(options, charge).unwrap();
+    let library = used.clone();
+    lua.set_hook(
+        mlua::HookTriggers::new().every_nth_instruction(1000),
+        move |_lua, _debug| {
+            instructions.set(instructions.get() + 1000);
+            if instructions.get().saturating_add(library.get()) > limit {
+                Err(LuaError::runtime("budget exceeded"))
+            } else {
+                Ok(mlua::VmState::Continue)
+            }
+        },
+    )
+    .unwrap();
+    (lua, used)
 }
 
 /// Evaluates expressions and describes their results or error, identically
@@ -163,6 +179,9 @@ fn patterns_match_stock_lua_on_known_cases() {
         ("abc", "(a)%1"),
         ("aa", "(a)%1"),
         ("abc", "()%1"),
+        ("a\0b", "%z"),
+        ("a\0b", "%Z+"),
+        ("a\0b", "[%z]"),
     ];
     let mut cases = Vec::new();
     for (subject, pattern) in pairs {
@@ -181,6 +200,11 @@ fn patterns_match_stock_lua_on_known_cases() {
             "string.match('abc', {})",
             "string.gsub('abc', 'b')",
             "string.gsub('abc', 'b', true)",
+            "string.gsub('a', 'a', true, 'x')",
+            "select('#', table.unpack({}, 1, 600000))",
+            "load('return 1', 'chunk', 'b')",
+            "tonumber('0x10'), tonumber('10', 2), tonumber(' 12 '), tonumber('z', 36)",
+            "pcall(tonumber, '10', 99)",
             "string.gsub('abc', 'b', '%2')",
             "string.gsub('abc', 'b', '%')",
             "string.gsub('abc', 'b', '%x')",
@@ -277,6 +301,12 @@ fn table_functions_on_proxies_match_stock_lua() {
     assert_same(&[
         "(function() local t = setmetatable({}, {__len = function() return 3 end}) \
          return pcall(function() table.insert(t, 9, 'x') end) end)()"
+            .to_string(),
+        "(function() local t = setmetatable({'a', 'b'}, {__len = function() return -5 end}) \
+         return table.remove(t, 1), t[1], t[2] end)()"
+            .to_string(),
+        "(function() local t = setmetatable({'a', 'b'}, {__len = function() return 2 end}) \
+         return table.remove(t, 3), table.remove(t, 2), t[1], t[2] end)()"
             .to_string(),
     ]);
 }
@@ -385,4 +415,56 @@ fn finalizers_bytecode_and_dump_are_unavailable() {
     assert!(message.contains("binary chunk"), "{message}");
     let dump: LuaValue = lua.load("return string.dump").eval().unwrap();
     assert!(dump.is_nil());
+}
+
+/// Paths the review of the first version found uncharged.
+#[test]
+fn review_escapes_are_charged() {
+    for code in [
+        // Empty strings still loop once per repetition.
+        "string.rep('', 1e9)",
+        // A __len that grows between reads cannot buy an uncharged shift.
+        "local n = 0 local t = setmetatable({}, {__len = function() n = n + 1 \
+         return n == 1 and 1 or 1 << 40 end}) table.remove(t, 1) table.remove(t, 1)",
+        // A long [...] class costs its length on every test.
+        "string.find(string.rep('b', 20000), '[' .. string.rep('a', 100000) .. 'b]*$')",
+        // A reader's pieces are charged as they are compiled.
+        // (load reports a reader's error as nil plus the error.)
+        "local left = 8 local f, err = load(function() left = left - 1 \
+         if left > 0 then return '--' .. string.rep('x', 20000000) .. '\\n' end end) \
+         if not f then error(err, 0) end",
+        // Mode switches collect the whole heap.
+        "local keep = string.rep('x', 20000000) for i = 1, 500 do \
+         collectgarbage('generational') collectgarbage('incremental') end",
+    ] {
+        let (lua, _) = sandbox(20_000_000);
+        let started = Instant::now();
+        let Err(error) = lua.load(code).exec() else {
+            panic!("ran without exceeding the budget: {code}");
+        };
+        assert!(
+            error.to_string().contains("budget exceeded"),
+            "{code}: {error}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5), "{code}");
+    }
+}
+
+#[test]
+fn sorting_through_a_hidden_metatable_reads_the_length_once() {
+    let (lua, used) = sandbox(u64::MAX);
+    let sorted: String = lua
+        .load(
+            "local backing = {5, 3, 4, 1, 2}
+             local reads = 0
+             local t = setmetatable({}, {__metatable = {}, __index = backing,
+                 __newindex = backing, __len = function() reads = reads + 1 return 5 end})
+             table.sort(t)
+             assert(reads == 1, reads)
+             return table.concat(backing, ',')",
+        )
+        .eval()
+        .unwrap();
+    assert_eq!(sorted, "1,2,3,4,5");
+    let _ = used;
 }

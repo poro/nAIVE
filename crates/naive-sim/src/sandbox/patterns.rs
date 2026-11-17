@@ -171,17 +171,21 @@ impl<'s, 'p, 'm, 'c> MatchState<'s, 'p, 'm, 'c> {
         }
     }
 
-    fn single_match(&self, s: usize, p: usize, ep: usize) -> bool {
+    /// Testing a `[...]` class scans it, so long classes cost their length.
+    fn single_match(&mut self, s: usize, p: usize, ep: usize) -> MatchResult<bool> {
         if s >= self.src.len() {
-            return false;
+            return Ok(false);
         }
         let c = self.src[s];
-        match self.pat[p] {
+        Ok(match self.pat[p] {
             b'.' => true,
             b'%' => match_class(c, self.p(p + 1)),
-            b'[' => match_bracket_class(c, self.pat, p, ep - 1),
+            b'[' => {
+                self.meter.add(((ep - p) / 8) as u64)?;
+                match_bracket_class(c, self.pat, p, ep - 1)
+            }
             literal => literal == c,
-        }
+        })
     }
 
     fn do_match(&mut self, mut s: usize, mut p: usize) -> MatchResult<Option<usize>> {
@@ -219,6 +223,7 @@ impl<'s, 'p, 'm, 'c> MatchState<'s, 'p, 'm, 'c> {
                         return pattern_error("missing '[' after '%f' in pattern");
                     }
                     let ep = self.class_end(p)?;
+                    self.meter.add(((ep - p) / 4) as u64)?;
                     let previous = if s == 0 { 0 } else { self.src[s - 1] };
                     if !match_bracket_class(previous, self.pat, p, ep - 1)
                         && match_bracket_class(self.s(s), self.pat, p, ep - 1)
@@ -239,8 +244,10 @@ impl<'s, 'p, 'm, 'c> MatchState<'s, 'p, 'm, 'c> {
                 }
                 _ => {
                     let ep = self.class_end(p)?;
+                    // Finding the end of a `[...]` class scans it.
+                    self.meter.add(((ep - p) / 8) as u64)?;
                     let suffix = self.p(ep);
-                    if !self.single_match(s, p, ep) {
+                    if !self.single_match(s, p, ep)? {
                         if matches!(suffix, b'*' | b'?' | b'-') {
                             p = ep + 1;
                             continue;
@@ -271,7 +278,7 @@ impl<'s, 'p, 'm, 'c> MatchState<'s, 'p, 'm, 'c> {
 
     fn max_expand(&mut self, s: usize, p: usize, ep: usize) -> MatchResult<Option<usize>> {
         let mut i = 0;
-        while self.single_match(s + i, p, ep) {
+        while self.single_match(s + i, p, ep)? {
             self.meter.step()?;
             i += 1;
         }
@@ -291,7 +298,7 @@ impl<'s, 'p, 'm, 'c> MatchState<'s, 'p, 'm, 'c> {
             if let Some(end) = self.do_match(s, ep + 1)? {
                 return Ok(Some(end));
             }
-            if self.single_match(s, p, ep) {
+            if self.single_match(s, p, ep)? {
                 s += 1;
             } else {
                 return Ok(None);
@@ -427,6 +434,8 @@ fn match_class(c: u8, class: u8) -> bool {
         b'u' => c.is_ascii_uppercase(),
         b'w' => c.is_ascii_alphanumeric(),
         b'x' => c.is_ascii_hexdigit(),
+        // Deprecated but still accepted by Lua 5.4: the NUL byte.
+        b'z' => c == 0,
         _ => return class == c,
     };
     if class.is_ascii_uppercase() {

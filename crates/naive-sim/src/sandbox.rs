@@ -18,14 +18,26 @@
 //! Charges smaller than 16 units are not sent to the budget; the wrapper's
 //! own instructions, which the hook does count, cost about as much.
 //!
-//! What is *not* metered: a few operations copy data in proportion to their
-//! operands while counting as a single instruction or a single charged call —
-//! `..` on long strings, and the bytes `table.concat` assembles (it is charged
-//! per element). The memory limit caps the size of each such copy but not how
-//! many there are, so a loop that keeps copying very long strings takes
-//! longer per counted instruction than the budget assumes. Garbage collection
-//! triggered by allocation is likewise bounded by the heap the memory limit
-//! allows; explicit `collectgarbage` calls are charged by heap size.
+//! What is *not* metered: some work inside the VM and library internals that
+//! no wrapper can see in advance. Examples are `..` on long strings, the bytes
+//! `table.concat` assembles (charged per element), `next` over a table whose
+//! entries were removed (it scans the free slots), and a `utf8.codes`
+//! iterator called by hand on a long run of continuation bytes. Each such
+//! operation is bounded by the memory limit, but a loop can repeat it. In the
+//! game VM a wall-clock limit per call (`ScriptLimits::wall_time_per_call`)
+//! is the backstop. It is checked whenever the budget is charged, so a call
+//! stops at most one hook interval (10,000 instructions) of such operations
+//! after its time is up. The test VM has its own deadline per test and runs
+//! under process supervision.
+//!
+//! Errors keep stock Lua's messages and point at the script's line, with
+//! these known differences:
+//! - A wrapped C function is named by its qualified name (`'table.insert'`).
+//! - Method-call argument numbers are not shifted.
+//! - An error without a location raised inside a callback (a sort
+//!   comparator, a `__tostring`) gains the calling line.
+//! - A script error whose message is exactly `"not enough memory"` raised
+//!   inside such a callback counts as the memory limit.
 //!
 //! The sandbox also omits `io`, `os`, `package`, `debug` and `coroutine`
 //! (the hook only covers the main thread), removes `loadfile`, `dofile` and
@@ -303,6 +315,9 @@ fn find_or_match(
 fn gsub(lua: &Lua, meter: &mut Meter<'_>, args: &[LuaValue]) -> Result<Vec<LuaValue>, MatchError> {
     let subject = check_string(lua, args, 1, "gsub")?;
     let pattern = check_string(lua, args, 2, "gsub")?;
+    // Lua reads the count (argument 4) before checking the replacement.
+    let subject_len = subject.as_bytes().len() as i64;
+    let max = opt_integer(lua, args, 4, "gsub", subject_len + 1)?;
     let replacement = args.get(2).cloned().unwrap_or(LuaNil);
     let dynamic = match &replacement {
         LuaValue::String(_) | LuaValue::Integer(_) | LuaValue::Number(_) => false,
@@ -318,8 +333,6 @@ fn gsub(lua: &Lua, meter: &mut Meter<'_>, args: &[LuaValue]) -> Result<Vec<LuaVa
             ))
         }
     };
-    let subject_len = subject.as_bytes().len() as i64;
-    let max = opt_integer(lua, args, 4, "gsub", subject_len + 1)?;
     if dynamic {
         return Ok(vec![
             LuaValue::Boolean(false),
@@ -406,7 +419,7 @@ const PRELUDE: &str = r#"
 local charge, memory_limit, ERR, raw = ...
 local type, select, rawlen, rawget, getmetatable, error =
     type, select, rawlen, rawget, getmetatable, error
-local tointeger, mtype = math.tointeger, math.type
+local tointeger, mtype, ult = math.tointeger, math.type, math.ult
 
 -- Raise a pattern/argument error from the Rust half as a plain string at
 -- the script's call site, as luaL_error does. `checked` is tail-called by the
@@ -484,22 +497,47 @@ end
 do
     local collectgarbage = original('collectgarbage', collectgarbage)
     _G.collectgarbage = function(option, ...)
-        if option == nil or option == 'collect' or option == 'step' then
+        -- Collections and mode switches (which collect) visit the whole heap.
+        if option ~= 'count' and option ~= 'isrunning' then
             charge(collectgarbage('count') * 16)
         end
         return relay(pcall(collectgarbage, option, ...))
     end
 end
 
+do
+    local tonumber = original('tonumber', tonumber)
+    _G.tonumber = function(...)
+        local value = ...
+        -- Converting a long string scans all of it.
+        if type(value) == 'string' and #value > 64 then charge(scan_units(#value)) end
+        if select('#', ...) == 1 then return tonumber(value) end
+        return relay(pcall(tonumber, ...))
+    end
+end
+
 if load then
     local load = original('load', load)
     _G.load = function(chunk, ...)
-        if type(chunk) == 'string' then charge(scan_units(#chunk)) end
+        local name, mode, env = ...
+        -- Text only: a mode without 't' gets nothing.
+        if type(mode) == 'string' and not mode:find('t', 1, true) then
+            return nil, "attempt to load a text chunk (mode is '" .. mode .. "')"
+        end
+        if type(chunk) == 'string' then
+            charge(scan_units(#chunk))
+        elseif type(chunk) == 'function' then
+            -- Compiling a reader's pieces is charged as they arrive.
+            local reader = chunk
+            chunk = function()
+                local piece = reader()
+                if type(piece) == 'string' then charge(scan_units(#piece)) end
+                return piece
+            end
+        end
         if select('#', ...) >= 3 then
-            local name, _, env = ...
             return relay(pcall(load, chunk, name, 't', env))
         end
-        local name = ...
         return relay(pcall(load, chunk, name, 't'))
     end
 end
@@ -572,8 +610,9 @@ do
         local times = tointeger(n)
         if times and times > 0 then
             local total = (size(s) + size(sep)) * (times + 0.0)
-            -- Larger results fail allocation at once.
-            if total <= memory_limit then bill(copy_units(total)) end
+            -- Larger results fail allocation at once. The C loop runs `times`
+            -- iterations even for empty strings.
+            if total <= memory_limit then bill(copy_units(total) + times / 8) end
         end
         if type(s) == 'string' and times and (sep == nil or type(sep) == 'string') then
             return rep(s, times, sep)
@@ -626,16 +665,21 @@ do
         end
     end
     local pack = original('string.pack', string.pack)
+    local packsize = original('string.packsize', string.packsize)
     string.pack = function(fmt, ...)
-        bill(copy_units(size(fmt) + sized_args(...)))
+        -- Fixed formats can produce far more than their inputs ('c100000').
+        local fixed, output = pcall(packsize, fmt)
+        bill(copy_units(size(fmt) + sized_args(...) + (fixed and output or 0)))
         return relay(pcall(pack, fmt, ...))
     end
     local unpack = original('string.unpack', string.unpack)
     string.unpack = function(fmt, ...)
         bill(copy_units(size(fmt)))
+        -- Results go through relay twice on the stack; skip it for long
+        -- formats, which can return many values.
+        if size(fmt) > 10000 then return unpack(fmt, ...) end
         return relay(pcall(unpack, fmt, ...))
     end
-    local packsize = original('string.packsize', string.packsize)
     string.packsize = function(fmt)
         bill(copy_units(size(fmt)))
         return relay(pcall(packsize, fmt))
@@ -657,12 +701,15 @@ do
     end
     local unpack = original('table.unpack', table.unpack)
     table.unpack = function(t, i, j)
-        if j == nil and type(t) == 'table' then j = #t end
+        if j == nil and (type(t) == 'table' or type(t) == 'string') then j = #t end
         local first, last = tointeger(i or 1), tointeger(j)
         -- Over a million results fail the stack check before any work.
         if first and last and last >= first and (last + 0.0) - first < 1e7 then
             bill((last + 0.0) - first + 1)
         end
+        -- Valid arguments cannot raise an argument error; returning directly
+        -- keeps a single copy of a large result list on the stack.
+        if type(t) == 'table' and first and last then return unpack(t, first, last) end
         return relay(pcall(unpack, t, i, j))
     end
     local move = original('table.move', table.move)
@@ -696,8 +743,8 @@ do
     table.sort = function(t, comp)
         if type(t) ~= 'table' then return relay(pcall(sort, t, comp)) end
         local mt = getmetatable(t)
-        -- A protected metatable (__metatable) hides whether __len exists.
-        if mt ~= nil and (type(mt) ~= 'table' or rawget(mt, '__len') ~= nil) then
+        -- Any metatable may carry a __len (a __metatable field can hide it).
+        if mt ~= nil then
             -- Sort a plain copy: C would read the length again itself.
             local n = #t
             local copy = {}
@@ -708,9 +755,7 @@ do
             for k = 1, n do t[k] = copy[k] end
             return
         end
-        local n = rawlen(t)
-        if mt ~= nil then n = #t end
-        bill(sort_cost(n, t))
+        bill(sort_cost(rawlen(t), t))
         return relay(pcall(sort, t, comp))
     end
 
@@ -729,10 +774,13 @@ do
             if p and p >= 1 and p <= e then bill(e - p + 1) end
             return relay(pcall(insert, t, pos, value))
         end
-        -- Shift in Lua so every step is an instruction.
-        local e = #t + 1
+        -- Shift in Lua so every step is an instruction, reading the length
+        -- once (a __len may answer differently each time).
+        local n = #t
+        if mtype(n) ~= 'integer' then error("object length is not an integer", 2) end
+        local e = n + 1
         if not p then return relay(pcall(insert, t, pos, value)) end
-        if p < 1 or p > e then
+        if not ult(p - 1, e) then
             error("bad argument #2 to 'insert' (position out of bounds)", 2)
         end
         for k = e, p + 1, -1 do t[k] = t[k - 1] end
@@ -750,14 +798,19 @@ do
             if p and p >= 1 and p <= n then bill(n - p + 1) end
             return relay(pcall(remove, t, pos))
         end
-        local n = #t
-        if not p or p == n then return relay(pcall(remove, t, pos)) end
-        if p < 1 or p > n + 1 then
+        -- As C does, but reading the length once (see insert).
+        local size = #t
+        if mtype(size) ~= 'integer' then error("object length is not an integer", 2) end
+        if not p then return relay(pcall(remove, t, pos)) end
+        if p ~= size and ult(size, p - 1) then
             error("bad argument #2 to 'remove' (position out of bounds)", 2)
         end
         local value = t[p]
-        for k = p, n - 1 do t[k] = t[k + 1] end
-        if p <= n then t[n] = nil else t[p] = nil end
+        while p < size do
+            t[p] = t[p + 1]
+            p = p + 1
+        end
+        t[p] = nil
         return value
     end
 end
@@ -773,7 +826,10 @@ do
     end
     utf8.codepoint = function(s, i, j, lax)
         if type(s) == 'string' then
-            bill(scan_units(slice(#s, i, j == nil and (tointeger(i) or 1) or j)))
+            local count = slice(#s, i, j == nil and (tointeger(i) or 1) or j)
+            bill(scan_units(count))
+            -- Many results: return them directly instead of through relay.
+            if count > 10000 then return codepoint(s, i, j, lax) end
         end
         return relay(pcall(codepoint, s, i, j, lax))
     end
