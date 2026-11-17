@@ -249,7 +249,12 @@ the pull request.
 
 ## Releases
 
-1. `scripts/bump-version.sh X.Y.Z`, then a pull request with the result.
+1. `scripts/bump-version.sh X.Y.Z`, then a pull request with the result. The
+   script also sets the version on the naive.dev home page (`site/index.html`),
+   which CI checks. If headline numbers or features changed (lines of Rust,
+   demo count, new capabilities), update `site/index.html` in the same pull
+   request: `site/` publishes itself to naive.dev from master within about
+   10 minutes of merging.
 2. When it merges, `.github/workflows/release.yml` sees the new version on master,
    builds and checks it, and only then tags the merge commit `vX.Y.Z` and
    releases it (pushing such a tag by hand releases too). If a check fails,
