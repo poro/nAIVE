@@ -19,7 +19,12 @@ pub const CURRENT_PIPELINE_VERSION: u32 = 2;
 /// - a fullscreen or splat pass used its project shader when the file
 ///   existed (still required to compile, now strictly), and otherwise the
 ///   engine shader its pass name matched (`splat`, `light`, `bloom`,
-///   `tonemap`, `fxaa`).
+///   `tonemap`, `fxaa`);
+/// - with splat resources (`splat_color` and `splat_depth`), the lighting
+///   pass always used the engine's splat-compositing lighting shader.
+///
+/// References that escape the project are left for the strict load to
+/// reject, as 0.1.22 rejected them.
 pub fn migrate_pipeline(
     pipeline: &mut PipelineFile,
     project_root: &Path,
@@ -34,17 +39,24 @@ pub fn migrate_pipeline(
             )))
         }
     }
+    let has_splats = pipeline.resources.iter().any(|r| r.name == "splat_color")
+        && pipeline.resources.iter().any(|r| r.name == "splat_depth");
     let mut notes = Vec::new();
     for pass in &mut pipeline.passes {
         if pass.shader.starts_with("builtin:") {
             continue;
         }
-        let builtin = match PassType::from_name(&pass.pass_type) {
+        let Ok(path) = crate::project_path::resolve(project_root, &pass.shader) else {
+            continue;
+        };
+        let pass_type = PassType::from_name(&pass.pass_type);
+        let lighting = pass_type == Some(PassType::Fullscreen)
+            && fullscreen_role(&pass.shader, &pass.name) == FullscreenRole::Lighting;
+        let builtin = match pass_type {
             Some(PassType::Rasterize) => Some("gbuffer"),
             Some(PassType::Shadow) => Some("shadow"),
-            Some(PassType::Fullscreen | PassType::Splat)
-                if !project_shader_exists(project_root, &pass.shader) =>
-            {
+            Some(PassType::Fullscreen) if lighting && has_splats => Some("deferred_light"),
+            Some(PassType::Fullscreen | PassType::Splat) if !shader_exists(&path) => {
                 legacy_builtin_for_pass_name(&pass.name)
             }
             _ => None,
@@ -78,11 +90,10 @@ fn legacy_builtin_for_pass_name(name: &str) -> Option<&'static str> {
     }
 }
 
-/// A shader source, or the WGSL `naive build` compiled from it, inside the
-/// project. Escaping references count as missing here and fail later.
-fn project_shader_exists(project_root: &Path, reference: &str) -> bool {
-    crate::project_path::resolve(project_root, reference)
-        .is_ok_and(|path| path.exists() || crate::shader::precompiled_wgsl_path(&path).exists())
+/// A shader source, or the WGSL `naive build` compiled from it (a bundle
+/// may ship only that).
+fn shader_exists(path: &Path) -> bool {
+    path.exists() || crate::shader::precompiled_wgsl_path(path).exists()
 }
 
 /// Load a project pipeline and give a version 1 file its 0.1.22 meaning,
@@ -296,6 +307,29 @@ mod tests {
             ]
         );
         assert_eq!(notes.len(), 4, "{notes:?}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn version_1_lighting_with_splats_uses_the_engine_compositor() {
+        let root = temp_project("splats");
+        std::fs::write(
+            root.join("shaders/passes/deferred_light.slang"),
+            "// project",
+        )
+        .unwrap();
+        let mut file: PipelineFile = serde_norway::from_str(
+            "version: 1\nresources:\n  - {name: splat_color, type: texture_2d, format: rgba16f}\n  - {name: splat_depth, type: texture_2d, format: depth32f}\npasses:\n  - {name: lighting, type: fullscreen, shader: shaders/passes/deferred_light.slang}\n  - {name: escape, type: fullscreen, shader: ../outside.slang}\n",
+        )
+        .unwrap();
+        migrate_pipeline(&mut file, &root).unwrap();
+        // 0.1.22 replaced the lighting shader whenever splats were composited;
+        // an escaping reference is left for the strict load to reject.
+        assert_eq!(
+            shaders(&file),
+            ["builtin:deferred_light", "../outside.slang"]
+        );
+        assert!(load_pass_shader(&root, &file.passes[1], true).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 

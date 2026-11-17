@@ -124,6 +124,9 @@ def verify_runtime_mesh(socket_path):
             return False
 
     wait_until(wedge_collides, "a runtime mesh spawned in its creation frame did not collide as itself")
+    # Scene snapshots (undo, save) cannot represent runtime meshes; leave the
+    # scene as the later checks expect it.
+    command(socket_path, "destroy_entity", entity_id=f"release_wedge_{n}")
 
 
 def wait_for_runtime(process, socket_path, log_path, timeout=60):

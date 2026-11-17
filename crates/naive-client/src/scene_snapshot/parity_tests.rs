@@ -391,7 +391,6 @@ entities:
             material_handle,
         };
     }
-    // Native resolves a real uploaded runtime mesh. AssetCatalog cannot load
-    // runtime meshes, so its equivalent authored reference uses the fallback.
+    // Neither snapshot can represent a mesh made by mesh.create.
     pair.assert_error("Cannot save generated mesh on 'a_runtime': export it to a mesh asset first");
 }
