@@ -606,12 +606,18 @@ impl Engine {
             env.set("print", print_fn)?;
 
             // Compile first: code that does not parse cannot have changed the
-            // scene, so it must not cost an undo step.
-            let chunk = lua
-                .load(code)
-                .set_name("run_lua")
-                .set_environment(env)
-                .into_function()?;
+            // scene, so it must not cost an undo step. Like `eval`, try it as
+            // an expression first so `1 + 2` returns 3.
+            let compile = |source: &str| {
+                lua.load(source)
+                    .set_name("run_lua")
+                    .set_environment(env.clone())
+                    .into_function()
+            };
+            let chunk = match compile(&format!("return {code}")) {
+                Ok(function) => function,
+                Err(_) => compile(code)?,
+            };
             *may_have_changed = true;
             let value = script_runtime.run_limited(|| chunk.call::<mlua::Value>(()))?;
 
@@ -951,6 +957,10 @@ mod tests {
         let response = engine.handle_run_lua(&request, &mut undo.may_have_changed);
         assert_eq!(response.status, "error");
         assert!(!undo.may_have_changed);
+        // Expressions still return their value.
+        let request = serde_json::from_value(json!({"cmd": "run_lua", "code": "1 + 2"})).unwrap();
+        let response = engine.handle_run_lua(&request, &mut false);
+        assert_eq!(response.data.unwrap()["result"], "3");
         undo.commit(false, &mut engine.undo_stack);
         assert_eq!(engine.undo_stack.len(), 3);
         engine.script_runtime = None;

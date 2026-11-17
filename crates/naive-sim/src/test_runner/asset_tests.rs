@@ -271,3 +271,44 @@ fn both_sides_of_a_trigger_overlap_hear_about_it() {
         ]
     );
 }
+
+#[test]
+fn entities_inside_a_sensor_hear_it_leave_when_hot_reload_drops_it() {
+    let project = Project::new();
+    project.write(
+        "log.lua",
+        "function on_trigger_enter(other) _G.trace = (_G.trace or '') .. 'enter ' .. other .. ';' end\nfunction on_trigger_exit(other) _G.trace = (_G.trace or '') .. 'exit ' .. other .. ';' end\n",
+    );
+    project.write(
+        "scene.yaml",
+        "name: Reload\nsettings: {gravity: [0, 0, 0]}\nentities:\n  - id: portal\n    components:\n      collider: {shape: box, half_extents: [1, 1, 1], is_trigger: true}\n  - id: player\n    components:\n      rigid_body: {type: dynamic}\n      collider: {shape: sphere, radius: 0.25}\n      script: {source: log.lua}\n",
+    );
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    runner.step_frame();
+    // What a hot reload does to a removed sensor: drop its body and entity,
+    // keeping its old name for exits.
+    let portal = runner.scene_world.borrow().entity_registry["portal"];
+    let body = runner
+        .scene_world
+        .borrow()
+        .world
+        .get::<&crate::physics::RigidBody>(portal)
+        .unwrap()
+        .handle;
+    runner.physics_world.borrow_mut().remove_body(body);
+    {
+        let mut world = runner.scene_world.borrow_mut();
+        world.entity_registry.remove("portal");
+        world.world.despawn(portal).unwrap();
+    }
+    let retired = std::collections::HashMap::from([(portal, "portal".to_string())]);
+    crate::sim::dispatch_trigger_events_with_retired_ids(
+        &runner.scene_world,
+        &runner.physics_world,
+        &runner.script_runtime,
+        &retired,
+    );
+    let trace: String = runner.script_runtime.lua.globals().get("trace").unwrap();
+    assert_eq!(trace, "enter portal;exit portal;");
+}

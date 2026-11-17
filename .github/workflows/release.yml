@@ -2,9 +2,9 @@ name: Release
 
 # Bump the version in a pull request (scripts/bump-version.sh). When it merges,
 # this workflow sees the new version on master, builds and checks it, and only
-# then tags the commit vX.Y.Z and releases it. A failed check leaves no tag, so
-# re-running the workflow retries. Pushing a vX.Y.Z tag on master by hand also
-# releases.
+# then tags the commit vX.Y.Z and releases it. A failed check leaves no tag:
+# re-run the workflow if the failure was flaky; otherwise merge the fix and
+# push the vX.Y.Z tag on that master commit by hand, which also releases.
 
 on:
   push:
@@ -16,6 +16,12 @@ on:
 
 permissions:
   contents: read
+
+# One release at a time: a second push touching Cargo.toml while a release is
+# building waits instead of racing it for the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 defaults:
   run:
