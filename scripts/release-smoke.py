@@ -658,7 +658,47 @@ def main():
             stop_process(process)
     verify_editor_construction(binary, game, temporary)
     verify_editor_startup_recovery(binary, game, temporary)
+    verify_legacy_project(repo, builder, temporary)
     print(f"Release smoke passed. Artifacts: {temporary}")
+
+
+def verify_legacy_project(repo, builder, temporary):
+    """A project made by the 0.1.22 `naive init` packages, launches and renders
+    through its deferred pipeline (version 1 pipeline mapped to engine shaders)."""
+    project = temporary / "legacy"
+    shutil.copytree(repo / "scripts" / "fixtures" / "init-0.1.22", project)
+    run([builder, "build"], project)
+    bundles = list((project / "dist").iterdir())
+    if len(bundles) != 1:
+        raise AssertionError("expected exactly one bundle for the 0.1.22 project")
+    bundle = temporary / ("legacy-" + bundles[0].name)
+    shutil.move(str(bundles[0]), bundle)
+    shutil.rmtree(project)
+    binary, game = bundle_paths(bundle)
+    socket_path = temporary / "control" / "legacy.sock"
+    log_path = temporary / "legacy.log"
+    with log_path.open("w") as log:
+        process = subprocess.Popen([binary, "--socket", socket_path], cwd=temporary,
+                                   stdout=log, stderr=log)
+        try:
+            entities = wait_for_runtime(process, socket_path, log_path)
+            assert entities, "the 0.1.22 project has no entities"
+            log.flush()
+            text = log_path.read_text(errors="replace")
+            assert "is a version 1 pipeline" in text, "version 1 pipeline was not migrated"
+            assert "Render pipeline compiled successfully" in text, \
+                "the 0.1.22 project lost its deferred pipeline"
+            assert "Pipeline compilation failed" not in text
+            command(socket_path, "capture_frame", path="captures/legacy.png")
+            verify_png(game / "captures" / "legacy.png")
+            print("0.1.22 project packaged, launched and rendered its pipeline", flush=True)
+        except Exception:
+            log.flush()
+            print("0.1.22 project runtime log:", file=sys.stderr, flush=True)
+            print(log_path.read_text(errors="replace")[-32 * 1024:], file=sys.stderr, flush=True)
+            raise
+        finally:
+            stop_process(process)
 
 
 if __name__ == "__main__":

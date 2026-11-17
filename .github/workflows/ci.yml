@@ -169,6 +169,12 @@ jobs:
           xvfb-run -a python3 scripts/release-smoke.py
           xvfb-run -a python3 scripts/release-smoke.py --slang
 
+      # Uses the Slang-enabled release binary the second smoke mode built.
+      - name: Demo scenes build, render and capture repeatably (software Vulkan)
+        env:
+          WGPU_BACKEND: vulkan
+        run: xvfb-run -a python3 scripts/scene-check.py
+
   check-web:
     name: Check (WebAssembly)
     runs-on: ubuntu-latest
