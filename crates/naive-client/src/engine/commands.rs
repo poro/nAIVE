@@ -949,6 +949,40 @@ mod tests {
     }
 
     #[test]
+    fn failed_scene_replacement_preserves_undo_history_and_current_path() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "naive-scene-replacement-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("replacement.yaml"), "name: next\nentities: []\n").unwrap();
+        let mut engine = Engine::new(CliArgs {
+            command: None,
+            scene: None,
+            pipeline: None,
+            project: root.to_string_lossy().into_owned(),
+            socket: String::new(),
+            hud: false,
+            editor_mode: false,
+        });
+        let original = root.join("original.yaml");
+        engine.scene_path = Some(original.clone());
+        engine.undo_stack.push(undo_entry("keep this change"));
+        engine.entity_commands.borrow_mut().pending_scene_load = Some("replacement.yaml".into());
+        // No renderer is available, so replacement must fail without discarding
+        // the current document's history. Asset preflight failures use the same return path.
+        engine.process_pending_scene_load();
+        assert_eq!(engine.scene_path, Some(original));
+        assert_eq!(engine.undo_stack.len(), 1);
+        assert_eq!(engine.undo_stack[0].label, "keep this change");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn atomic_scene_save_replaces_complete_document_and_cleans_failed_writes() {
         let root = std::env::temp_dir().join(format!(
             "naive-atomic-scene-{}-{}",

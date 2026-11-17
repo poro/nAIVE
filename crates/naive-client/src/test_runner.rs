@@ -130,12 +130,7 @@ impl TestRunner {
         let scene_path = crate::project_path::resolve(&self.project_root, scene_rel)?;
         let scene = crate::scene::load_scene(&scene_path)
             .map_err(|e| format!("Failed to load scene: {:?}", e))?;
-        for definition in &scene.entities {
-            crate::world::prepare_headless_assets(
-                definition,
-                &mut self.asset_catalog.borrow_mut(),
-            )?;
-        }
+        crate::world::preflight_scene(&scene, &mut *self.asset_catalog.borrow_mut())?;
 
         // Use the same teardown as live destruction, without holding a world
         // borrow while callbacks run. Preserve failures before replacing the VM.
@@ -404,117 +399,23 @@ impl TestRunner {
             }
         }
         for command in projectiles {
-            use crate::scene::*;
-            let definition = EntityDef {
-                id: command.id.clone(),
-                tags: vec!["projectile".into()],
-                extends: None,
-                components: ComponentMap {
-                    transform: Some(TransformDef {
-                        position: command.position,
-                        rotation: [0.0; 3],
-                        scale: command.scale,
-                    }),
-                    mesh_renderer: Some(MeshRendererDef {
-                        mesh: command.mesh.clone(),
-                        material: command.material.clone(),
-                        cast_shadows: true,
-                        receive_shadows: true,
-                    }),
-                    rigid_body: Some(RigidBodyDef {
-                        body_type: "dynamic".into(),
-                        mass: 0.1,
-                        ccd: true,
-                    }),
-                    collider: Some(ColliderDef {
-                        shape: "sphere".into(),
-                        half_extents: None,
-                        radius: Some(0.1),
-                        half_height: None,
-                        is_trigger: false,
-                        restitution: 0.0,
-                        friction: 0.5,
-                    }),
-                    collision_damage: Some(CollisionDamageDef {
-                        damage: command.damage,
-                        destroy_on_hit: true,
-                    }),
-                    ..Default::default()
-                },
-            };
-            if let Some(entity) = self.spawn_definition(&definition) {
-                let mut world = self.scene_world.borrow_mut();
-                let _ = world.world.insert_one(
+            if let Some(entity) = self.spawn_definition(&command.entity_def()) {
+                crate::world::finish_projectile_spawn(
+                    &mut self.scene_world.borrow_mut(),
+                    &mut self.physics_world.borrow_mut(),
                     entity,
-                    crate::components::Projectile {
-                        damage: command.damage,
-                        lifetime: command.lifetime,
-                        age: 0.0,
-                        owner_id: command.owner_id,
-                    },
+                    &command,
                 );
-                if let Ok(body) = world.world.get::<&crate::physics::RigidBody>(entity) {
-                    self.physics_world.borrow_mut().set_linvel(
-                        body.handle,
-                        glam::Vec3::from(command.direction).normalize_or_zero() * command.speed,
-                        !command.gravity,
-                    );
-                };
             }
         }
         for command in dynamics {
-            use crate::scene::*;
-            let definition = EntityDef {
-                id: command.id.clone(),
-                tags: vec!["dynamic".into()],
-                extends: None,
-                components: ComponentMap {
-                    transform: Some(TransformDef {
-                        position: command.position,
-                        rotation: [0.0; 3],
-                        scale: [command.radius * 2.0; 3],
-                    }),
-                    mesh_renderer: Some(MeshRendererDef {
-                        mesh: command.mesh,
-                        material: command.material,
-                        cast_shadows: true,
-                        receive_shadows: true,
-                    }),
-                    rigid_body: Some(RigidBodyDef {
-                        body_type: "dynamic".into(),
-                        mass: command.mass,
-                        ccd: false,
-                    }),
-                    collider: Some(ColliderDef {
-                        shape: "sphere".into(),
-                        half_extents: None,
-                        radius: Some(command.radius),
-                        half_height: None,
-                        is_trigger: false,
-                        restitution: command.restitution,
-                        friction: command.friction,
-                    }),
-                    ..Default::default()
-                },
-            };
-            if let Some(entity) = self.spawn_definition(&definition) {
-                let mut world = self.scene_world.borrow_mut();
-                let _ = world.world.insert_one(
+            if let Some(entity) = self.spawn_definition(&command.entity_def()) {
+                crate::world::finish_dynamic_spawn(
+                    &mut self.scene_world.borrow_mut(),
+                    &mut self.physics_world.borrow_mut(),
                     entity,
-                    crate::components::Projectile {
-                        damage: 0.0,
-                        lifetime: command.lifetime,
-                        age: 0.0,
-                        owner_id: String::new(),
-                    },
+                    &command,
                 );
-                if let Ok(body) = world.world.get::<&crate::physics::RigidBody>(entity) {
-                    let mut physics = self.physics_world.borrow_mut();
-                    physics.set_linvel(body.handle, glam::Vec3::from(command.velocity), false);
-                    if let Some(body) = physics.rigid_body_set.get_mut(body.handle) {
-                        body.activation_mut().normalized_linear_threshold = -1.0;
-                    }
-                };
             }
         }
         for (id, scale) in scales {

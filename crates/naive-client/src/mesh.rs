@@ -239,8 +239,7 @@ pub struct MeshCache {
     path_to_handle: HashMap<PathBuf, MeshHandle>,
 }
 
-/// Vertices and triangle indices of a mesh, as the physics engine takes them.
-pub type PhysicsTrimesh = (Vec<rapier3d::math::Vector>, Vec<[u32; 3]>);
+pub use crate::physics::PhysicsTrimesh;
 
 impl MeshCache {
     pub fn new() -> Self {

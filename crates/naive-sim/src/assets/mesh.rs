@@ -27,10 +27,7 @@ pub struct CpuMesh {
 }
 
 impl CpuMesh {
-    pub fn physics_trimesh(
-        &self,
-        scale: glam::Vec3,
-    ) -> (Vec<rapier3d::math::Vector>, Vec<[u32; 3]>) {
+    pub fn physics_trimesh(&self, scale: glam::Vec3) -> crate::physics::PhysicsTrimesh {
         (
             self.vertices
                 .iter()

@@ -35,6 +35,9 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/sim.rs` | GPU-free frame steps shared by the engine and the headless test runner (character controller, fixed physics steps, collision/event dispatch, collision damage, projectiles, health, entity destruction, script updates). Collect what a script callback needs first, release every borrow, then call the script. |
 | `crates/naive-sim/src/physics.rs` | `PhysicsWorld` — Rapier3D wrapper (bodies, colliders, CCD, impulse/force) |
 | `crates/naive-client/src/world.rs` | `SceneWorld` (ECS + registry), `EntityCommandQueue`, entity spawning, pooling |
+| `crates/naive-client/src/world/construction.rs` | Shared asset resolver/preflight and the sole CPU entity constructor, including physics; no device or GPU cache inputs |
+| `crates/naive-client/src/world/native_assets.rs` | Native GPU cache adapter for the shared asset resolver |
+| `crates/naive-client/src/world/spawning.rs` | Native/headless compatibility wrappers and shared projectile/dynamic recipes and finishers |
 | `crates/naive-client/src/scene_snapshot.rs` | Scene-authoring snapshots from retained entity definitions and supported live ECS values; rejects unrepresentable runtime edits |
 | `crates/naive-client/src/scripting.rs` | Sandboxed Lua runtime, CPU/memory limits, shared API handles, script loading, hooks and hot reload |
 | `crates/naive-client/src/scripting/` | Lua API registration split by domain (`base`, `input`, `physics`, `entity`, `events`, `audio`, `lifecycle`, `mesh`, `camera`, `particles`, `ui`, `animation`); regression tests in `tests.rs` |

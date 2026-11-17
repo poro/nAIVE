@@ -22,7 +22,7 @@ use crate::font::BitmapFont;
 use crate::input::{InputState, Key};
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
-use crate::physics::{CharacterController, PhysicsWorld};
+use crate::physics::PhysicsWorld;
 use crate::pipeline::CompiledPipeline;
 use crate::renderer::{DrawUniformPool, GpuState};
 use crate::scripting::{CameraShakeState, Script, ScriptRuntime};
@@ -410,7 +410,8 @@ impl Engine {
             }
         };
 
-        // Spawn entities into ECS
+        // The shared constructor creates ECS components and physics together.
+        let mut physics_world = PhysicsWorld::new(scene.settings.gravity.into());
         let mut scene_world = SceneWorld::new();
         crate::world::spawn_all_entities(
             &mut scene_world,
@@ -421,7 +422,7 @@ impl Engine {
             &mut self.mesh_cache,
             &mut self.material_cache,
             &mut self.splat_cache,
-            None,
+            Some(&mut physics_world),
             Some(&tex_res),
             Some(&mut self.texture_cache),
         );
@@ -449,196 +450,6 @@ impl Engine {
         let bindings = crate::input::load_bindings(&self.project_root);
         self.input_state = Some(Rc::new(RefCell::new(InputState::new(bindings))));
 
-        // Phase 5: Initialize physics world
-        let gravity = if let Some(sw) = &self.scene_world {
-            let sw = sw.borrow();
-            if let Some(scene) = &sw.current_scene {
-                glam::Vec3::from(scene.settings.gravity)
-            } else {
-                glam::Vec3::new(0.0, -9.81, 0.0)
-            }
-        } else {
-            glam::Vec3::new(0.0, -9.81, 0.0)
-        };
-        let mut physics_world = PhysicsWorld::new(gravity);
-
-        // Spawn physics components for entities that have them
-        if let Some(sw) = &self.scene_world {
-            let mut sw = sw.borrow_mut();
-            if let Some(scene) = &sw.current_scene {
-                let scene_clone = scene.clone();
-                for entity_def in &scene_clone.entities {
-                    if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
-                        let pos = if let Some(t) = &entity_def.components.transform {
-                            glam::Vec3::from(t.position)
-                        } else {
-                            glam::Vec3::ZERO
-                        };
-                        let rot = if let Some(t) = &entity_def.components.transform {
-                            crate::world::euler_degrees_to_quat(t.rotation)
-                        } else {
-                            glam::Quat::IDENTITY
-                        };
-
-                        if let Some(cc_def) = &entity_def.components.character_controller {
-                            let half_height = cc_def.height / 2.0 - cc_def.radius;
-                            let (rb_handle, col_handle) = physics_world.add_character_body(
-                                entity,
-                                pos,
-                                half_height.max(0.1),
-                                cc_def.radius,
-                            );
-                            let rb_comp = crate::physics::RigidBody {
-                                handle: rb_handle,
-                                body_type: crate::physics::PhysicsBodyType::Kinematic,
-                            };
-                            let col_comp = crate::physics::Collider {
-                                handle: col_handle,
-                                shape: crate::physics::PhysicsShape::Capsule {
-                                    half_height: half_height.max(0.1),
-                                    radius: cc_def.radius,
-                                },
-                                is_trigger: false,
-                            };
-                            let cc_comp = CharacterController {
-                                move_speed: cc_def.move_speed,
-                                sprint_multiplier: cc_def.sprint_multiplier,
-                                jump_impulse: cc_def.jump_impulse,
-                                step_height: cc_def.step_height,
-                                ..Default::default()
-                            };
-                            let player = crate::components::Player {
-                                height: cc_def.height,
-                                radius: cc_def.radius,
-                                ..Default::default()
-                            };
-                            let _ = sw
-                                .world
-                                .insert(entity, (rb_comp, col_comp, cc_comp, player));
-                        } else if let Some(col_def) = &entity_def.components.collider {
-                            let mut shape = crate::world::parse_collider_shape(col_def);
-                            let is_trigger = col_def.is_trigger;
-                            let restitution = col_def.restitution;
-                            let friction = col_def.friction;
-                            let body_type = entity_def
-                                .components
-                                .rigid_body
-                                .as_ref()
-                                .map(|rb| rb.body_type.as_str())
-                                .unwrap_or("static");
-                            // Resolve trimesh: look up mesh data from cache
-                            if matches!(shape, crate::physics::PhysicsShape::Trimesh { .. }) {
-                                let scale = entity_def
-                                    .components
-                                    .transform
-                                    .as_ref()
-                                    .map(|t| glam::Vec3::from(t.scale))
-                                    .unwrap_or(glam::Vec3::ONE);
-                                if let Ok(mr) =
-                                    sw.world.get::<&crate::components::MeshRenderer>(entity)
-                                {
-                                    if let Some((verts, idxs)) =
-                                        self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale)
-                                    {
-                                        shape = crate::physics::PhysicsShape::Trimesh {
-                                            vertices: verts,
-                                            indices: idxs,
-                                        };
-                                    } else {
-                                        tracing::warn!("Trimesh collider for '{}': no mesh data, falling back to box", entity_def.id);
-                                        let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                        shape = crate::physics::PhysicsShape::Box {
-                                            half_extents: glam::Vec3::from(he),
-                                        };
-                                    }
-                                }
-                            }
-
-                            match body_type {
-                                "dynamic" => {
-                                    let mass = entity_def
-                                        .components
-                                        .rigid_body
-                                        .as_ref()
-                                        .map(|rb| rb.mass)
-                                        .unwrap_or(1.0);
-                                    let ccd = entity_def
-                                        .components
-                                        .rigid_body
-                                        .as_ref()
-                                        .map(|rb| rb.ccd)
-                                        .unwrap_or(false);
-                                    let (rb_handle, col_handle) = physics_world
-                                        .add_dynamic_body_with_sensor(
-                                            entity,
-                                            pos,
-                                            rot,
-                                            shape.clone(),
-                                            mass,
-                                            restitution,
-                                            friction,
-                                            ccd,
-                                            is_trigger,
-                                        );
-                                    let rb_comp = crate::physics::RigidBody {
-                                        handle: rb_handle,
-                                        body_type: crate::physics::PhysicsBodyType::Dynamic,
-                                    };
-                                    let col_comp = crate::physics::Collider {
-                                        handle: col_handle,
-                                        shape,
-                                        is_trigger,
-                                    };
-                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
-                                }
-                                "kinematic" => {
-                                    let (rb_handle, col_handle) = physics_world.add_kinematic_body(
-                                        entity,
-                                        pos,
-                                        rot,
-                                        shape.clone(),
-                                        is_trigger,
-                                        restitution,
-                                        friction,
-                                    );
-                                    let rb_comp = crate::physics::RigidBody {
-                                        handle: rb_handle,
-                                        body_type: crate::physics::PhysicsBodyType::Kinematic,
-                                    };
-                                    let col_comp = crate::physics::Collider {
-                                        handle: col_handle,
-                                        shape,
-                                        is_trigger,
-                                    };
-                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
-                                }
-                                _ => {
-                                    let (rb_handle, col_handle) = physics_world.add_static_body(
-                                        entity,
-                                        pos,
-                                        rot,
-                                        shape.clone(),
-                                        is_trigger,
-                                        restitution,
-                                        friction,
-                                    );
-                                    let rb_comp = crate::physics::RigidBody {
-                                        handle: rb_handle,
-                                        body_type: crate::physics::PhysicsBodyType::Static,
-                                    };
-                                    let col_comp = crate::physics::Collider {
-                                        handle: col_handle,
-                                        shape,
-                                        is_trigger,
-                                    };
-                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
         self.physics_world = Some(Rc::new(RefCell::new(physics_world)));
         self.last_frame_time = Some(std::time::Instant::now());
         tracing::info!("Physics world initialized");
@@ -759,7 +570,8 @@ impl Engine {
             (Self::default_editor_scene(), None)
         };
 
-        // Spawn entities into ECS
+        // The shared constructor creates ECS components and physics together.
+        let mut physics_world = PhysicsWorld::new(scene.settings.gravity.into());
         let mut scene_world = SceneWorld::new();
         crate::world::spawn_all_entities(
             &mut scene_world,
@@ -770,15 +582,13 @@ impl Engine {
             &mut self.mesh_cache,
             &mut self.material_cache,
             &mut self.splat_cache,
-            None,
+            Some(&mut physics_world),
             Some(&tex_res),
             Some(&mut self.texture_cache),
         );
 
         self.texture_resources = Some(tex_res);
 
-        // Store the scene for physics init
-        scene_world.current_scene = Some(scene.clone());
         self.scene_world = Some(Rc::new(RefCell::new(scene_world)));
         self.camera_state = Some(Rc::new(RefCell::new(camera_state)));
         self.draw_pool = Some(draw_pool);
@@ -786,161 +596,6 @@ impl Engine {
         self.scene_path = scene_path.clone();
         self.editor_scene_path = scene_path;
 
-        // Initialize physics world (same as normal game mode)
-        let gravity = glam::Vec3::from(scene.settings.gravity);
-        let mut physics_world = PhysicsWorld::new(gravity);
-        if let Some(sw) = &self.scene_world {
-            let mut sw = sw.borrow_mut();
-            for entity_def in &scene.entities {
-                if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
-                    let pos = entity_def
-                        .components
-                        .transform
-                        .as_ref()
-                        .map(|t| glam::Vec3::from(t.position))
-                        .unwrap_or(glam::Vec3::ZERO);
-                    let rot = entity_def
-                        .components
-                        .transform
-                        .as_ref()
-                        .map(|t| crate::world::euler_degrees_to_quat(t.rotation))
-                        .unwrap_or(glam::Quat::IDENTITY);
-
-                    if let Some(col_def) = &entity_def.components.collider {
-                        let mut shape = crate::world::parse_collider_shape(col_def);
-                        let is_trigger = col_def.is_trigger;
-                        let restitution = col_def.restitution;
-                        let friction = col_def.friction;
-                        let body_type = entity_def
-                            .components
-                            .rigid_body
-                            .as_ref()
-                            .map(|rb| rb.body_type.as_str())
-                            .unwrap_or("static");
-
-                        // Resolve trimesh: look up mesh data from cache
-                        if matches!(shape, crate::physics::PhysicsShape::Trimesh { .. }) {
-                            let scale = entity_def
-                                .components
-                                .transform
-                                .as_ref()
-                                .map(|t| glam::Vec3::from(t.scale))
-                                .unwrap_or(glam::Vec3::ONE);
-                            if let Ok(mr) = sw.world.get::<&crate::components::MeshRenderer>(entity)
-                            {
-                                if let Some((verts, idxs)) =
-                                    self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale)
-                                {
-                                    shape = crate::physics::PhysicsShape::Trimesh {
-                                        vertices: verts,
-                                        indices: idxs,
-                                    };
-                                } else {
-                                    tracing::warn!("Trimesh collider for '{}': no mesh data, falling back to box", entity_def.id);
-                                    let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                    shape = crate::physics::PhysicsShape::Box {
-                                        half_extents: glam::Vec3::from(he),
-                                    };
-                                }
-                            }
-                        }
-
-                        match body_type {
-                            "dynamic" => {
-                                let mass = entity_def
-                                    .components
-                                    .rigid_body
-                                    .as_ref()
-                                    .map(|rb| rb.mass)
-                                    .unwrap_or(1.0);
-                                let ccd = entity_def
-                                    .components
-                                    .rigid_body
-                                    .as_ref()
-                                    .map(|rb| rb.ccd)
-                                    .unwrap_or(false);
-                                let (rb_handle, col_handle) = physics_world
-                                    .add_dynamic_body_with_sensor(
-                                        entity,
-                                        pos,
-                                        rot,
-                                        shape.clone(),
-                                        mass,
-                                        restitution,
-                                        friction,
-                                        ccd,
-                                        is_trigger,
-                                    );
-                                let _ = sw.world.insert(
-                                    entity,
-                                    (
-                                        crate::physics::RigidBody {
-                                            handle: rb_handle,
-                                            body_type: crate::physics::PhysicsBodyType::Dynamic,
-                                        },
-                                        crate::physics::Collider {
-                                            handle: col_handle,
-                                            shape,
-                                            is_trigger,
-                                        },
-                                    ),
-                                );
-                            }
-                            "kinematic" => {
-                                let (rb_handle, col_handle) = physics_world.add_kinematic_body(
-                                    entity,
-                                    pos,
-                                    rot,
-                                    shape.clone(),
-                                    is_trigger,
-                                    restitution,
-                                    friction,
-                                );
-                                let _ = sw.world.insert(
-                                    entity,
-                                    (
-                                        crate::physics::RigidBody {
-                                            handle: rb_handle,
-                                            body_type: crate::physics::PhysicsBodyType::Kinematic,
-                                        },
-                                        crate::physics::Collider {
-                                            handle: col_handle,
-                                            shape,
-                                            is_trigger,
-                                        },
-                                    ),
-                                );
-                            }
-                            _ => {
-                                let (rb_handle, col_handle) = physics_world.add_static_body(
-                                    entity,
-                                    pos,
-                                    rot,
-                                    shape.clone(),
-                                    is_trigger,
-                                    restitution,
-                                    friction,
-                                );
-                                let _ = sw.world.insert(
-                                    entity,
-                                    (
-                                        crate::physics::RigidBody {
-                                            handle: rb_handle,
-                                            body_type: crate::physics::PhysicsBodyType::Static,
-                                        },
-                                        crate::physics::Collider {
-                                            handle: col_handle,
-                                            shape,
-                                            is_trigger,
-                                        },
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
         self.physics_world = Some(Rc::new(RefCell::new(physics_world)));
         tracing::info!("Physics world initialized");
 
@@ -1377,6 +1032,26 @@ impl Engine {
             }
         };
 
+        if let Err(error) = crate::world::preflight_scene_native(
+            &new_scene,
+            &gpu.device,
+            &gpu.queue,
+            &self.project_root,
+            &mut self.mesh_cache,
+            &mut self.material_cache,
+            &mut self.splat_cache,
+            self.texture_resources.as_ref(),
+            Some(&mut self.texture_cache),
+        ) {
+            tracing::error!("Scene reload failed: {error}, keeping old scene");
+            self.reload_notifications.push((
+                format!("Scene assets failed: {error}"),
+                std::time::Instant::now(),
+                [1.0, 0.3, 0.3, 1.0],
+            ));
+            return;
+        }
+
         // Reconciliation removes old handles before callbacks can run; keep
         // their names until surviving sensors have received their exit hooks.
         let previous_ids = scene_world
@@ -1445,145 +1120,6 @@ impl Engine {
             pw_ref,
             self.texture_resources.as_ref(),
         );
-
-        // Resolve trimesh colliders for newly spawned entities
-        if let Some(ref mut pw) = pw_borrow {
-            for entity_def in &new_scene.entities {
-                if let Some(col_def) = &entity_def.components.collider {
-                    if col_def.shape == "trimesh" {
-                        if let Some(&entity) = scene_world.entity_registry.get(&entity_def.id) {
-                            let needs_resolve = if let Ok(col) =
-                                scene_world.world.get::<&crate::physics::Collider>(entity)
-                            {
-                                matches!(&col.shape, crate::physics::PhysicsShape::Trimesh { vertices, .. } if vertices.is_empty())
-                            } else {
-                                false
-                            };
-
-                            if needs_resolve {
-                                let scale = entity_def
-                                    .components
-                                    .transform
-                                    .as_ref()
-                                    .map(|t| glam::Vec3::from(t.scale))
-                                    .unwrap_or(glam::Vec3::ONE);
-                                let resolved_shape = if let Ok(mr) =
-                                    scene_world
-                                        .world
-                                        .get::<&crate::components::MeshRenderer>(entity)
-                                {
-                                    if let Some((verts, idxs)) =
-                                        self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale)
-                                    {
-                                        Some(crate::physics::PhysicsShape::Trimesh {
-                                            vertices: verts,
-                                            indices: idxs,
-                                        })
-                                    } else {
-                                        let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                        Some(crate::physics::PhysicsShape::Box {
-                                            half_extents: glam::Vec3::from(he),
-                                        })
-                                    }
-                                } else {
-                                    None
-                                };
-
-                                if let Some(new_shape) = resolved_shape {
-                                    let rb_info = scene_world
-                                        .world
-                                        .get::<&crate::physics::RigidBody>(entity)
-                                        .ok()
-                                        .map(|rb| (rb.handle, rb.body_type.clone()));
-                                    if let Some((old_handle, body_type_enum)) = rb_info {
-                                        pw.remove_body(old_handle);
-                                        let pos = entity_def
-                                            .components
-                                            .transform
-                                            .as_ref()
-                                            .map(|t| glam::Vec3::from(t.position))
-                                            .unwrap_or(glam::Vec3::ZERO);
-                                        let rot = entity_def
-                                            .components
-                                            .transform
-                                            .as_ref()
-                                            .map(|t| {
-                                                crate::world::euler_degrees_to_quat(t.rotation)
-                                            })
-                                            .unwrap_or(glam::Quat::IDENTITY);
-                                        let is_trigger = col_def.is_trigger;
-                                        let restitution = col_def.restitution;
-                                        let friction = col_def.friction;
-
-                                        let (rb_handle, col_handle) = match body_type_enum {
-                                            crate::physics::PhysicsBodyType::Dynamic => {
-                                                let mass = entity_def
-                                                    .components
-                                                    .rigid_body
-                                                    .as_ref()
-                                                    .map(|rb| rb.mass)
-                                                    .unwrap_or(1.0);
-                                                let ccd = entity_def
-                                                    .components
-                                                    .rigid_body
-                                                    .as_ref()
-                                                    .map(|rb| rb.ccd)
-                                                    .unwrap_or(false);
-                                                pw.add_dynamic_body_with_sensor(
-                                                    entity,
-                                                    pos,
-                                                    rot,
-                                                    new_shape.clone(),
-                                                    mass,
-                                                    restitution,
-                                                    friction,
-                                                    ccd,
-                                                    is_trigger,
-                                                )
-                                            }
-                                            crate::physics::PhysicsBodyType::Kinematic => pw
-                                                .add_kinematic_body(
-                                                    entity,
-                                                    pos,
-                                                    rot,
-                                                    new_shape.clone(),
-                                                    is_trigger,
-                                                    restitution,
-                                                    friction,
-                                                ),
-                                            crate::physics::PhysicsBodyType::Static => pw
-                                                .add_static_body(
-                                                    entity,
-                                                    pos,
-                                                    rot,
-                                                    new_shape.clone(),
-                                                    is_trigger,
-                                                    restitution,
-                                                    friction,
-                                                ),
-                                        };
-                                        let _ = scene_world.world.insert(
-                                            entity,
-                                            (
-                                                crate::physics::RigidBody {
-                                                    handle: rb_handle,
-                                                    body_type: body_type_enum,
-                                                },
-                                                crate::physics::Collider {
-                                                    handle: col_handle,
-                                                    shape: new_shape,
-                                                    is_trigger,
-                                                },
-                                            ),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         drop(pw_borrow);
         drop(scene_world);
@@ -1857,16 +1393,15 @@ impl Engine {
             );
         }
 
-        // Use the same component constructor as scene loading and headless tests.
-        let spawns: Vec<_> = std::mem::take(&mut self.entity_commands.borrow_mut().spawns);
-        for cmd in &spawns {
+        let spawns = std::mem::take(&mut self.entity_commands.borrow_mut().spawns);
+        for command in &spawns {
             if let Some(scene_world) = &self.scene_world {
-                {
+                let spawned = {
                     let mut world = scene_world.borrow_mut();
                     let mut physics = self.physics_world.as_ref().map(|world| world.borrow_mut());
-                    crate::world::spawn_entity(
+                    match crate::world::spawn_entity_native(
                         &mut world,
-                        &cmd.entity_def(),
+                        &command.entity_def(),
                         &gpu.device,
                         &gpu.queue,
                         &self.project_root,
@@ -1876,55 +1411,75 @@ impl Engine {
                         physics.as_deref_mut(),
                         self.texture_resources.as_ref(),
                         Some(&mut self.texture_cache),
-                    );
+                    ) {
+                        Ok(_) => true,
+                        Err(error) => {
+                            tracing::error!("Entity spawn failed: {error}");
+                            false
+                        }
+                    }
+                };
+                if spawned {
+                    crate::sim::finish_pool_spawn(scene_world, &self.pool_manager, command);
                 }
-                crate::sim::finish_pool_spawn(scene_world, &self.pool_manager, cmd);
             }
         }
 
-        // Process projectile spawns
-        let proj_spawns: Vec<_> =
-            std::mem::take(&mut self.entity_commands.borrow_mut().projectile_spawns);
-        for cmd in &proj_spawns {
-            if let (Some(scene_world), Some(physics_world)) =
-                (&self.scene_world, &self.physics_world)
-            {
-                let mut scene_world = scene_world.borrow_mut();
-                let mut physics_world = physics_world.borrow_mut();
-                crate::world::spawn_projectile_entity(
-                    &mut scene_world,
-                    cmd,
+        let projectiles = std::mem::take(&mut self.entity_commands.borrow_mut().projectile_spawns);
+        for command in &projectiles {
+            if let (Some(world), Some(physics)) = (&self.scene_world, &self.physics_world) {
+                let mut world = world.borrow_mut();
+                let mut physics = physics.borrow_mut();
+                match crate::world::spawn_entity_native(
+                    &mut world,
+                    &command.entity_def(),
                     &gpu.device,
                     &gpu.queue,
                     &self.project_root,
                     &mut self.mesh_cache,
                     &mut self.material_cache,
-                    &mut physics_world,
+                    &mut self.splat_cache,
+                    Some(&mut physics),
                     self.texture_resources.as_ref(),
-                );
+                    Some(&mut self.texture_cache),
+                ) {
+                    Ok(entity) => crate::world::finish_projectile_spawn(
+                        &mut world,
+                        &mut physics,
+                        entity,
+                        command,
+                    ),
+                    Err(error) => tracing::error!("Projectile spawn failed: {error}"),
+                }
             }
         }
 
-        // Process dynamic spawns (bouncing physics objects)
-        let dyn_spawns: Vec<_> =
-            std::mem::take(&mut self.entity_commands.borrow_mut().dynamic_spawns);
-        for cmd in &dyn_spawns {
-            if let (Some(scene_world), Some(physics_world)) =
-                (&self.scene_world, &self.physics_world)
-            {
-                let mut scene_world = scene_world.borrow_mut();
-                let mut physics_world = physics_world.borrow_mut();
-                crate::world::spawn_dynamic_entity(
-                    &mut scene_world,
-                    cmd,
+        let dynamics = std::mem::take(&mut self.entity_commands.borrow_mut().dynamic_spawns);
+        for command in &dynamics {
+            if let (Some(world), Some(physics)) = (&self.scene_world, &self.physics_world) {
+                let mut world = world.borrow_mut();
+                let mut physics = physics.borrow_mut();
+                match crate::world::spawn_entity_native(
+                    &mut world,
+                    &command.entity_def(),
                     &gpu.device,
                     &gpu.queue,
                     &self.project_root,
                     &mut self.mesh_cache,
                     &mut self.material_cache,
-                    &mut physics_world,
+                    &mut self.splat_cache,
+                    Some(&mut physics),
                     self.texture_resources.as_ref(),
-                );
+                    Some(&mut self.texture_cache),
+                ) {
+                    Ok(entity) => crate::world::finish_dynamic_spawn(
+                        &mut world,
+                        &mut physics,
+                        entity,
+                        command,
+                    ),
+                    Err(error) => tracing::error!("Dynamic spawn failed: {error}"),
+                }
             }
         }
 
@@ -2062,7 +1617,7 @@ impl Engine {
             );
         }
 
-        if !spawns.is_empty() || !proj_spawns.is_empty() || !dyn_spawns.is_empty() {
+        if !spawns.is_empty() || !projectiles.is_empty() || !dynamics.is_empty() {
             self.register_skeletons();
         }
         if let (Some(world), Some(runtime)) = (&self.scene_world, self.script_runtime.as_mut()) {
@@ -2101,11 +1656,11 @@ impl Engine {
             }
         };
 
-        // Undo steps belong to the scene being replaced.
-        self.undo_stack.clear();
         if !self.replace_scene(scene) {
             return;
         }
+        // Undo steps belong to the scene that was successfully replaced.
+        self.undo_stack.clear();
         // 9. Update scene_path for hot-reload
         self.scene_path = Some(scene_path);
 
@@ -2115,8 +1670,27 @@ impl Engine {
     /// Replace the running scene with `scene`: destroy every entity through
     /// the usual path (so `on_destroy` hooks run), reset per-scene state, then
     /// build and initialize the new entities. Shared by `scene.load` and the
-    /// `undo` command. Returns false when there is no GPU to build with.
+    /// `undo` command. Returns false when native construction is unavailable
+    /// or scene preflight fails, preserving the current scene.
     pub(crate) fn replace_scene(&mut self, scene: crate::scene::SceneFile) -> bool {
+        let Some(gpu) = &self.gpu else {
+            return false;
+        };
+        // A bad replacement must not destroy the current world or its scripts.
+        if let Err(error) = crate::world::preflight_scene_native(
+            &scene,
+            &gpu.device,
+            &gpu.queue,
+            &self.project_root,
+            &mut self.mesh_cache,
+            &mut self.material_cache,
+            &mut self.splat_cache,
+            self.texture_resources.as_ref(),
+            Some(&mut self.texture_cache),
+        ) {
+            tracing::error!("Scene replacement failed: {error}, keeping old scene");
+            return false;
+        }
         // Destroy through the same path as Lua and MCP. Never hold world borrows
         // while invoking user callbacks.
         if let Some(world) = &self.scene_world {
@@ -2175,6 +1749,7 @@ impl Engine {
         // 6. Re-spawn entities
         if let Some(sw) = &self.scene_world {
             let mut sw = sw.borrow_mut();
+            let mut physics = self.physics_world.as_ref().map(|world| world.borrow_mut());
             crate::world::spawn_all_entities(
                 &mut sw,
                 &scene,
@@ -2184,7 +1759,7 @@ impl Engine {
                 &mut self.mesh_cache,
                 &mut self.material_cache,
                 &mut self.splat_cache,
-                None,
+                physics.as_deref_mut(),
                 self.texture_resources.as_ref(),
                 Some(&mut self.texture_cache),
             );
@@ -2192,185 +1767,6 @@ impl Engine {
 
         // 6b. Register skeletal animation data from loaded meshes
         self.register_skeletons();
-
-        // 7. Spawn physics components for entities
-        if let Some(sw) = &self.scene_world {
-            let mut sw = sw.borrow_mut();
-            if let (Some(scene_data), Some(pw)) = (&sw.current_scene.clone(), &self.physics_world) {
-                let mut pw = pw.borrow_mut();
-                for entity_def in &scene_data.entities {
-                    if let Some(&entity) = sw.entity_registry.get(&entity_def.id) {
-                        let pos = entity_def
-                            .components
-                            .transform
-                            .as_ref()
-                            .map(|t| glam::Vec3::from(t.position))
-                            .unwrap_or(glam::Vec3::ZERO);
-                        let rot = entity_def
-                            .components
-                            .transform
-                            .as_ref()
-                            .map(|t| crate::world::euler_degrees_to_quat(t.rotation))
-                            .unwrap_or(glam::Quat::IDENTITY);
-
-                        if let Some(cc_def) = &entity_def.components.character_controller {
-                            let half_height = cc_def.height / 2.0 - cc_def.radius;
-                            let (rb_handle, col_handle) = pw.add_character_body(
-                                entity,
-                                pos,
-                                half_height.max(0.1),
-                                cc_def.radius,
-                            );
-                            let rb_comp = crate::physics::RigidBody {
-                                handle: rb_handle,
-                                body_type: crate::physics::PhysicsBodyType::Kinematic,
-                            };
-                            let col_comp = crate::physics::Collider {
-                                handle: col_handle,
-                                shape: crate::physics::PhysicsShape::Capsule {
-                                    half_height: half_height.max(0.1),
-                                    radius: cc_def.radius,
-                                },
-                                is_trigger: false,
-                            };
-                            let cc_comp = CharacterController {
-                                move_speed: cc_def.move_speed,
-                                sprint_multiplier: cc_def.sprint_multiplier,
-                                jump_impulse: cc_def.jump_impulse,
-                                step_height: cc_def.step_height,
-                                ..Default::default()
-                            };
-                            let player = crate::components::Player {
-                                height: cc_def.height,
-                                radius: cc_def.radius,
-                                ..Default::default()
-                            };
-                            let _ = sw
-                                .world
-                                .insert(entity, (rb_comp, col_comp, cc_comp, player));
-                        } else if let Some(col_def) = &entity_def.components.collider {
-                            let mut shape = crate::world::parse_collider_shape(col_def);
-                            let is_trigger = col_def.is_trigger;
-                            let restitution = col_def.restitution;
-                            let friction = col_def.friction;
-                            let body_type = entity_def
-                                .components
-                                .rigid_body
-                                .as_ref()
-                                .map(|rb| rb.body_type.as_str())
-                                .unwrap_or("static");
-
-                            // Resolve trimesh
-                            if matches!(shape, crate::physics::PhysicsShape::Trimesh { .. }) {
-                                let scale = entity_def
-                                    .components
-                                    .transform
-                                    .as_ref()
-                                    .map(|t| glam::Vec3::from(t.scale))
-                                    .unwrap_or(glam::Vec3::ONE);
-                                if let Ok(mr) =
-                                    sw.world.get::<&crate::components::MeshRenderer>(entity)
-                                {
-                                    if let Some((verts, idxs)) =
-                                        self.mesh_cache.get_physics_trimesh(mr.mesh_handle, scale)
-                                    {
-                                        shape = crate::physics::PhysicsShape::Trimesh {
-                                            vertices: verts,
-                                            indices: idxs,
-                                        };
-                                    } else {
-                                        let he = col_def.half_extents.unwrap_or([0.5, 0.5, 0.5]);
-                                        shape = crate::physics::PhysicsShape::Box {
-                                            half_extents: glam::Vec3::from(he),
-                                        };
-                                    }
-                                }
-                            }
-
-                            match body_type {
-                                "dynamic" => {
-                                    let mass = entity_def
-                                        .components
-                                        .rigid_body
-                                        .as_ref()
-                                        .map(|rb| rb.mass)
-                                        .unwrap_or(1.0);
-                                    let ccd = entity_def
-                                        .components
-                                        .rigid_body
-                                        .as_ref()
-                                        .map(|rb| rb.ccd)
-                                        .unwrap_or(false);
-                                    let (rb_handle, col_handle) = pw.add_dynamic_body_with_sensor(
-                                        entity,
-                                        pos,
-                                        rot,
-                                        shape.clone(),
-                                        mass,
-                                        restitution,
-                                        friction,
-                                        ccd,
-                                        is_trigger,
-                                    );
-                                    let rb_comp = crate::physics::RigidBody {
-                                        handle: rb_handle,
-                                        body_type: crate::physics::PhysicsBodyType::Dynamic,
-                                    };
-                                    let col_comp = crate::physics::Collider {
-                                        handle: col_handle,
-                                        shape,
-                                        is_trigger,
-                                    };
-                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
-                                }
-                                "kinematic" => {
-                                    let (rb_handle, col_handle) = pw.add_kinematic_body(
-                                        entity,
-                                        pos,
-                                        rot,
-                                        shape.clone(),
-                                        is_trigger,
-                                        restitution,
-                                        friction,
-                                    );
-                                    let rb_comp = crate::physics::RigidBody {
-                                        handle: rb_handle,
-                                        body_type: crate::physics::PhysicsBodyType::Kinematic,
-                                    };
-                                    let col_comp = crate::physics::Collider {
-                                        handle: col_handle,
-                                        shape,
-                                        is_trigger,
-                                    };
-                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
-                                }
-                                _ => {
-                                    let (rb_handle, col_handle) = pw.add_static_body(
-                                        entity,
-                                        pos,
-                                        rot,
-                                        shape.clone(),
-                                        is_trigger,
-                                        restitution,
-                                        friction,
-                                    );
-                                    let rb_comp = crate::physics::RigidBody {
-                                        handle: rb_handle,
-                                        body_type: crate::physics::PhysicsBodyType::Static,
-                                    };
-                                    let col_comp = crate::physics::Collider {
-                                        handle: col_handle,
-                                        shape,
-                                        is_trigger,
-                                    };
-                                    let _ = sw.world.insert(entity, (rb_comp, col_comp));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         // Load and initialize scripts only after construction releases its borrows.
         if let (Some(world), Some(runtime)) = (&self.scene_world, self.script_runtime.as_mut()) {
