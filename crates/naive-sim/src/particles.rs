@@ -28,6 +28,12 @@ pub struct ParticleSystem {
     seed: u32,
 }
 
+impl AsMut<ParticleSystem> for ParticleSystem {
+    fn as_mut(&mut self) -> &mut ParticleSystem {
+        self
+    }
+}
+
 impl ParticleSystem {
     pub fn new() -> Self {
         Self {

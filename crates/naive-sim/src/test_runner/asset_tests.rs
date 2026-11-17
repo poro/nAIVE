@@ -94,19 +94,19 @@ fn deferred_spawn_validates_assets_before_creating_any_entity_or_body() {
 fn stl_mesh_data_is_decoded_and_invalid_gltf_buffers_are_rejected() {
     let p = Project::new();
     p.write("triangle.stl", "solid t\nfacet normal 0 1 0\nouter loop\nvertex 0 0 0\nvertex 0 0 1\nvertex 1 0 0\nendloop\nendfacet\nendsolid t\n");
-    let mesh = naive_sim::assets::load_mesh(&p.0, "triangle.stl").unwrap();
+    let mesh = crate::assets::load_mesh(&p.0, "triangle.stl").unwrap();
     assert_eq!(mesh.indices.len(), 3);
     assert_eq!(mesh.vertices.len(), 3);
     p.write(
         "broken.gltf",
         r#"{"asset":{"version":"2.0"},"buffers":[{"uri":"missing.bin","byteLength":36}]}"#,
     );
-    assert!(naive_sim::assets::load_mesh(&p.0, "broken.gltf").is_err());
+    assert!(crate::assets::load_mesh(&p.0, "broken.gltf").is_err());
     p.write(
         "escaping.gltf",
         r#"{"asset":{"version":"2.0"},"buffers":[{"uri":"../outside.bin","byteLength":36}]}"#,
     );
-    let error = naive_sim::assets::load_mesh(&p.0, "escaping.gltf")
+    let error = crate::assets::load_mesh(&p.0, "escaping.gltf")
         .err()
         .unwrap()
         .to_string();

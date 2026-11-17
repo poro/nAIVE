@@ -1,15 +1,17 @@
 //! Lua particles API registration.
 
-use super::{ScriptRuntime, SharedParticleSystem, SharedSceneWorld};
+use super::{ScriptRuntime, SharedSceneWorld};
 use crate::components::ParticleEmitter;
 use mlua::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 impl ScriptRuntime {
     /// Register particle system API (entity emitter control + one-shot bursts).
-    pub fn register_particle_api(
+    pub fn register_particle_api<P: AsMut<crate::particles::ParticleSystem> + 'static>(
         &self,
         scene_world: SharedSceneWorld,
-        particle_system: SharedParticleSystem,
+        particle_system: Rc<RefCell<P>>,
     ) -> Result<(), String> {
         let globals = self.lua.globals();
         let entity_table: LuaTable = globals.get("entity").map_err(|e| e.to_string())?;
@@ -59,7 +61,7 @@ impl ScriptRuntime {
                 let sw = sw.borrow();
                 let mut ps = ps.borrow_mut();
                 if let Some(&entity) = sw.entity_registry.get(&id) {
-                    ps.burst_on_entity(entity, count, &sw.world);
+                    ps.as_mut().burst_on_entity(entity, count, &sw.world);
                 }
                 Ok(())
             })
@@ -113,7 +115,8 @@ impl ScriptRuntime {
                         ],
                         gravity_scale: config_tbl.get::<f32>("gravity_scale").unwrap_or(0.0),
                     };
-                    ps.spawn_burst(glam::Vec3::new(x, y, z), count, &config);
+                    ps.as_mut()
+                        .spawn_burst(glam::Vec3::new(x, y, z), count, &config);
                     Ok(())
                 },
             )

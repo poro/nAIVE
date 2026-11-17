@@ -43,10 +43,15 @@ jobs:
       # server and the web build (docs/sim-split-plan.md).
       - name: naive-sim stays free of GPU, window and audio crates
         run: |
-          if cargo tree -p naive-sim -e normal --prefix none | grep -E '^(wgpu|winit|kira|cpal|shader-slang)'; then
-            echo "naive-sim depends on a GPU, window or audio crate"
-            exit 1
-          fi
+          check_sim_dependencies() {
+            sim_dependencies=$(cargo tree --locked -p naive-sim -e normal --prefix none "$@")
+            if printf '%s\n' "$sim_dependencies" | grep -E '^(wgpu|winit|kira|cpal|shader-slang)'; then
+              echo "naive-sim depends on a GPU, window or audio crate"
+              exit 1
+            fi
+          }
+          check_sim_dependencies --no-default-features
+          check_sim_dependencies --no-default-features --features scripting
 
   no-slang:
     name: Test without Slang SDK
@@ -61,6 +66,10 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
           rustup default "$RUST_TOOLCHAIN"
       - uses: Swatinem/rust-cache@v2
+      - name: Standalone simulation with and without Lua
+        run: |
+          cargo test --locked -p naive-sim --no-default-features
+          cargo test --locked -p naive-sim --no-default-features --features scripting
       - run: cargo test --workspace --exclude naive-web --no-default-features --locked
       - run: cargo clippy --workspace --exclude naive-web --all-targets --no-default-features --locked -- -D warnings
       - name: Scene tests without Slang
@@ -145,10 +154,12 @@ jobs:
       - name: Check
         run: cargo check --workspace --exclude naive-web --locked
 
-      - name: Native/headless snapshot parity (software Vulkan)
+      - name: Native/headless parity (software Vulkan)
         env:
           WGPU_BACKEND: vulkan
-        run: cargo test --locked -p naive-client --lib --no-default-features scene_snapshot::parity_tests::native_gpu_caches_match_headless_snapshot -- --ignored --exact
+        run: |
+          cargo test --locked -p naive-client --lib --no-default-features scene_snapshot::parity_tests::native_gpu_caches_match_headless_snapshot -- --ignored --exact
+          cargo test --locked -p naive-client --lib --no-default-features lifecycle_parity_tests::native_lifecycle_matches_headless_runner -- --ignored --exact
 
       - name: Standalone release smoke test (software Vulkan)
         env:
@@ -174,3 +185,5 @@ jobs:
 
       - name: Check naive-web
         run: cargo check -p naive-web --target wasm32-unknown-unknown --locked
+      - name: Check default simulation without Lua
+        run: cargo check --locked -p naive-sim --no-default-features --target wasm32-unknown-unknown

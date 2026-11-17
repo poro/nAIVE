@@ -1,5 +1,5 @@
 use super::*;
-use naive_sim::presentation::UiIntent;
+use crate::presentation::UiIntent;
 
 struct Project(PathBuf);
 impl Project {

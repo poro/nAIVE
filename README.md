@@ -232,27 +232,30 @@ nAIVE uses [MCP (Model Context Protocol)](https://modelcontextprotocol.io) serve
 
 ```
 naive-core        (MIT)    Shared types, ECS components, scene format, event bus
-    │
-naive-client      (MIT)    Full engine: renderer, physics, audio, scripting
-    │
+naive-sim         (MIT)    CPU world/physics; optional Lua, lifecycle and test runner
+naive-client      (MIT)    Native renderer, audio, editor and simulation adapters
 naive-runtime     (MIT)    Thin CLI binary (naive, naive-runtime, naive_mcp)
-    │
+naive-player      (MIT)    Standalone game player without Slang
 naive-server      (BSL)    Multiplayer hosting, matchmaking, AI Director (stub)
-    │
 naive-web         (MIT)    Minimal WASM + WebGPU clear-canvas prototype
 ```
+
+The client re-exports shared APIs for compatibility. CPU consumers can use
+`naive-sim` with its `scripting` feature to run Lua scenes and tests without
+GPU, window or audio-device libraries; its default feature set has no Lua VM.
+See the [simulation extraction plan](docs/sim-split-plan.md) for module boundaries.
 
 ### Tech stack
 
 | Layer | Technology |
 |-------|-----------|
 | Language | Rust |
-| Rendering | wgpu 24 (Metal / Vulkan / DX12 / WebGPU) |
+| Rendering | wgpu 30 (Metal / Vulkan / DX12 / WebGPU) |
 | Shaders | NVIDIA SLANG → WGSL cross-compilation |
 | ECS | hecs |
-| Physics | Rapier3D 0.22 |
+| Physics | Rapier3D 0.36 |
 | Scripting | Lua 5.4 (mlua, vendored) |
-| Audio | Kira 0.9 |
+| Audio | Kira 0.12 |
 | Asset formats | glTF, PLY (Gaussian splats), YAML (scenes, materials, pipelines) |
 
 ---
@@ -466,9 +469,9 @@ nAIVE uses a dual-license model:
 
 ### Engine (MIT)
 
-The engine crates — **`naive-core`**, **`naive-client`**, and **`naive-runtime`** — are MIT licensed. You can use them for any purpose: personal, commercial, educational. Modify them, sell games built with them, fork them, include them in proprietary software. No royalties, no revenue sharing, no restrictions.
+The engine crates — **`naive-core`**, **`naive-sim`**, **`naive-client`**, **`naive-runtime`**, and **`naive-player`** — are MIT licensed. You can use them for any purpose: personal, commercial, educational. Modify them, sell games built with them, fork them, include them in proprietary software. No royalties, no revenue sharing, no restrictions.
 
-These three crates produce a complete game engine. You do not need the platform to build and ship games.
+These engine crates produce a complete game engine. You do not need the platform to build and ship games.
 
 ### Platform (BSL 1.1)
 
@@ -487,8 +490,10 @@ The server crate — **`naive-server`** — is licensed under the [Business Sour
 
 ```
 naive-core       MIT          Use for anything. No restrictions.
+naive-sim        MIT          Use for anything. No restrictions.
 naive-client     MIT          Use for anything. No restrictions.
 naive-runtime    MIT          Use for anything. No restrictions.
+naive-player     MIT          Use for anything. No restrictions.
 naive-web        MIT          Use for anything. No restrictions.
 naive-server     BSL 1.1      No competing hosting services. Converts to MIT in 2029.
 ```

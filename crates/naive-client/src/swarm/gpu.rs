@@ -6,15 +6,18 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
+use glam::Vec3;
 use wgpu::util::DeviceExt;
 
-use crate::components::{GpuSwarm, Hidden, MaterialOverride, MeshHandle};
+use crate::components::{GpuSwarm, Hidden, MaterialOverride, MeshHandle, Transform};
 use crate::gpu_timer::GpuTimer;
 use crate::material::MaterialCache;
 use crate::mesh::MeshCache;
 use crate::physics::PhysicsWorld;
 use crate::renderer::{DrawUniformPool, GpuState, DRAW_UNIFORM_SIZE};
+use crate::swarm_api::SwarmBus;
 use crate::texture_cache::TextureHandle;
+use crate::world::SceneWorld;
 
 // --- GPU side ---
 
@@ -361,7 +364,7 @@ impl SwarmSystem {
             let stale = self
                 .swarms
                 .get(&entity)
-                .is_some_and(|s| s.core.def != swarm.def || s.mesh != swarm.mesh_handle);
+                .is_some_and(|s| *s.core.definition() != swarm.def || s.mesh != swarm.mesh_handle);
             if stale || !self.swarms.contains_key(&entity) {
                 let id = swarm_id(scene_world, entity);
                 let state = self.create_swarm(gpu, id, swarm, origin, draw_pool, bus);
@@ -399,7 +402,7 @@ impl SwarmSystem {
                 gpu.queue.write_buffer(
                     &state.buffers.field,
                     0,
-                    bytemuck::cast_slice(&state.core.field),
+                    bytemuck::cast_slice(state.core.field()),
                 );
             }
             plan.params.base_color = base_color;
@@ -442,7 +445,7 @@ impl SwarmSystem {
         for (entity, target_id) in active.iter_mut() {
             let state = self.swarms.get_mut(entity).expect("active swarm");
             state.parity = 1 - state.parity;
-            let step = state.core.step;
+            let step = state.core.step();
             if let Some(k) = state
                 .readbacks
                 .iter()
@@ -522,7 +525,7 @@ impl SwarmSystem {
             device,
             pipelines,
             &members,
-            core.region.grid_cells,
+            core.region().grid_cells,
             wgpu::BufferUsages::empty(),
         );
         let draw_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -549,10 +552,10 @@ impl SwarmSystem {
 
         tracing::info!(
             "Swarm '{}' created: {} members, {}x{} neighbour grid",
-            core.id,
+            core.id(),
             buffers.count,
-            core.region.grid_cells,
-            core.region.grid_cells
+            core.region().grid_cells,
+            core.region().grid_cells
         );
         SwarmGpu {
             core,

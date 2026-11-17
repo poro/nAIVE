@@ -1,23 +1,23 @@
-mod construction;
 mod native_assets;
 #[cfg(test)]
 mod parity_tests;
 mod spawning;
 
-pub(crate) use construction::preflight_scene;
-pub use construction::{spawn_entity_with_resolver, SpawnAssetResolver};
+pub(crate) use naive_sim::world::preflight_scene;
 pub use naive_sim::world::{
-    euler_degrees_to_quat, parse_collider_shape, SceneEntityDefinition, SceneWorld,
-    UnsavedRuntimeState,
-};
-pub(crate) use spawning::preflight_scene_native;
-pub use spawning::{
-    finish_dynamic_spawn, finish_projectile_spawn, spawn_dynamic_entity, spawn_entity,
-    spawn_entity_headless_with_assets, spawn_entity_native, spawn_projectile_entity,
-    spawn_runtime_entity,
+    destroy_runtime_entity, euler_degrees_to_quat, finish_dynamic_spawn, finish_projectile_spawn,
+    parse_collider_shape, spawn_entity_headless_with_assets, spawn_entity_with_resolver,
+    DynamicSpawnCommand, EntityCommandQueue, EntityPoolManager, MeshCreateCommand, PoolOp,
+    ProjectileSpawnCommand, SceneEntityDefinition, SceneWorld, SpawnAssetResolver,
+    SpawnColliderSpec, SpawnCommand, TextureSwapCommand, UnsavedRuntimeState,
 };
 #[cfg(test)]
-pub use spawning::{spawn_all_entities_headless, spawn_entity_headless};
+pub use naive_sim::world::{spawn_all_entities_headless, spawn_entity_headless};
+pub(crate) use spawning::preflight_scene_native;
+pub use spawning::{
+    spawn_dynamic_entity, spawn_entity, spawn_entity_native, spawn_projectile_entity,
+    spawn_runtime_entity,
+};
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -28,170 +28,6 @@ use crate::mesh::MeshCache;
 use crate::physics::{self, PhysicsWorld};
 use crate::scene::{EntityDef, SceneFile};
 use crate::splat::SplatCache;
-
-/// Deferred pool operation.
-pub enum PoolOp {
-    Release(String),
-}
-
-/// Deferred entity commands from Lua scripts, processed each frame.
-#[derive(Default)]
-pub struct EntityCommandQueue {
-    pub spawns: Vec<SpawnCommand>,
-    pub destroys: Vec<String>,
-    pub scale_updates: Vec<(String, [f32; 3])>,
-    pub visibility_updates: Vec<(String, bool)>,
-    pub projectile_spawns: Vec<ProjectileSpawnCommand>,
-    pub projectile_counter: u64,
-    pub dynamic_spawns: Vec<DynamicSpawnCommand>,
-    pub dynamic_counter: u64,
-    pub pool_ops: Vec<PoolOp>,
-    pub pending_scene_load: Option<String>,
-    pub texture_swaps: Vec<TextureSwapCommand>,
-    pub mesh_creates: Vec<MeshCreateCommand>,
-}
-
-/// Deferred texture swap: change an entity's albedo or normal map at runtime.
-pub struct TextureSwapCommand {
-    pub entity_id: String,
-    pub slot: String,
-    pub texture_path: String,
-}
-
-/// Deferred mesh creation from Lua vertex/index data.
-pub struct MeshCreateCommand {
-    pub name: String,
-    pub positions: Vec<[f32; 3]>,
-    pub normals: Vec<[f32; 3]>,
-    pub uvs: Vec<[f32; 2]>,
-    pub indices: Vec<u32>,
-}
-
-pub struct SpawnCommand {
-    pub id: String,
-    pub mesh: String,
-    pub material: String,
-    pub position: [f32; 3],
-    pub scale: [f32; 3],
-    pub collider: Option<SpawnColliderSpec>,
-    pub rigid_body: Option<String>,
-    pub script: Option<String>,
-}
-
-impl SpawnCommand {
-    /// The same authored representation feeds native and headless spawning.
-    pub fn entity_def(&self) -> EntityDef {
-        EntityDef {
-            id: self.id.clone(),
-            tags: Vec::new(),
-            extends: None,
-            components: crate::scene::ComponentMap {
-                transform: Some(crate::scene::TransformDef {
-                    position: self.position,
-                    rotation: [0.0; 3],
-                    scale: self.scale,
-                }),
-                mesh_renderer: Some(crate::scene::MeshRendererDef {
-                    mesh: self.mesh.clone(),
-                    material: self.material.clone(),
-                    cast_shadows: true,
-                    receive_shadows: true,
-                }),
-                collider: self
-                    .collider
-                    .as_ref()
-                    .map(|collider| crate::scene::ColliderDef {
-                        shape: collider.shape.clone(),
-                        half_extents: collider.half_extents,
-                        radius: collider.radius,
-                        half_height: None,
-                        is_trigger: collider.is_trigger,
-                        restitution: collider.restitution,
-                        friction: collider.friction,
-                    }),
-                rigid_body: self
-                    .rigid_body
-                    .as_ref()
-                    .map(|body_type| crate::scene::RigidBodyDef {
-                        body_type: body_type.clone(),
-                        mass: 1.0,
-                        ccd: false,
-                    }),
-                script: self.script.as_ref().map(|source| crate::scene::ScriptDef {
-                    source: source.clone(),
-                }),
-                ..Default::default()
-            },
-        }
-    }
-}
-
-/// Collider specification for runtime-spawned entities.
-pub struct SpawnColliderSpec {
-    pub shape: String,
-    pub half_extents: Option<[f32; 3]>,
-    pub radius: Option<f32>,
-    pub is_trigger: bool,
-    pub restitution: f32,
-    pub friction: f32,
-}
-
-pub struct ProjectileSpawnCommand {
-    pub id: String,
-    pub mesh: String,
-    pub material: String,
-    pub position: [f32; 3],
-    pub direction: [f32; 3],
-    pub speed: f32,
-    pub damage: f32,
-    pub lifetime: f32,
-    pub gravity: bool,
-    pub owner_id: String,
-    pub scale: [f32; 3],
-}
-
-pub struct DynamicSpawnCommand {
-    pub id: String,
-    pub mesh: String,
-    pub material: String,
-    pub position: [f32; 3],
-    pub velocity: [f32; 3],
-    pub scale: [f32; 3],
-    pub radius: f32,
-    pub mass: f32,
-    pub restitution: f32,
-    pub friction: f32,
-    pub lifetime: f32,
-}
-
-impl EntityCommandQueue {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn clear(&mut self) {
-        self.spawns.clear();
-        self.destroys.clear();
-        self.scale_updates.clear();
-        self.visibility_updates.clear();
-        self.projectile_spawns.clear();
-        self.dynamic_spawns.clear();
-        self.pool_ops.clear();
-        self.pending_scene_load = None;
-        self.texture_swaps.clear();
-        self.mesh_creates.clear();
-    }
-}
-
-/// Destroy a runtime entity by its string ID.
-pub fn destroy_runtime_entity(scene_world: &mut SceneWorld, id: &str) -> bool {
-    if let Some(entity) = scene_world.entity_registry.remove(id) {
-        let _ = scene_world.world.despawn(entity);
-        true
-    } else {
-        false
-    }
-}
 
 /// Spawn all entities from a parsed scene into the ECS world.
 #[allow(clippy::too_many_arguments)]
@@ -542,92 +378,6 @@ fn patch_entity(
     }
 
     false
-}
-
-// ---------------------------------------------------------------------------
-// Entity Pool Manager (Tier 2)
-// ---------------------------------------------------------------------------
-
-struct EntityPool {
-    available: Vec<String>,
-    all: Vec<String>,
-    mesh: String,
-    material: String,
-}
-
-/// Manages reusable entity pools to avoid spawn/destroy overhead.
-pub struct EntityPoolManager {
-    pools: HashMap<String, EntityPool>,
-}
-
-impl EntityPoolManager {
-    pub fn new() -> Self {
-        Self {
-            pools: HashMap::new(),
-        }
-    }
-
-    /// Create a new pool (does not pre-warm — that happens via acquire calls).
-    pub fn create_pool(&mut self, name: &str, mesh: &str, material: &str) {
-        self.pools.insert(
-            name.to_string(),
-            EntityPool {
-                available: Vec::new(),
-                all: Vec::new(),
-                mesh: mesh.to_string(),
-                material: material.to_string(),
-            },
-        );
-    }
-
-    /// Return an available entity ID from the pool, or None if pool is empty.
-    pub fn try_acquire(&mut self, pool_name: &str) -> Option<String> {
-        self.pools
-            .get_mut(pool_name)
-            .and_then(|pool| pool.available.pop())
-    }
-
-    /// Release an entity back to the pool's available list.
-    pub fn release(&mut self, pool_name: &str, entity_id: &str) {
-        if let Some(pool) = self.pools.get_mut(pool_name) {
-            if !pool.available.contains(&entity_id.to_string()) {
-                pool.available.push(entity_id.to_string());
-            }
-        }
-    }
-
-    /// Register a newly spawned entity in the pool's tracking.
-    pub fn register_entity(&mut self, pool_name: &str, entity_id: &str) {
-        if let Some(pool) = self.pools.get_mut(pool_name) {
-            pool.all.push(entity_id.to_string());
-        }
-    }
-
-    /// Get the mesh and material for a pool.
-    pub fn get_pool_assets(&self, pool_name: &str) -> Option<(String, String)> {
-        self.pools
-            .get(pool_name)
-            .map(|p| (p.mesh.clone(), p.material.clone()))
-    }
-
-    /// Check if a pool exists.
-    pub fn has_pool(&self, name: &str) -> bool {
-        self.pools.contains_key(name)
-    }
-
-    /// Get pool stats: (total, available).
-    pub fn pool_size(&self, name: &str) -> (usize, usize) {
-        self.pools
-            .get(name)
-            .map(|p| (p.all.len(), p.available.len()))
-            .unwrap_or((0, 0))
-    }
-}
-
-impl Default for EntityPoolManager {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[cfg(test)]

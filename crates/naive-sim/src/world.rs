@@ -1,4 +1,22 @@
-//! Scene state and authoring metadata shared by native and headless clients.
+//! Scene state, CPU entity construction and lifecycle command contracts.
+
+mod commands;
+mod construction;
+mod pools;
+mod spawning;
+
+pub use commands::{
+    DynamicSpawnCommand, EntityCommandQueue, MeshCreateCommand, PoolOp, ProjectileSpawnCommand,
+    SpawnColliderSpec, SpawnCommand, TextureSwapCommand,
+};
+pub use construction::{preflight_scene, spawn_entity_with_resolver, SpawnAssetResolver};
+pub use pools::EntityPoolManager;
+pub use spawning::{
+    destroy_runtime_entity, finish_dynamic_spawn, finish_projectile_spawn,
+    spawn_entity_headless_with_assets,
+};
+#[cfg(any(test, feature = "test-support"))]
+pub use spawning::{spawn_all_entities_headless, spawn_entity_headless};
 
 use std::collections::HashMap;
 

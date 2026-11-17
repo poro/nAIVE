@@ -11,7 +11,7 @@ default = ["slang"]
 slang = ["dep:shader-slang"]
 
 [dependencies]
-naive-sim = { workspace = true }
+naive-sim = { workspace = true, features = ["scripting"] }
 naive-core = { workspace = true }
 
 # GPU rendering
@@ -77,5 +77,6 @@ chrono = { workspace = true }
 base64 = { workspace = true }
 
 [dev-dependencies]
+naive-sim = { workspace = true, features = ["test-support"] }
 # Validates the engine's built-in WGSL without a GPU. Same version wgpu uses.
 naga = { version = "30", features = ["wgsl-in"] }

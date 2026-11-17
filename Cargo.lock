@@ -2199,10 +2199,12 @@ dependencies = [
 name = "naive-sim"
 version = "0.1.22"
 dependencies = [
+ "bytemuck",
  "glam 0.34.3",
  "gltf",
  "hecs",
  "image",
+ "mlua",
  "naive-core",
  "ply-rs",
  "rapier3d",

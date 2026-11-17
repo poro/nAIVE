@@ -1,6 +1,157 @@
 use super::*;
 use std::path::PathBuf;
 
+#[derive(Debug, PartialEq)]
+enum AudioCall {
+    Sfx(String, PathBuf, String, f32),
+    Music(PathBuf, String, f32, f32),
+    StopSound(String, f32),
+    StopMusic(f32),
+}
+
+#[derive(Default)]
+struct RecordingAudio {
+    calls: Vec<AudioCall>,
+    fail_playback: bool,
+}
+
+impl AudioBackend for RecordingAudio {
+    fn play_sfx(
+        &mut self,
+        id: &str,
+        project_root: &Path,
+        path: &str,
+        volume: f32,
+    ) -> Result<(), String> {
+        self.calls.push(AudioCall::Sfx(
+            id.into(),
+            project_root.into(),
+            path.into(),
+            volume,
+        ));
+        if self.fail_playback {
+            Err("sound backend rejected playback".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn play_music(
+        &mut self,
+        project_root: &Path,
+        path: &str,
+        volume: f32,
+        fade_in_secs: f32,
+    ) -> Result<(), String> {
+        self.calls.push(AudioCall::Music(
+            project_root.into(),
+            path.into(),
+            volume,
+            fade_in_secs,
+        ));
+        if self.fail_playback {
+            Err("music backend rejected playback".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn stop_sound(&mut self, id: &str, fade_out_secs: f32) {
+        self.calls
+            .push(AudioCall::StopSound(id.into(), fade_out_secs));
+    }
+
+    fn stop_music(&mut self, fade_out_secs: f32) {
+        self.calls.push(AudioCall::StopMusic(fade_out_secs));
+    }
+}
+
+const AUDIO_CALLS: &str = r#"
+audio.play_sfx("hit", "sounds/hit.wav", 0.5)
+audio.play_music("sounds/music.ogg", 0.75, 2)
+audio.stop_sound("hit", 0.25)
+audio.stop_music(1)
+"#;
+
+#[test]
+fn audio_callbacks_forward_arguments_to_the_selected_backend() {
+    let runtime = ScriptRuntime::new();
+    let backend = Rc::new(RefCell::new(RecordingAudio::default()));
+    let root = PathBuf::from("project-root");
+    runtime
+        .register_audio_api(backend.clone(), root.clone())
+        .unwrap();
+    runtime
+        .run_limited(|| runtime.lua.load(AUDIO_CALLS).exec())
+        .unwrap();
+    assert_eq!(
+        backend.borrow().calls,
+        [
+            AudioCall::Sfx("hit".into(), root.clone(), "sounds/hit.wav".into(), 0.5),
+            AudioCall::Music(root, "sounds/music.ogg".into(), 0.75, 2.),
+            AudioCall::StopSound("hit".into(), 0.25),
+            AudioCall::StopMusic(1.),
+        ]
+    );
+}
+
+#[test]
+fn silent_audio_uses_the_same_typed_lua_surface_without_filesystem_io() {
+    let recording = ScriptRuntime::new();
+    recording
+        .register_audio_api(
+            Rc::new(RefCell::new(RecordingAudio::default())),
+            PathBuf::from("missing-project-root"),
+        )
+        .unwrap();
+    let silent = ScriptRuntime::new();
+    silent
+        .register_audio_api(
+            Rc::new(RefCell::new(SilentAudio)),
+            PathBuf::from("missing-project-root"),
+        )
+        .unwrap();
+    for runtime in [&recording, &silent] {
+        runtime
+            .run_limited(|| runtime.lua.load(AUDIO_CALLS).exec())
+            .unwrap();
+        runtime
+            .run_limited(|| {
+                runtime
+                    .lua
+                    .load("audio.play_sfx('escape', '../outside.wav', 1)")
+                    .exec()
+            })
+            .unwrap();
+        for invalid in [
+            "audio.play_sfx({}, 'sound.wav', 1)",
+            "audio.play_music('music.ogg', {}, 0)",
+            "audio.stop_sound('hit', {})",
+            "audio.stop_music({})",
+        ] {
+            assert!(runtime
+                .run_limited(|| runtime.lua.load(invalid).exec())
+                .is_err());
+        }
+    }
+}
+
+#[test]
+fn audio_backend_playback_failures_keep_existing_nonfatal_lua_behavior() {
+    let runtime = ScriptRuntime::new();
+    let backend = Rc::new(RefCell::new(RecordingAudio {
+        fail_playback: true,
+        ..Default::default()
+    }));
+    runtime
+        .register_audio_api(backend.clone(), PathBuf::from("project-root"))
+        .unwrap();
+    runtime
+        .run_limited(|| runtime.lua.load(AUDIO_CALLS).exec())
+        .unwrap();
+    assert_eq!(backend.borrow().calls.len(), 4);
+}
+
 #[test]
 fn script_loads_and_reloads_stay_inside_the_project() {
     let scratch = script_dir("confinement");

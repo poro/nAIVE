@@ -49,3 +49,9 @@ impl ParticleBillboardVertex {
         }
     }
 }
+
+impl AsMut<naive_sim::particles::ParticleSystem> for ParticleSystem {
+    fn as_mut(&mut self) -> &mut naive_sim::particles::ParticleSystem {
+        &mut self.0
+    }
+}

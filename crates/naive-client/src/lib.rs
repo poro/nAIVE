@@ -6,6 +6,9 @@ pub use naive_core::transform;
 pub use naive_core::tween;
 pub use naive_sim::components;
 
+#[cfg(test)]
+mod lifecycle_parity_tests;
+
 pub mod anim_system;
 pub mod audio;
 pub mod audio_gen;
