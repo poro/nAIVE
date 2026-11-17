@@ -252,7 +252,7 @@ impl TestRunner {
             Some(&self.script_runtime),
             dt,
         );
-        crate::sim::dispatch_collision_events(
+        crate::sim::dispatch_physics_events(
             &self.scene_world,
             &self.physics_world,
             &self.script_runtime,
@@ -1164,6 +1164,156 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn trigger_hooks_cover_dynamic_sensors_destruction_and_scene_reload() {
+        let project = Project::new(
+            r#"
+            entered = {}
+            exited = {}
+            function on_trigger_enter(other)
+                entered[#entered + 1] = other
+                local x = entity.get_position(_entity_string_id)
+                assert(x ~= nil)
+                physics.set_velocity(_entity_string_id, 0, 0, 0)
+            end
+            function on_trigger_exit(other)
+                exited[#exited + 1] = other
+                local x = entity.get_position(_entity_string_id)
+                assert(x ~= nil)
+                physics.set_velocity(_entity_string_id, 0, 0, 0)
+            end
+        "#,
+        );
+        project.write(
+            "scene.yaml",
+            r#"
+name: Triggers
+settings: {gravity: [0, 0, 0]}
+entities:
+  - id: dynamic_sensor
+    components:
+      rigid_body: {type: dynamic}
+      collider: {shape: sphere, radius: 1, is_trigger: true}
+      script: {source: game.lua}
+  - id: static_sensor
+    components:
+      collider: {shape: sphere, radius: 1, is_trigger: true}
+      script: {source: game.lua}
+  - id: actor
+    components:
+      rigid_body: {type: dynamic}
+      collider: {shape: sphere, radius: 0.5}
+"#,
+        );
+        let mut runner = TestRunner::new(&project.0);
+        runner.load_scene("scene.yaml").unwrap();
+        let environment = |runner: &TestRunner, id: &str| -> mlua::Table {
+            let entity = runner.scene_world.borrow().entity_registry[id];
+            runner
+                .script_runtime
+                .lua
+                .registry_value(&runner.script_runtime.entity_envs[&entity])
+                .unwrap()
+        };
+        let dynamic = environment(&runner, "dynamic_sensor");
+        let fixed = environment(&runner, "static_sensor");
+        let count =
+            |env: &mlua::Table, hook| -> usize { env.get::<mlua::Table>(hook).unwrap().raw_len() };
+        runner.step_frame(); // Two fixed steps: overlapping sensors each get two enters.
+        assert_eq!(count(&dynamic, "entered"), 2);
+        assert_eq!(count(&fixed, "entered"), 2);
+        assert!(runner.physics_world.borrow().collision_events.is_empty());
+        assert!(runner.physics_world.borrow().trigger_events.is_empty());
+        runner.step_frame();
+        runner.delta_time = 0.0;
+        runner.step_frame();
+        assert_eq!(count(&dynamic, "entered"), 2);
+        assert_eq!(count(&fixed, "entered"), 2);
+
+        runner
+            .entity_commands
+            .borrow_mut()
+            .destroys
+            .push("actor".into());
+        runner.step_frame(); // Destruction emits exits even when no physics step is due.
+        assert_eq!(count(&dynamic, "exited"), 1);
+        assert_eq!(count(&fixed, "exited"), 1);
+        assert_eq!(
+            dynamic
+                .get::<mlua::Table>("exited")
+                .unwrap()
+                .get::<String>(1)
+                .unwrap(),
+            "actor"
+        );
+        runner
+            .entity_commands
+            .borrow_mut()
+            .destroys
+            .push("dynamic_sensor".into());
+        runner.step_frame();
+        assert_eq!(
+            count(&dynamic, "exited"),
+            1,
+            "destroyed scripts must receive no further hooks"
+        );
+        assert_eq!(count(&fixed, "exited"), 2);
+        assert_eq!(
+            fixed
+                .get::<mlua::Table>("exited")
+                .unwrap()
+                .get::<String>(2)
+                .unwrap(),
+            "dynamic_sensor"
+        );
+        runner.delta_time = 1.0 / 60.0;
+        runner.step_frame();
+        assert_eq!(
+            count(&fixed, "exited"),
+            2,
+            "removal exit must not be replayed"
+        );
+
+        // Keep the old VM alive long enough to inspect its detached tables.
+        let previous_vm = runner.script_runtime.lua.clone();
+        runner.load_scene("scene.yaml").unwrap();
+        let replacement = environment(&runner, "static_sensor");
+        runner.step_frame();
+        assert_eq!(count(&replacement, "entered"), 2);
+        assert_eq!(count(&replacement, "exited"), 0);
+        assert_eq!(
+            count(&fixed, "entered"),
+            2,
+            "old scene callbacks must stay detached"
+        );
+        assert!(runner.take_errors().is_empty());
+        drop(previous_vm);
+    }
+
+    #[test]
+    fn a_scene_without_settings_uses_gravity_in_the_headless_runner() {
+        let project = Project::new("");
+        project.write("scene.yaml", "name: Defaults\nentities:\n  - id: falling\n    components:\n      transform: {position: [0, 10, 0]}\n      rigid_body: {type: dynamic}\n      collider: {shape: sphere}\n");
+        let mut runner = TestRunner::new(&project.0);
+        runner.load_scene("scene.yaml").unwrap();
+        runner.step_frame();
+        assert_eq!(
+            runner.physics_world.borrow().gravity,
+            glam::Vec3::new(0.0, -9.81, 0.0)
+        );
+        let world = runner.scene_world.borrow();
+        let falling = world.entity_registry["falling"];
+        assert!(
+            world
+                .world
+                .get::<&crate::components::Transform>(falling)
+                .unwrap()
+                .position
+                .y
+                < 10.0
+        );
     }
 
     #[test]
