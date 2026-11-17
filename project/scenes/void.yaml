@@ -69,7 +69,7 @@ entities:
         position: [0, -3, 0]
         scale: [50, 0.5, 50]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/dark_mirror.yaml
 
   # ============================================================
@@ -82,7 +82,7 @@ entities:
         position: [15, 2, 0]
         scale: [1, 8, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/void_monolith.yaml
       script:
         source: logic/void_drift.lua
@@ -94,7 +94,7 @@ entities:
         position: [7.5, 2, 12.99]
         scale: [1, 8, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/void_monolith.yaml
       script:
         source: logic/void_drift.lua
@@ -106,7 +106,7 @@ entities:
         position: [-7.5, 2, 12.99]
         scale: [1, 8, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/void_monolith.yaml
       script:
         source: logic/void_drift.lua
@@ -118,7 +118,7 @@ entities:
         position: [-15, 2, 0]
         scale: [1, 8, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/void_monolith.yaml
       script:
         source: logic/void_drift.lua
@@ -130,7 +130,7 @@ entities:
         position: [-7.5, 2, -12.99]
         scale: [1, 8, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/void_monolith.yaml
       script:
         source: logic/void_drift.lua
@@ -142,7 +142,7 @@ entities:
         position: [7.5, 2, -12.99]
         scale: [1, 8, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/void_monolith.yaml
       script:
         source: logic/void_drift.lua
@@ -346,7 +346,7 @@ entities:
         position: [3.54, 1, 3.54]
         scale: [0.3, 1.5, 0.3]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ice.yaml
       script:
         source: logic/titan_levitate.lua
@@ -358,7 +358,7 @@ entities:
         position: [-3.54, 1.5, 3.54]
         scale: [0.3, 1.5, 0.3]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ice.yaml
       script:
         source: logic/titan_levitate.lua
@@ -370,7 +370,7 @@ entities:
         position: [-3.54, 0.5, -3.54]
         scale: [0.3, 1.5, 0.3]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ice.yaml
       script:
         source: logic/titan_levitate.lua
@@ -382,7 +382,7 @@ entities:
         position: [3.54, 1.2, -3.54]
         scale: [0.3, 1.5, 0.3]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/titan_ice.yaml
       script:
         source: logic/titan_levitate.lua
@@ -632,7 +632,7 @@ entities:
         position: [9, 5, 4]
         scale: [0.4, 0.4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
       script:
         source: logic/void_drift.lua
@@ -644,7 +644,7 @@ entities:
         position: [-5, 7, -9]
         scale: [0.35, 0.35, 0.35]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
       script:
         source: logic/void_drift.lua
@@ -656,7 +656,7 @@ entities:
         position: [-10, 4, 6]
         scale: [0.5, 0.3, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
       script:
         source: logic/void_drift.lua
@@ -668,7 +668,7 @@ entities:
         position: [3, 8, -12]
         scale: [0.45, 0.45, 0.45]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/obsidian.yaml
       script:
         source: logic/void_drift.lua

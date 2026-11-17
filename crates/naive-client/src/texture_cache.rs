@@ -35,10 +35,8 @@ impl TextureCache {
             return Ok(handle);
         }
 
-        let full_path = crate::project_path::resolve(project_root, texture_path)?;
-        let img = image::open(&full_path)
-            .map_err(|e| format!("Failed to load texture '{}': {}", full_path.display(), e))?
-            .to_rgba8();
+        let img = naive_sim::assets::load_texture(project_root, texture_path)
+            .map_err(|error| error.to_string())?;
 
         let (width, height) = img.dimensions();
         let pixels = img.into_raw();

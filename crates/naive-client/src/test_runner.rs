@@ -3,7 +3,11 @@
 //! Runs Lua test scripts that inject input, advance game time, and assert
 //! that game events occurred. No GPU or window required.
 
+#[cfg(test)]
+mod asset_tests;
 mod limits;
+#[cfg(test)]
+mod presentation_tests;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -42,6 +46,11 @@ pub struct TestRunner {
     pub script_runtime: ScriptRuntime,
     pub event_bus: Rc<RefCell<EventBus>>,
     pub tween_system: TweenSystem,
+    pub asset_catalog: Rc<RefCell<naive_sim::assets::AssetCatalog>>,
+    pub viewport: Rc<RefCell<naive_sim::presentation::Viewport>>,
+    pub ui_frame: Rc<RefCell<naive_sim::presentation::UiFrame>>,
+    pub particle_system: Rc<RefCell<crate::particles::ParticleSystem>>,
+    pub camera_shake: Rc<RefCell<crate::scripting::CameraShakeState>>,
     pub delta_time: f32,
     pub total_time: f32,
     pub frame_count: u64,
@@ -56,6 +65,7 @@ pub struct TestRunner {
     /// Failures remain sticky across scene changes and caught Lua errors.
     errors: RefCell<Vec<String>>,
     execution_budget: Rc<TestBudget>,
+    ui_presented: bool,
 }
 
 impl TestRunner {
@@ -75,6 +85,13 @@ impl TestRunner {
             script_runtime: ScriptRuntime::new(),
             event_bus: Rc::new(RefCell::new(EventBus::new(1000))),
             tween_system: TweenSystem::new(),
+            asset_catalog: Rc::new(RefCell::new(naive_sim::assets::AssetCatalog::new(
+                project_root,
+            ))),
+            viewport: Rc::new(RefCell::new(Default::default())),
+            ui_frame: Rc::new(RefCell::new(Default::default())),
+            particle_system: Rc::new(RefCell::new(crate::particles::ParticleSystem::new())),
+            camera_shake: Rc::new(RefCell::new(Default::default())),
             delta_time: 1.0 / 60.0,
             total_time: 0.0,
             frame_count: 0,
@@ -87,6 +104,7 @@ impl TestRunner {
             cpu_swarms: CpuSwarms::new(),
             errors: RefCell::new(Vec::new()),
             execution_budget: TestBudget::new(limits),
+            ui_presented: false,
         }
     }
 
@@ -113,7 +131,10 @@ impl TestRunner {
         let scene = crate::scene::load_scene(&scene_path)
             .map_err(|e| format!("Failed to load scene: {:?}", e))?;
         for definition in &scene.entities {
-            validate_headless_entity(definition)?;
+            crate::world::prepare_headless_assets(
+                definition,
+                &mut self.asset_catalog.borrow_mut(),
+            )?;
         }
 
         // Use the same teardown as live destruction, without holding a world
@@ -150,8 +171,22 @@ impl TestRunner {
         {
             let mut sw = self.scene_world.borrow_mut();
             let mut pw = self.physics_world.borrow_mut();
-            crate::world::spawn_all_entities_headless(&mut sw, &scene, &mut pw);
+            for definition in &scene.entities {
+                crate::world::spawn_entity_headless_with_assets(
+                    &mut sw,
+                    definition,
+                    &mut pw,
+                    &mut self.asset_catalog.borrow_mut(),
+                )?;
+            }
+            sw.current_scene = Some(scene.clone());
         }
+
+        *self.ui_frame.borrow_mut() = Default::default();
+        self.ui_presented = false;
+        *self.particle_system.borrow_mut() = crate::particles::ParticleSystem::new();
+        *self.camera_shake.borrow_mut() = Default::default();
+        self.attach_animators();
 
         // Initialize scripting
         self.script_runtime = ScriptRuntime::new();
@@ -194,6 +229,30 @@ impl TestRunner {
         self.script_runtime
             .register_mesh_api(self.entity_commands.clone())
             .map_err(|e| format!("Mesh API: {e}"))?;
+        self.script_runtime
+            .register_ui_api(
+                self.ui_frame.clone(),
+                naive_sim::presentation::FontMetrics::default(),
+                self.viewport.clone(),
+            )
+            .map_err(|e| format!("UI API: {e}"))?;
+        self.script_runtime
+            .register_camera_api(
+                self.scene_world.clone(),
+                self.physics_world.clone(),
+                self.viewport.clone(),
+                self.camera_shake.clone(),
+            )
+            .map_err(|e| format!("Camera API: {e}"))?;
+        self.script_runtime
+            .register_camera_shake_api(self.camera_shake.clone())
+            .map_err(|e| format!("Camera shake API: {e}"))?;
+        self.script_runtime
+            .register_particle_api(self.scene_world.clone(), self.particle_system.clone())
+            .map_err(|e| format!("Particle API: {e}"))?;
+        self.script_runtime
+            .register_animation_api(self.scene_world.clone())
+            .map_err(|e| format!("Animation API: {e}"))?;
         *self.swarm_bus.borrow_mut() = SwarmBus::new();
         self.cpu_swarms.clear();
         register_swarm_api(
@@ -232,6 +291,9 @@ impl TestRunner {
             return;
         }
         let dt = self.delta_time;
+        if self.ui_presented {
+            self.ui_frame.borrow_mut().intents.clear();
+        }
 
         // Apply synthetic inputs
         self.input_state.borrow_mut().begin_frame();
@@ -272,6 +334,9 @@ impl TestRunner {
         );
         crate::sim::process_health(&self.scene_world, &self.script_runtime);
         crate::sim::update_scripts(&self.scene_world, &self.script_runtime, dt);
+        self.tick_animations(dt);
+        self.ui_frame.borrow_mut().advance(dt);
+        self.camera_shake.borrow_mut().advance(dt);
         self.process_entity_commands();
         crate::sim::dispatch_lua_events(
             &self.event_bus,
@@ -280,6 +345,10 @@ impl TestRunner {
             dt,
         );
         let _tween_results = self.tween_system.update(dt);
+
+        self.particle_system
+            .borrow_mut()
+            .update(dt, &self.scene_world.borrow().world);
 
         // Update transforms
         {
@@ -295,6 +364,7 @@ impl TestRunner {
             dt,
         );
 
+        self.ui_presented = true;
         self.total_time += dt;
         self.frame_count += 1;
     }
@@ -484,6 +554,7 @@ impl TestRunner {
                 }
             }
         }
+        self.attach_animators();
         if let Err(error) = crate::sim::initialize_pending_scripts(
             &self.scene_world,
             &mut self.script_runtime,
@@ -497,10 +568,6 @@ impl TestRunner {
     }
 
     fn spawn_definition(&self, definition: &crate::scene::EntityDef) -> Option<hecs::Entity> {
-        if let Err(error) = validate_headless_entity(definition) {
-            self.errors.borrow_mut().push(error);
-            return None;
-        }
         let mut world = self.scene_world.borrow_mut();
         if world.entity_registry.contains_key(&definition.id) {
             self.errors
@@ -508,12 +575,82 @@ impl TestRunner {
                 .push(format!("Cannot spawn duplicate entity '{}'", definition.id));
             return None;
         }
-        crate::world::spawn_entity_headless(
+        if let Err(error) = crate::world::spawn_entity_headless_with_assets(
             &mut world,
             definition,
             &mut self.physics_world.borrow_mut(),
-        );
+            &mut self.asset_catalog.borrow_mut(),
+        ) {
+            self.errors.borrow_mut().push(error);
+            return None;
+        }
         world.entity_registry.get(&definition.id).copied()
+    }
+
+    /// Resize the virtual pixel surface. Lua queries read this immediately.
+    pub fn set_viewport(&mut self, width: u32, height: u32) {
+        *self.viewport.borrow_mut() = naive_sim::presentation::Viewport::new(width, height);
+    }
+
+    fn attach_animators(&self) {
+        let mut world = self.scene_world.borrow_mut();
+        let assets = self.asset_catalog.borrow();
+        let pending: Vec<_> = world
+            .world
+            .query::<(hecs::Entity, &crate::components::MeshRenderer)>()
+            .iter()
+            .filter_map(|(entity, mesh)| {
+                assets
+                    .mesh_data(mesh.mesh_handle)
+                    .and_then(|mesh| mesh.skin.as_ref())
+                    .map(|_| (entity, mesh.mesh_handle))
+            })
+            .collect();
+        for (entity, mesh) in pending {
+            if world
+                .world
+                .get::<&crate::components::Animator>(entity)
+                .is_ok()
+            {
+                continue;
+            }
+            let controller = {
+                let definition = world
+                    .world
+                    .get::<&crate::world::SceneEntityDefinition>(entity)
+                    .ok();
+                let definition = definition
+                    .as_ref()
+                    .and_then(|d| d.0.components.animator.as_ref());
+                naive_sim::animation::controller_from_definition(definition)
+            };
+            let skeleton_handle = crate::components::SkeletonHandle(mesh.0);
+            let _ = world.world.insert_one(
+                entity,
+                crate::components::Animator {
+                    skeleton_handle,
+                    controller,
+                },
+            );
+            let _ = world.world.insert_one(entity, skeleton_handle);
+        }
+    }
+
+    fn tick_animations(&self, dt: f32) {
+        let world = self.scene_world.borrow();
+        let assets = self.asset_catalog.borrow();
+        for animator in world
+            .world
+            .query::<&mut crate::components::Animator>()
+            .iter()
+        {
+            if let Some(skin) = assets
+                .mesh_data(crate::components::MeshHandle(animator.skeleton_handle.0))
+                .and_then(|mesh| mesh.skin.as_ref())
+            {
+                naive_sim::animation::advance_controller(&mut animator.controller, &skin.clips, dt);
+            }
+        }
     }
 
     pub fn take_errors(&self) -> Vec<String> {
@@ -584,18 +721,6 @@ impl TestRunner {
         let transform = sw.world.get::<&Transform>(entity).ok()?;
         Some(transform.position)
     }
-}
-
-fn validate_headless_entity(definition: &crate::scene::EntityDef) -> Result<(), String> {
-    if definition
-        .components
-        .collider
-        .as_ref()
-        .is_some_and(|collider| collider.shape == "trimesh")
-    {
-        return Err(format!("Headless tests cannot construct trimesh collider for '{}'; use the native release smoke test", definition.id));
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1531,7 +1656,7 @@ entities:
     }
 
     #[test]
-    fn unsupported_trimesh_colliders_fail_instead_of_using_a_different_shape() {
+    fn meshless_trimesh_colliders_fail_instead_of_using_a_different_shape() {
         let project = Project::new("");
         project.write("scene.yaml", "name: Trimesh\nentities:\n  - id: actor\n    components:\n      collider: {shape: trimesh}\n");
         let result = project.run("pcall(scene.load, 'scene.yaml')");
@@ -1540,11 +1665,13 @@ entities:
         project.write("scene.yaml", "name: Spawn\nentities:\n  - id: actor\n    components:\n      script: {source: game.lua}\n");
         project.write(
             "game.lua",
-            "function init() entity.spawn_ex({id='mesh', collider={shape='trimesh'}}) end",
+            "function init() entity.spawn_ex({id='mesh', mesh='procedural:plane', collider={shape='trimesh'}}) end",
         );
-        let result = project.run("scene.load('scene.yaml')\nwait_frames(1)");
-        assert!(!result.passed);
-        assert!(result.error.unwrap().contains("trimesh collider"));
+        // A planar fixture keeps collider construction within the test's
+        // wall-clock budget while exercising a real, supported mesh asset.
+        let result =
+            project.run("scene.load('scene.yaml')\nwait_frames(1)\nlocal x, y, z = get_position('mesh'); assert(x == 0 and y == 0 and z == 0)");
+        assert!(result.passed, "{:?}", result.error);
     }
 
     #[test]

@@ -17,7 +17,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | Crate | Purpose |
 |-------|---------|
 | `naive-core` | Scene schema, shared types, typed command requests/responses and MCP tool schemas |
-| `naive-sim` | Simulation without GPU, window or audio (so far `physics`, `input` and `project_path`, re-exported by `naive-client`; the engine maps winit events onto `input::InputEvent` in `engine/winit_input.rs`). Must never depend on wgpu/winit/kira; CI checks. Plan: `docs/sim-split-plan.md` |
+| `naive-sim` | CPU physics, input, project paths, validated asset decoding, particles, animation playback helpers and presentation contracts (camera/viewport/UI intents). Must never depend on wgpu/winit/kira; CI checks. Native world/script adapters remain in `naive-client`. Plan: `docs/sim-split-plan.md` |
 | `naive-client` | Engine loop, renderer, scripting, world management |
 | `naive-runtime` | CLI binary (`naive`, `naive-runtime`, `naive_mcp`) |
 | `naive-player` | `naive` built without Slang; `naive build` ships it in game bundles. Build it alone (`cargo build -p naive-player`) so feature unification cannot link Slang into it |

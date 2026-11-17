@@ -35,7 +35,7 @@ entities:
         position: [0, -0.2, 0]
         scale: [12, 0.1, 12]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/dark_floor.yaml
 
   # Grid controller — spawns tiles and renders numbers

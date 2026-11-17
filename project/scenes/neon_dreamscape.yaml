@@ -25,7 +25,7 @@ entities:
         position: [0, -0.5, 0]
         scale: [20, 1, 20]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/dark_floor.yaml
 
   # === Neon Pillars (hexagonal arrangement, radius ~4) ===
@@ -36,7 +36,7 @@ entities:
         position: [4, 2, 0]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/neon_pink.yaml
 
   - id: pillar_neon_2
@@ -46,7 +46,7 @@ entities:
         position: [2, 2, 3.46]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/neon_cyan.yaml
 
   - id: pillar_neon_3
@@ -56,7 +56,7 @@ entities:
         position: [-2, 2, 3.46]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/neon_purple.yaml
 
   - id: pillar_neon_4
@@ -66,7 +66,7 @@ entities:
         position: [-4, 2, 0]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/neon_gold.yaml
 
   - id: pillar_neon_5
@@ -76,7 +76,7 @@ entities:
         position: [-2, 2, -3.46]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/neon_blue.yaml
 
   - id: pillar_neon_6
@@ -86,7 +86,7 @@ entities:
         position: [2, 2, -3.46]
         scale: [0.4, 4, 0.4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/neon_green.yaml
 
   # === Floating Emissive Cubes ===
@@ -97,7 +97,7 @@ entities:
         position: [0, 2.5, 0]
         scale: [0.8, 0.8, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/neon_pink.yaml
       script:
         source: logic/float_bob.lua
@@ -109,7 +109,7 @@ entities:
         position: [1.5, 1.8, -1]
         scale: [0.6, 0.6, 0.6]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/neon_cyan.yaml
       script:
         source: logic/float_bob.lua
@@ -121,7 +121,7 @@ entities:
         position: [-1.2, 3.2, 0.5]
         scale: [0.5, 0.5, 0.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/neon_purple.yaml
       script:
         source: logic/float_bob.lua

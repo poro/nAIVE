@@ -59,7 +59,7 @@ impl ScriptRuntime {
                 let sw = sw.borrow();
                 let mut ps = ps.borrow_mut();
                 if let Some(&entity) = sw.entity_registry.get(&id) {
-                    ps.burst_on_entity(entity, count, &sw);
+                    ps.burst_on_entity(entity, count, &sw.world);
                 }
                 Ok(())
             })
@@ -79,7 +79,7 @@ impl ScriptRuntime {
                 move |_, (x, y, z, count, config_tbl): (f32, f32, f32, u32, LuaTable)| {
                     let mut ps = ps.borrow_mut();
                     let config = crate::components::ParticleConfig {
-                        max_particles: count * 2,
+                        max_particles: count.saturating_mul(2),
                         spawn_rate: 0.0,
                         lifetime: [
                             config_tbl.get::<f32>("lifetime_min").unwrap_or(0.5),

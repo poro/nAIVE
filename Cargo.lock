@@ -2202,11 +2202,14 @@ dependencies = [
  "glam 0.34.3",
  "gltf",
  "hecs",
+ "image",
  "naive-core",
+ "ply-rs",
  "rapier3d",
  "serde",
  "serde_json",
  "serde_norway",
+ "stl_io",
  "tracing",
 ]
 

@@ -27,10 +27,8 @@ use mlua::{HookTriggers, LuaOptions, StdLib, VmState};
 
 use crate::audio::AudioSystem;
 use crate::events::EventBus;
-use crate::font::BitmapFont;
 use crate::input::InputState;
 use crate::physics::PhysicsWorld;
-use crate::ui::UiRenderer;
 use crate::world::{EntityCommandQueue, EntityPoolManager, SceneWorld};
 
 type LuaListeners = Rc<RefCell<HashMap<String, Vec<LuaRegistryKey>>>>;
@@ -47,9 +45,8 @@ pub type SharedPhysicsWorld = Rc<RefCell<PhysicsWorld>>;
 pub type SharedInputState = Rc<RefCell<InputState>>;
 pub type SharedEntityCommandQueue = Rc<RefCell<EntityCommandQueue>>;
 pub type SharedEntityPoolManager = Rc<RefCell<EntityPoolManager>>;
-pub type SharedUiRenderer = Rc<RefCell<UiRenderer>>;
-pub type SharedBitmapFont = Rc<RefCell<BitmapFont>>;
 pub type SharedCameraShakeState = Rc<RefCell<CameraShakeState>>;
+pub type SharedCameraOverride = Rc<RefCell<Option<naive_sim::presentation::CameraView>>>;
 pub type SharedEventBus = Rc<RefCell<EventBus>>;
 pub type SharedAudioSystem = Rc<RefCell<AudioSystem>>;
 pub type SharedParticleSystem = Rc<RefCell<crate::particles::ParticleSystem>>;
@@ -61,30 +58,7 @@ pub struct Script {
     pub initialized: bool,
 }
 
-/// Camera shake state, stored in Engine and passed by pointer to Lua.
-pub struct CameraShakeState {
-    pub intensity: f32,
-    pub duration: f32,
-    pub timer: f32,
-    pub seed: u32,
-}
-
-impl CameraShakeState {
-    pub fn new() -> Self {
-        Self {
-            intensity: 0.0,
-            duration: 0.0,
-            timer: 0.0,
-            seed: 0,
-        }
-    }
-}
-
-impl Default for CameraShakeState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub use naive_sim::presentation::CameraShakeState;
 
 /// How often the CPU limit is checked, in Lua VM instructions.
 const HOOK_INTERVAL: u32 = 10_000;

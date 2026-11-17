@@ -37,7 +37,7 @@ entities:
         position: [0, -0.5, 0]
         scale: [32, 1, 32]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_floor.yaml
       collider:
         shape: box
@@ -50,7 +50,7 @@ entities:
         position: [0, 3, -16]
         scale: [32, 6, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_wall.yaml
       collider:
         shape: box
@@ -63,7 +63,7 @@ entities:
         position: [0, 3, 16]
         scale: [32, 6, 1]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_wall.yaml
       collider:
         shape: box
@@ -76,7 +76,7 @@ entities:
         position: [16, 3, 0]
         scale: [1, 6, 32]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_wall.yaml
       collider:
         shape: box
@@ -89,7 +89,7 @@ entities:
         position: [-16, 3, 0]
         scale: [1, 6, 32]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_wall.yaml
       collider:
         shape: box
@@ -105,7 +105,7 @@ entities:
         position: [10, -0.3, -10]
         scale: [4, 0.3, 4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_lava.yaml
       script:
         source: logic/inferno_lava_glow.lua
@@ -117,7 +117,7 @@ entities:
         position: [-10, -0.3, -10]
         scale: [4, 0.3, 4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_lava.yaml
       script:
         source: logic/inferno_lava_glow.lua
@@ -129,7 +129,7 @@ entities:
         position: [10, -0.3, 10]
         scale: [4, 0.3, 4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_lava.yaml
       script:
         source: logic/inferno_lava_glow.lua
@@ -141,7 +141,7 @@ entities:
         position: [-10, -0.3, 10]
         scale: [4, 0.3, 4]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_lava.yaml
       script:
         source: logic/inferno_lava_glow.lua
@@ -156,7 +156,7 @@ entities:
         position: [6, 2.5, -6]
         scale: [1.5, 5, 1.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_iron.yaml
       collider:
         shape: box
@@ -169,7 +169,7 @@ entities:
         position: [-6, 2.5, -6]
         scale: [1.5, 5, 1.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_iron.yaml
       collider:
         shape: box
@@ -182,7 +182,7 @@ entities:
         position: [6, 2.5, 6]
         scale: [1.5, 5, 1.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_iron.yaml
       collider:
         shape: box
@@ -195,7 +195,7 @@ entities:
         position: [-6, 2.5, 6]
         scale: [1.5, 5, 1.5]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_iron.yaml
       collider:
         shape: box
@@ -211,7 +211,7 @@ entities:
         position: [8, 0.75, -8]
         scale: [0.8, 1.5, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_demon.yaml
       script:
         source: logic/inferno_enemy.lua
@@ -223,7 +223,7 @@ entities:
         position: [-8, 0.75, -8]
         scale: [0.8, 1.5, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_demon.yaml
       script:
         source: logic/inferno_enemy.lua
@@ -235,7 +235,7 @@ entities:
         position: [0, 0.75, -12]
         scale: [0.8, 1.5, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_demon.yaml
       script:
         source: logic/inferno_enemy.lua
@@ -247,7 +247,7 @@ entities:
         position: [10, 0.75, 3]
         scale: [0.8, 1.5, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_demon.yaml
       script:
         source: logic/inferno_enemy.lua
@@ -259,7 +259,7 @@ entities:
         position: [-10, 0.75, 3]
         scale: [0.8, 1.5, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_demon.yaml
       script:
         source: logic/inferno_enemy.lua
@@ -271,7 +271,7 @@ entities:
         position: [0, 0.75, 0]
         scale: [0.8, 1.5, 0.8]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/inferno_demon.yaml
       script:
         source: logic/inferno_enemy.lua

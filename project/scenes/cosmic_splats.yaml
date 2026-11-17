@@ -36,7 +36,7 @@ entities:
         position: [0, -0.3, 0]
         scale: [1.5, 0.6, 1.5]
       mesh_renderer:
-        mesh: "assets/meshes/cube.gltf"
+        mesh: "procedural:cube"
         material: "assets/materials/dark_floor.yaml"
 
   - id: crystal
@@ -47,7 +47,7 @@ entities:
         rotation: [45, 45, 0]
         scale: [0.6, 0.6, 0.6]
       mesh_renderer:
-        mesh: "assets/meshes/cube.gltf"
+        mesh: "procedural:cube"
         material: "assets/materials/neon_cyan.yaml"
       script:
         source: logic/float_bob.lua

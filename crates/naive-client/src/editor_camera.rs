@@ -98,34 +98,26 @@ impl EditorCamera {
         width: u32,
         height: u32,
     ) {
-        let view = glam::camera::rh::view::look_to_mat4(self.position, self.forward(), Vec3::Y);
-        let projection = glam::camera::rh::proj::directx::perspective(
-            self.fov_degrees.to_radians(),
-            width as f32 / height.max(1) as f32,
-            self.near,
-            self.far,
-        );
-        let view_projection = projection * view;
-        let inv_view_projection = view_projection.inverse();
+        let view = self.view(naive_sim::presentation::Viewport::new(width, height));
+        camera_state.update(queue, &view.camera, &view.transform, width, height);
+    }
 
-        camera_state.uniform = crate::camera::CameraUniform {
-            view: view.to_cols_array_2d(),
-            projection: projection.to_cols_array_2d(),
-            view_projection: view_projection.to_cols_array_2d(),
-            position: self.position.to_array(),
-            near_plane: self.near,
-            far_plane: self.far,
-            _pad1: 0.0,
-            viewport_size: [width as f32, height as f32],
-            _pad2: [0.0; 4],
-            inv_view_projection: inv_view_projection.to_cols_array_2d(),
+    pub fn view(
+        &self,
+        viewport: naive_sim::presentation::Viewport,
+    ) -> naive_sim::presentation::CameraView {
+        let camera = crate::components::Camera {
+            fov_degrees: self.fov_degrees,
+            near: self.near,
+            far: self.far,
+            ..Default::default()
         };
-
-        queue.write_buffer(
-            &camera_state.buffer,
-            0,
-            bytemuck::cast_slice(&[camera_state.uniform]),
-        );
+        let transform = crate::components::Transform {
+            position: self.position,
+            rotation: self.rotation(),
+            ..Default::default()
+        };
+        naive_sim::presentation::CameraView::new(&camera, &transform, viewport)
     }
 
     fn forward(&self) -> Vec3 {

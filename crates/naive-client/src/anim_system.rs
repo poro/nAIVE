@@ -180,39 +180,17 @@ impl AnimationSystem {
             None => return palette,
         };
 
-        // Resolve active clip if needed
-        if animator.controller.active_clip_index.is_none() {
-            let clip_name = animator.controller.current_state.clip_name();
-            animator.controller.active_clip_index = self
-                .skeleton_store
-                .find_clip(animator.skeleton_handle, clip_name)
-                .or_else(|| {
-                    // Fallback: try first clip
-                    if self.skeleton_store.clip_count(animator.skeleton_handle) > 0 {
-                        Some(0)
-                    } else {
-                        None
-                    }
-                });
-        }
-
-        let clip_index = match animator.controller.active_clip_index {
-            Some(idx) => idx,
-            None => return palette,
-        };
-
         let clips = match self.skeleton_store.get_clips(animator.skeleton_handle) {
-            Some(c) => c,
+            Some(clips) => clips,
             None => return palette,
         };
-
-        let clip = match clips.get(clip_index) {
-            Some(c) => c,
-            None => return palette,
+        let Some(clip_index) =
+            naive_sim::animation::advance_controller(&mut animator.controller, clips, dt)
+        else {
+            return palette;
         };
-
-        // Advance time
-        let time = animator.controller.tick(dt, clip.duration);
+        let clip = &clips[clip_index];
+        let time = animator.controller.current_time;
 
         // Prepare scratch transforms from skeleton rest pose
         let joint_count = skeleton.joints.len().min(MAX_JOINTS);
@@ -244,15 +222,7 @@ impl AnimationSystem {
 fn animation_controller(
     definition: Option<&naive_core::scene::AnimatorDef>,
 ) -> naive_core::animation::AnimationController {
-    let Some(definition) = definition else {
-        return Default::default();
-    };
-    naive_core::animation::AnimationController {
-        current_state: naive_core::animation::AnimState::from_name(&definition.state),
-        speed: definition.speed,
-        looping: definition.looping,
-        ..Default::default()
-    }
+    naive_sim::animation::controller_from_definition(definition)
 }
 
 impl Default for AnimationSystem {

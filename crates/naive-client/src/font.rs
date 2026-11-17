@@ -139,8 +139,8 @@ pub fn glyph_uvs(font: &BitmapFont, ch: char) -> [f32; 4] {
 
 // --- Atlas constants ---
 
-const GLYPH_W: u32 = 6;
-const GLYPH_H: u32 = 8;
+const GLYPH_W: u32 = naive_sim::presentation::BITMAP_GLYPH_WIDTH;
+const GLYPH_H: u32 = naive_sim::presentation::BITMAP_GLYPH_HEIGHT;
 const ATLAS_COLS: u32 = 16;
 const ATLAS_ROWS: u32 = 6;
 const GLYPH_COUNT: u32 = 95; // ASCII 32–126

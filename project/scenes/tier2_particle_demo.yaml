@@ -25,7 +25,7 @@ entities:
         position: [0, -0.5, 0]
         scale: [30, 1, 30]
       mesh_renderer:
-        mesh: assets/meshes/cube.gltf
+        mesh: procedural:cube
         material: assets/materials/dark_floor.yaml
       collider:
         shape: box
