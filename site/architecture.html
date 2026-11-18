@@ -268,6 +268,7 @@ graph TB
 sequenceDiagram
     participant W as winit
     participant E as Engine
+    participant F as Frame schedule (naive-sim)
     participant I as InputState
     participant P as PhysicsWorld
     participant S as ScriptRuntime
@@ -277,47 +278,38 @@ sequenceDiagram
     participant U as UiRenderer
 
     W->>E: KeyboardInput / MouseInput
-    E->>I: handle_window_event()
+    E->>I: handle_event()
 
     W->>E: RedrawRequested
-    E->>E: calculate delta_time
+    E->>E: delta_time, MCP commands, editor camera, cursor capture
 
-    Note over E: Escape → release cursor
-    Note over E: Any key → capture cursor
-
-    E->>I: axis_2d() / pressed()
-    E->>P: move_character(desired_velocity)
-    P->>P: step(dt)
-    P-->>E: sync_to_ecs()
-
+    E->>F: run_frame(dt) over FRAME_PHASES
+    Note over F: naive test runs these same phases in the same order
+    F->>P: character controller (cursor captured, not in the editor)
+    F->>P: fixed 1/120 s steps, fixed_update before each
+    F->>S: collision and trigger hooks, collision damage, projectiles
+    F->>S: swarm reports, health and on_death
     loop For each Script entity
-        E->>S: call_update(entity, dt)
-        S->>I: input.just_pressed()
-        S->>EB: events.emit()
-        S->>E: entity.set_position()
+        F->>S: call_update(entity, dt)
         S->>Q: entity.spawn() / destroy()
+        S->>EB: events.emit()
         S->>U: ui.text() / ui.rect()
     end
+    F->>E: animation hook (bone palettes)
+    F->>F: UI flash and camera-shake timers
+    F->>Q: destroys, then the engine hook builds spawns, meshes, textures
+    F->>E: scene.load hook (replace the scene in place)
+    F->>EB: tick(dt) + flush() to Lua listeners
+    F->>E: limit-report hook (HUD)
+    F->>F: tweens, particles
+    F->>E: audio hook (cleanup, listener)
+    F->>F: update_transforms()
+    F->>E: swarm hook (GPU compute step)
 
-    E->>Q: process_entity_commands()
-    Q-->>E: spawn / destroy / scale / visible
-
-    E->>EB: tick(dt) + flush()
-    E->>E: update_transforms()
-
+    E->>E: camera, sky, draw buffer, splat sort, UI intents
     E->>R: execute_pipeline_to_view()
-    R->>R: Shadow Pass
-    R->>R: G-Buffer Pass
-    R->>R: Splat Pass
-    R->>R: Lighting Pass (Cook-Torrance GGX)
-    R->>R: Bloom Pass
-    R->>R: Tonemap Pass
-    R->>R: FXAA Pass
-
+    R->>R: Shadow, G-Buffer, Splat, Lighting, Bloom, Tonemap, FXAA
     E->>U: ui.render() [LoadOp::Load]
-    U->>U: colored rects pipeline
-    U->>U: textured text pipeline
-
     E->>E: present swapchain
     E->>I: begin_frame() [clear transient]
     E->>W: request_redraw()

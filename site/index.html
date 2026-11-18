@@ -88,7 +88,7 @@
       <div class="feature"><div class="icon">⚡</div><h3>Sub-Second Hot-Reload</h3><p>Shaders in &lt;200ms, scenes in &lt;100ms, scripts in &lt;50ms. Zero frame drops. State preserved across reloads. 100x faster than Unity/Unreal.</p></div>
       <div class="feature"><div class="icon">📄</div><h3>YAML-Driven Everything</h3><p>Scenes, render pipelines, materials, input bindings — all human-readable YAML. Git-friendly, diffable, and trivially generatable by LLMs.</p></div>
       <div class="feature"><div class="icon">🧠</div><h3>MCP Command Interface</h3><p>20 typed tools over a Unix socket: spawn and edit entities, run Lua, capture frames and diff screenshots, run tests, benchmark, undo. Claude, GPT, or your own agent drives the running engine.</p></div>
-      <div class="feature"><div class="icon">🧪</div><h3>Headless AI Playtesting</h3><p>The simulation lives in its own GPU-free crate, so tests run the same construction, physics and Lua as the game — no GPU, no window. Fixed timestep, supervised runs with hard deadlines.</p></div>
+      <div class="feature"><div class="icon">🧪</div><h3>Headless AI Playtesting</h3><p>The simulation lives in its own GPU-free crate, and tests step it through the same ordered frame schedule as the game: the same construction, physics, Lua and frame order — no GPU, no window. Fixed timestep, supervised runs with hard deadlines.</p></div>
       <div class="feature"><div class="icon">🔺</div><h3>Declarative Render DAG</h3><p>One YAML file defines the deferred PBR pipeline: shadows, G-buffer, Gaussian splats, lighting, bloom, tonemap, FXAA. Topological sorting and cycle detection built in.</p></div>
       <div class="feature"><div class="icon">🌐</div><h3>Gaussian Splats (3DGS)</h3><p>First-class engine feature. PLY loading, depth compositing with mesh geometry, hardware-accelerated rendering. Not a plugin — built in.</p></div>
       <div class="feature"><div class="icon">💥</div><h3>Dynamic Physics</h3><p><code>entity.spawn_dynamic()</code> for runtime physics bodies. Physics materials with restitution/friction, CCD for fast projectiles, impulse/force/velocity API.</p></div>
@@ -223,8 +223,8 @@
         <li>Entity Component System (hecs) — data-oriented design</li>
         <li>Rapier3D physics — rigid bodies, character controllers</li>
         <li>Kira spatial audio — 3D sound, doppler, attenuation</li>
-        <li>Slang shaders, precompiled to WGSL for shipping</li>
-            <li>GPU-free <code>naive-sim</code> crate shared by game and tests</li>
+        <li>Slang shaders, confined to the project and precompiled to WGSL for shipping</li>
+        <li>GPU-free <code>naive-sim</code> crate and one frame schedule shared by game and tests</li>
       </ul></div>
       <div class="card"><h3>Data Layer — YAML + glTF</h3><ul>
         <li>YAML for scenes, pipelines, materials, input, events</li>
