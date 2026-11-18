@@ -98,6 +98,11 @@ const MAX_QUADS: usize = 4096;
 const MAX_VERTICES: usize = MAX_QUADS * 4;
 const MAX_INDICES: usize = MAX_QUADS * 6;
 
+// Each queue holds at most `MAX_QUADS` quads, so a merged frame's largest
+// index (a textured vertex offset past every colored one) is below
+// `2 * MAX_VERTICES` and fits the u16 index format.
+const _: () = assert!(2 * MAX_VERTICES <= u16::MAX as usize + 1);
+
 // ── UiRenderer ──────────────────────────────────────────────────────
 
 pub struct UiRenderer {
@@ -107,13 +112,80 @@ pub struct UiRenderer {
     textured_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    // Per-frame draw data
+    /// Draw commands queued for the next `render`.
+    queue: UiQueue,
+    /// Whether the "overlay is full" warning has been logged.
+    warned_full: bool,
+    /// What the last `render` drew, so a frame capture can include the HUD.
+    last_frame: DrawnUi,
+}
+
+/// UI geometry queued for one frame: colored quads and textured (text)
+/// quads in separate lists, each capped at `MAX_QUADS`. Kept apart from the
+/// GPU objects so it can be tested without a device.
+#[derive(Default)]
+struct UiQueue {
     col_verts: Vec<Vertex2D>,
     col_idx: Vec<u16>,
     tex_verts: Vec<Vertex2D>,
     tex_idx: Vec<u16>,
-    /// What the last `render` drew, so a frame capture can include the HUD.
-    last_frame: DrawnUi,
+    /// Quads refused since the last `clear` because their list was full.
+    dropped: usize,
+}
+
+impl UiQueue {
+    fn push_colored(&mut self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
+        let (verts, idx) = (&mut self.col_verts, &mut self.col_idx);
+        if !push_quad(verts, idx, [x, y, w, h], [0.0; 4], color) {
+            self.dropped += 1;
+        }
+    }
+
+    fn push_textured(&mut self, x: f32, y: f32, w: f32, h: f32, uv: [f32; 4], color: [f32; 4]) {
+        let (verts, idx) = (&mut self.tex_verts, &mut self.tex_idx);
+        if !push_quad(verts, idx, [x, y, w, h], uv, color) {
+            self.dropped += 1;
+        }
+    }
+
+    /// Quads queued since the last `clear`, including dropped ones.
+    fn queued_quads(&self) -> usize {
+        (self.col_verts.len() + self.tex_verts.len()) / 4 + self.dropped
+    }
+
+    /// One frame's draw data: colored quads first, then textured ones (their
+    /// indices offset past the colored vertices), at most `MAX_QUADS` in all.
+    fn merge(&self, width: u32, height: u32) -> DrawnUi {
+        let col_vert_count = self.col_verts.len();
+        let col_idx_count = self.col_idx.len();
+        // Below MAX_VERTICES: push_quad caps each list.
+        let offset = col_vert_count as u16;
+        let mut verts = Vec::with_capacity(col_vert_count + self.tex_verts.len());
+        verts.extend_from_slice(&self.col_verts);
+        verts.extend_from_slice(&self.tex_verts);
+        let mut idx = Vec::with_capacity(col_idx_count + self.tex_idx.len());
+        idx.extend_from_slice(&self.col_idx);
+        idx.extend(self.tex_idx.iter().map(|&i| i + offset));
+        // Clamp to buffer capacity. Every quad is 4 vertices and 6 indices
+        // in the same order in both lists, so both cut at the same quad.
+        verts.truncate(MAX_VERTICES);
+        idx.truncate(MAX_INDICES);
+        DrawnUi {
+            verts,
+            idx,
+            col_idx_count: col_idx_count.min(MAX_INDICES),
+            width,
+            height,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.col_verts.clear();
+        self.col_idx.clear();
+        self.tex_verts.clear();
+        self.tex_idx.clear();
+        self.dropped = 0;
+    }
 }
 
 /// The geometry of one drawn UI frame: colored quads first, then text.
@@ -312,10 +384,14 @@ impl UiRenderer {
             textured_pipeline,
             vertex_buffer,
             index_buffer,
-            col_verts: Vec::with_capacity(256),
-            col_idx: Vec::with_capacity(384),
-            tex_verts: Vec::with_capacity(1024),
-            tex_idx: Vec::with_capacity(1536),
+            queue: UiQueue {
+                col_verts: Vec::with_capacity(256),
+                col_idx: Vec::with_capacity(384),
+                tex_verts: Vec::with_capacity(1024),
+                tex_idx: Vec::with_capacity(1536),
+                dropped: 0,
+            },
+            warned_full: false,
             last_frame: DrawnUi::default(),
         }
     }
@@ -324,19 +400,7 @@ impl UiRenderer {
 
     /// Queue a solid-color rectangle (screen-space pixels, origin top-left).
     pub fn draw_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
-        push_quad(
-            &mut self.col_verts,
-            &mut self.col_idx,
-            x,
-            y,
-            w,
-            h,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            color,
-        );
+        self.queue.push_colored(x, y, w, h, color);
     }
 
     /// Queue a text string (screen-space pixels, origin top-left).
@@ -359,20 +423,8 @@ impl UiRenderer {
                 // Not handled in this simple renderer
                 continue;
             }
-            let [u0, v0, u1, v1] = font::glyph_uvs(font, ch);
-            push_quad(
-                &mut self.tex_verts,
-                &mut self.tex_idx,
-                cx,
-                y,
-                char_w,
-                char_h,
-                u0,
-                v0,
-                u1,
-                v1,
-                color,
-            );
+            let uv = font::glyph_uvs(font, ch);
+            self.queue.push_textured(cx, y, char_w, char_h, uv, color);
             cx += char_w;
         }
     }
@@ -393,29 +445,16 @@ impl UiRenderer {
         height: u32,
         _dt: f32,
     ) {
-        let col_vert_count = self.col_verts.len();
-        let col_idx_count = self.col_idx.len();
-        let total_idx = col_idx_count + self.tex_idx.len();
-
-        // Merge vertices: colored first, then textured (with offset indices)
-        let offset = col_vert_count as u16;
-        let mut verts = Vec::with_capacity(col_vert_count + self.tex_verts.len());
-        verts.extend_from_slice(&self.col_verts);
-        verts.extend_from_slice(&self.tex_verts);
-        let mut idx = Vec::with_capacity(total_idx);
-        idx.extend_from_slice(&self.col_idx);
-        idx.extend(self.tex_idx.iter().map(|&i| i + offset));
-        // Clamp to buffer capacity
-        verts.truncate(MAX_VERTICES);
-        idx.truncate(MAX_INDICES);
-
-        self.last_frame = DrawnUi {
-            verts,
-            idx,
-            col_idx_count: col_idx_count.min(MAX_INDICES),
-            width,
-            height,
-        };
+        self.last_frame = self.queue.merge(width, height);
+        let queued = self.queue.queued_quads();
+        let drawn = self.last_frame.idx.len() / 6;
+        if drawn < queued && !self.warned_full {
+            tracing::warn!(
+                "UI overlay full: drew {drawn} of {queued} quads queued this frame \
+                 (max {MAX_QUADS}); further overflows are not logged"
+            );
+            self.warned_full = true;
+        }
         self.draw(&self.last_frame, queue, encoder, view, font);
         self.clear();
     }
@@ -495,31 +534,29 @@ impl UiRenderer {
         }
     }
 
-    /// Clear per-frame draw state. Called automatically by `render()`.
+    /// Drop every queued draw command. `render` calls it after drawing, and
+    /// the engine calls it at the start of each frame so the geometry of a
+    /// frame that was never drawn does not carry over into the next one.
     pub fn clear(&mut self) {
-        self.col_verts.clear();
-        self.col_idx.clear();
-        self.tex_verts.clear();
-        self.tex_idx.clear();
+        self.queue.clear();
     }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
+/// Append one quad, or return false when the list already holds `MAX_QUADS`
+/// quads, which keeps its u16 indices below `MAX_VERTICES`. `quad` is
+/// `[x, y, width, height]` in screen pixels, `uv` is `[u0, v0, u1, v1]`.
 fn push_quad(
     verts: &mut Vec<Vertex2D>,
     idx: &mut Vec<u16>,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    u0: f32,
-    v0: f32,
-    u1: f32,
-    v1: f32,
+    [x, y, w, h]: [f32; 4],
+    [u0, v0, u1, v1]: [f32; 4],
     color: [f32; 4],
-) {
+) -> bool {
+    if verts.len() >= MAX_VERTICES {
+        return false;
+    }
     let base = verts.len() as u16;
     verts.push(Vertex2D {
         position: [x, y],
@@ -542,4 +579,71 @@ fn push_quad(
         color,
     });
     idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WHITE: [f32; 4] = [1.0; 4];
+    const GLYPH: [f32; 4] = [0.0, 0.0, 0.1, 0.1];
+
+    /// Every index of a merged frame addresses one of its own vertices.
+    fn assert_well_formed(frame: &DrawnUi) {
+        assert!(frame.verts.len() <= MAX_VERTICES);
+        assert!(frame.idx.len() <= MAX_INDICES);
+        assert!(frame.col_idx_count <= frame.idx.len());
+        assert_eq!(frame.verts.len() / 4, frame.idx.len() / 6);
+        let vertex_count = frame.verts.len();
+        assert!(frame.idx.iter().all(|&i| usize::from(i) < vertex_count));
+    }
+
+    #[test]
+    fn a_frame_keeps_colored_quads_first_and_offsets_text_indices() {
+        let mut queue = UiQueue::default();
+        queue.push_textured(0.0, 0.0, 8.0, 8.0, GLYPH, WHITE);
+        queue.push_colored(0.0, 0.0, 10.0, 10.0, WHITE);
+        queue.push_colored(20.0, 0.0, 10.0, 10.0, WHITE);
+
+        let frame = queue.merge(640, 480);
+        assert_well_formed(&frame);
+        assert_eq!((frame.verts.len(), frame.idx.len()), (12, 18));
+        assert_eq!(frame.col_idx_count, 12);
+        assert_eq!(frame.idx[12..], [8, 9, 10, 8, 10, 11]);
+        assert_eq!(queue.queued_quads(), 3);
+        assert_eq!(queue.dropped, 0);
+    }
+
+    /// Regression: while the window was occluded, `render_frame` returned
+    /// before drawing (and clearing) the UI, but each frame still queued the
+    /// script HUD and editor overlay. The pile-up overflowed the u16 indices
+    /// when merged: "attempt to add with overflow" in debug builds, garbage
+    /// indices in release.
+    #[test]
+    fn geometry_from_many_undrawn_frames_cannot_overflow_u16_indices() {
+        let mut queue = UiQueue::default();
+        for _frame in 0..1_000 {
+            for _ in 0..5 {
+                queue.push_colored(0.0, 0.0, 450.0, 30.0, WHITE);
+            }
+            for _ in 0..60 {
+                queue.push_textured(0.0, 0.0, 12.0, 16.0, GLYPH, WHITE);
+            }
+        }
+
+        let frame = queue.merge(1280, 720);
+        assert_well_formed(&frame);
+        assert_eq!(frame.idx.len(), MAX_INDICES);
+        assert_eq!(queue.col_verts.len(), MAX_VERTICES);
+        assert_eq!(queue.tex_verts.len(), MAX_VERTICES);
+        assert_eq!(queue.queued_quads(), 65_000);
+
+        queue.clear();
+        assert_eq!(queue.queued_quads(), 0);
+        queue.push_colored(0.0, 0.0, 1.0, 1.0, WHITE);
+        let frame = queue.merge(1280, 720);
+        assert_well_formed(&frame);
+        assert_eq!(frame.idx, [0, 1, 2, 0, 2, 3]);
+    }
 }

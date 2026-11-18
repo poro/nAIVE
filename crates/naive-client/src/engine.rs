@@ -2345,6 +2345,14 @@ impl Engine {
             }
         }
 
+        // Start this frame's UI from an empty queue. `render_frame` clears it
+        // only when it draws, so the overlay of a frame it skips (surface
+        // lost, outdated or occluded) or never draws (`benchmark` frames)
+        // would otherwise pile up under the next one.
+        if let Some(ui) = &self.ui_renderer {
+            ui.borrow_mut().clear();
+        }
+
         // Convert script draw intentions to GPU geometry only at the renderer boundary.
         if let (Some(ui), Some(font)) = (&self.ui_renderer, &self.bitmap_font) {
             let mut frame = self.script_ui.borrow_mut();
