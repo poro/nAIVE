@@ -206,7 +206,7 @@ pub(crate) fn load_pass_shader(
         crate::project_path::resolve(project_root, artifact_relative)
             .map_err(PipelineError::ShaderError)?;
     }
-    let source = crate::shader::load_required_shader(&path).map_err(|error| {
+    let source = crate::shader::load_required_shader(&path, project_root).map_err(|error| {
         PipelineError::ShaderError(format!(
             "Required shader '{}' for pass '{}': {error}",
             pass.shader, pass.name

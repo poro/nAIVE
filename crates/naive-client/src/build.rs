@@ -338,7 +338,7 @@ fn package_forward_shader(project_root: &Path, package: &mut ShaderPackage) -> R
     }
     let source = validate_packaged_reference(project_root, &relative_source)?;
     validate_packaged_reference(project_root, &relative_artifact)?;
-    let wgsl = crate::shader::load_required_shader(&source)
+    let wgsl = crate::shader::load_required_shader(&source, project_root)
         .map_err(|error| format!("Forward shader '{}': {error}", relative_source.display()))?;
     if let Some(existing) = package.artifacts.get(&relative_artifact) {
         if existing.wgsl != wgsl {

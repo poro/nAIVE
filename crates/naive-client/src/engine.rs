@@ -206,7 +206,7 @@ impl Engine {
     /// Get the initial WGSL shader source for the triangle, trying SLANG first.
     fn get_initial_shader(&self) -> String {
         let triangle_slang = self.project_root.join("shaders/passes/triangle.slang");
-        match crate::shader::compile_triangle_shader(Some(&triangle_slang)) {
+        match crate::shader::compile_triangle_shader(Some(&triangle_slang), &self.project_root) {
             Ok(wgsl) => wgsl,
             Err(e) => {
                 tracing::error!("Initial shader compilation failed: {}", e);
@@ -961,7 +961,10 @@ impl Engine {
             self.forward_pipeline = Some(new_pipeline);
             tracing::info!("Forward shader hot-reload complete");
         } else {
-            let wgsl = match crate::shader::compile_triangle_shader(Some(changed_path)) {
+            let wgsl = match crate::shader::compile_triangle_shader(
+                Some(changed_path),
+                &self.project_root,
+            ) {
                 Ok(wgsl) => wgsl,
                 Err(e) => {
                     tracing::error!("Shader reload failed: {}, keeping old pipeline", e);
