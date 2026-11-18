@@ -754,16 +754,55 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// Leave at `path` what a crashed engine leaves behind: a socket file that
+    /// nothing listens on. The socket is bound but never listens, so it
+    /// refuses connections for as long as any process holds it. Dropping a
+    /// std listener is not enough here: a child that another test spawns at
+    /// the same moment (`posix_spawnp` tries every `PATH` entry) briefly holds
+    /// a copy of every open descriptor, so the dropped listener can still
+    /// accept, and the server rightly refuses to replace a live socket.
+    fn leave_stale_socket(path: &str) {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = std::path::Path::new(path).as_os_str().as_bytes();
+        // SAFETY: sockaddr_un is plain old data, so all zeroes is valid.
+        let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        assert!(bytes.len() < address.sun_path.len(), "socket path too long");
+        address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+        for (slot, &byte) in address.sun_path.iter_mut().zip(bytes) {
+            *slot = byte as libc::c_char;
+        }
+        // SAFETY: socket has no pointer arguments; the result is checked.
+        let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+        assert!(fd >= 0, "socket: {}", std::io::Error::last_os_error());
+        // SAFETY: fd is a new descriptor that nothing else owns.
+        let socket = unsafe { OwnedFd::from_raw_fd(fd) };
+        // SAFETY: address is a valid, NUL-terminated sockaddr_un of the given size.
+        let bound = unsafe {
+            libc::bind(
+                socket.as_raw_fd(),
+                (&address as *const libc::sockaddr_un).cast(),
+                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+            )
+        };
+        assert_eq!(bound, 0, "bind: {}", std::io::Error::last_os_error());
+    }
+
     #[test]
     fn stale_socket_from_a_crashed_engine_is_replaced() {
         use std::os::unix::fs::FileTypeExt;
         let path = test_socket_path();
-        // A std listener does not unlink its path when dropped, like a crash.
-        drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+        leave_stale_socket(&path);
         assert!(std::fs::symlink_metadata(&path)
             .unwrap()
             .file_type()
             .is_socket());
+        assert_eq!(
+            std::os::unix::net::UnixStream::connect(&path)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::ConnectionRefused
+        );
         let server = CommandServer::start(&path).expect("stale socket should be replaced");
         assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());
         drop(server);
