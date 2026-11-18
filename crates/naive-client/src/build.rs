@@ -320,7 +320,43 @@ fn prepare_shaders(config: &NaiveConfig, project_root: &Path) -> Result<ShaderPa
         }
         package.pipelines.insert(path);
     }
+    package_forward_shader(project_root, &mut package)?;
     Ok(package)
+}
+
+/// Scenes drawn without a render pipeline use the project's forward shader
+/// when it has one. The player cannot compile Slang, so package its WGSL;
+/// one that does not compile fails the build rather than shipping a game
+/// that silently draws with the engine's shader instead.
+fn package_forward_shader(project_root: &Path, package: &mut ShaderPackage) -> Result<(), String> {
+    let relative_source = PathBuf::from(crate::shader::FORWARD_SHADER);
+    let relative_artifact = crate::shader::precompiled_wgsl_path(&relative_source);
+    if !project_root.join(&relative_source).exists()
+        && !project_root.join(&relative_artifact).exists()
+    {
+        return Ok(());
+    }
+    let source = validate_packaged_reference(project_root, &relative_source)?;
+    validate_packaged_reference(project_root, &relative_artifact)?;
+    let wgsl = crate::shader::load_required_shader(&source)
+        .map_err(|error| format!("Forward shader '{}': {error}", relative_source.display()))?;
+    if let Some(existing) = package.artifacts.get(&relative_artifact) {
+        if existing.wgsl != wgsl {
+            return Err(format!(
+                "Conflicting required shaders write different WGSL to {} (forward shader)",
+                relative_artifact.display()
+            ));
+        }
+    }
+    package.artifacts.insert(
+        relative_artifact,
+        PackagedShader {
+            source,
+            relative_source,
+            wgsl,
+        },
+    );
+    Ok(())
 }
 
 /// Check the authored path before canonicalization erases internal symlink
@@ -689,6 +725,84 @@ mod tests {
             );
             assert_eq!(fs::read_to_string(&previous).unwrap(), "good bundle");
         }
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    /// A project's own forward shader reaches the bundle as WGSL that the
+    /// player loads; without one nothing is added, and a broken one fails the
+    /// build instead of shipping the engine's shader in its place.
+    #[test]
+    fn a_custom_forward_shader_is_packaged_for_the_player() {
+        let project = temp_project("forward");
+        let yaml = "name: forward\nversion: '1'\n";
+        fs::write(project.join("naive.yaml"), yaml).unwrap();
+        let config: NaiveConfig = serde_norway::from_str(yaml).unwrap();
+        let player = project.join("player");
+        fs::write(&player, "player").unwrap();
+        let artifact =
+            crate::shader::precompiled_wgsl_path(Path::new(crate::shader::FORWARD_SHADER));
+
+        let bundle = bundle_with_player(&config, &project, "linux", &player).unwrap();
+        let game = bundle.join("game");
+        assert!(!game.join(&artifact).exists());
+        assert_eq!(
+            crate::shader::load_project_forward_shader(&game),
+            crate::shader::get_mesh_forward_wgsl()
+        );
+
+        // An artifact-only project packages the same way with or without Slang.
+        let custom = format!(
+            "{}\n// custom forward\n",
+            crate::shader::get_mesh_forward_wgsl()
+        );
+        fs::create_dir_all(project.join("shaders/passes")).unwrap();
+        fs::write(project.join(&artifact), &custom).unwrap();
+        let bundle = bundle_with_player(&config, &project, "linux", &player).unwrap();
+        let game = bundle.join("game");
+        assert_eq!(fs::read_to_string(game.join(&artifact)).unwrap(), custom);
+        assert_eq!(crate::shader::load_project_forward_shader(&game), custom);
+
+        fs::write(project.join(&artifact), "fn helper() {}").unwrap();
+        let error = bundle_with_player(&config, &project, "linux", &player).unwrap_err();
+        assert!(
+            error.contains("Forward shader 'shaders/passes/mesh_forward.slang'")
+                && error.contains("vs_main"),
+            "{error}"
+        );
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    /// The usual case: only the Slang source exists, and the build compiles
+    /// it (with its imports) for the player.
+    #[cfg(feature = "slang")]
+    #[test]
+    fn a_forward_shader_source_is_compiled_for_the_player() {
+        let project = temp_project("forward-source");
+        let yaml = "name: forward\nversion: '1'\n";
+        fs::write(project.join("naive.yaml"), yaml).unwrap();
+        let config: NaiveConfig = serde_norway::from_str(yaml).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/release-smoke-fixture/assets/effects");
+        let passes = project.join("shaders/passes");
+        fs::create_dir_all(&passes).unwrap();
+        fs::copy(
+            fixture.join("release_marker.slang"),
+            passes.join("mesh_forward.slang"),
+        )
+        .unwrap();
+        fs::copy(
+            fixture.join("release_palette.slang"),
+            passes.join("release_palette.slang"),
+        )
+        .unwrap();
+        let prepared = prepare_shaders(&config, &project).unwrap();
+        let wgsl = &prepared.artifacts[Path::new("shaders/passes/mesh_forward.slang.wgsl")].wgsl;
+        naga::front::wgsl::parse_str(wgsl).unwrap();
+        assert_eq!(&crate::shader::load_project_forward_shader(&project), wgsl);
+
+        fs::write(passes.join("mesh_forward.slang"), "broken source").unwrap();
+        let error = prepare_shaders(&config, &project).err().unwrap();
+        assert!(error.contains("Forward shader"), "{error}");
         fs::remove_dir_all(project).unwrap();
     }
 

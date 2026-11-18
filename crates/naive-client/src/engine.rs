@@ -383,14 +383,7 @@ impl Engine {
         let tex_res = crate::mesh::TextureResources::new(&gpu.device, &gpu.queue);
 
         // Compile the forward shader (Phase 2 fallback pipeline)
-        let forward_slang = self.project_root.join("shaders/passes/mesh_forward.slang");
-        let forward_wgsl = match crate::shader::compile_mesh_forward_shader(Some(&forward_slang)) {
-            Ok(wgsl) => wgsl,
-            Err(e) => {
-                tracing::error!("Forward shader compilation failed: {}", e);
-                crate::shader::get_mesh_forward_wgsl()
-            }
-        };
+        let forward_wgsl = crate::shader::load_project_forward_shader(&self.project_root);
 
         // Create the forward render pipeline
         let forward_pipeline = crate::renderer::create_forward_pipeline(
@@ -529,14 +522,7 @@ impl Engine {
         let tex_res = crate::mesh::TextureResources::new(&gpu.device, &gpu.queue);
 
         // Compile forward shader
-        let forward_slang = self.project_root.join("shaders/passes/mesh_forward.slang");
-        let forward_wgsl = match crate::shader::compile_mesh_forward_shader(Some(&forward_slang)) {
-            Ok(wgsl) => wgsl,
-            Err(e) => {
-                tracing::error!("Forward shader compilation failed: {}", e);
-                crate::shader::get_mesh_forward_wgsl()
-            }
-        };
+        let forward_wgsl = crate::shader::load_project_forward_shader(&self.project_root);
         let forward_pipeline = crate::renderer::create_forward_pipeline(
             &gpu.device,
             &forward_wgsl,
@@ -944,13 +930,9 @@ impl Engine {
         let is_forward = self.forward_pipeline.is_some();
 
         if is_forward {
-            let wgsl = match crate::shader::compile_mesh_forward_shader(Some(changed_path)) {
-                Ok(wgsl) => wgsl,
-                Err(e) => {
-                    tracing::error!("Shader reload failed: {}, keeping old pipeline", e);
-                    return;
-                }
-            };
+            // The changed file may be one the forward shader imports, so
+            // reload the forward shader itself, not the file that changed.
+            let wgsl = crate::shader::load_project_forward_shader(&self.project_root);
 
             let error_scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
 
