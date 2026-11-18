@@ -145,8 +145,13 @@ entities:
 "#;
 
     const SCRIPT: &str = r#"
+function init()
+    events.on('ready', function() game.heard = (game.heard or 0) + 1 end)
+    events.emit('ready', {})
+end
 function update(dt)
     game.updates = (game.updates or 0) + 1
+    if game.heard_at_update == nil then game.heard_at_update = game.heard or 0 end
 end
 "#;
 
@@ -213,9 +218,9 @@ end
         engine
     }
 
-    fn updates(runtime: &ScriptRuntime) -> i64 {
+    fn game_value(runtime: &ScriptRuntime, key: &str) -> i64 {
         let game: mlua::Table = runtime.lua.globals().get("game").unwrap();
-        game.get("updates").unwrap()
+        game.get(key).unwrap()
     }
 
     /// The engine's and the headless runner's real frame entry points run
@@ -233,9 +238,17 @@ end
             assert_eq!(native_phases, FRAME_PHASES, "native frame {frame}");
             assert_eq!(headless_phases, native_phases, "headless frame {frame}");
         }
-        // Both frames really ran the scripts.
-        assert_eq!(updates(native.script_runtime.as_ref().unwrap()), 3);
-        assert_eq!(updates(&runner.script_runtime), 3);
+        for runtime in [
+            native.script_runtime.as_ref().unwrap(),
+            &runner.script_runtime,
+        ] {
+            // Both really ran the scripts.
+            assert_eq!(game_value(runtime, "updates"), 3);
+            // What `init` emitted reached its listener once, on the first
+            // frame's event phase, after that frame's `update`.
+            assert_eq!(game_value(runtime, "heard"), 1);
+            assert_eq!(game_value(runtime, "heard_at_update"), 0);
+        }
         assert!(runner.take_errors().is_empty());
         assert_eq!(
             native.script_runtime.as_ref().unwrap().take_errors(),

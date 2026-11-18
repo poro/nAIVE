@@ -276,11 +276,13 @@ impl TestRunner {
             return Err(errors.join("\n"));
         }
 
-        // Emit lifecycle event
+        // `wait_for_event("lifecycle.scene_loaded")` finds this in the log at
+        // once. Recording it, rather than flushing, leaves what scripts emitted
+        // in `init` queued for the first frame's Lua listeners, as in the
+        // engine. The engine emits no such event, so no listener hears it.
         self.event_bus
             .borrow_mut()
-            .emit("lifecycle.scene_loaded", std::collections::HashMap::new());
-        self.event_bus.borrow_mut().flush();
+            .record("lifecycle.scene_loaded", std::collections::HashMap::new());
 
         tracing::info!("Test runner: scene loaded");
         Ok(())
@@ -583,14 +585,16 @@ impl TestRunner {
         self.step_frames(frames);
     }
 
-    /// Check if a specific event occurred in the log.
+    /// Check whether an event was emitted: logged, or still queued for this
+    /// frame's listeners. What scripts emit in `init` stays queued until the
+    /// first frame delivers it, as in the engine, yet a test sees it at once.
     pub fn event_occurred(
         &self,
         event_type: &str,
         filter: &std::collections::HashMap<String, String>,
     ) -> bool {
         let eb = self.event_bus.borrow();
-        for event in eb.get_log() {
+        for event in eb.get_log().iter().chain(eb.pending()) {
             if event.event_type == event_type {
                 if filter.is_empty() {
                     return true;
@@ -1747,6 +1751,36 @@ function on_destroy() entity.set_position('actor', 1, 2, 3) end
             "name: Next\nentities:\n  - id: next\n    components:\n      transform: {}\n",
         );
         let result = project.run("scene.load('scene.yaml')\nwait_frames(2)\nassert(scene.find('next') ~= nil)\nassert(scene.find('actor') == nil)");
+        assert!(result.passed, "{:?}", result.error);
+    }
+
+    /// Events scripts emit in `init` reach `events.on` listeners on the first
+    /// frame, after `update`, as in the engine, while `event_occurred` sees
+    /// them as soon as the scene has loaded. The test-API load used to log
+    /// them undelivered.
+    #[test]
+    fn init_events_reach_lua_listeners_on_the_first_frame() {
+        let project = Project::new(
+            r#"
+function init()
+    events.on('ready', function() game.heard = (game.heard or 0) + 1 end)
+    events.emit('ready', {})
+end
+function update(dt)
+    if game.heard_at_update == nil then game.heard_at_update = game.heard or 0 end
+end
+"#,
+        );
+        let result = project.run(
+            "scene.load('scene.yaml')\n\
+             wait_for_event('lifecycle.scene_loaded')\n\
+             assert(not get_game_value('heard'), 'delivered before a frame ran')\n\
+             assert(event_occurred('ready'), 'emitted in init but invisible to the test')\n\
+             wait_frames(1)\n\
+             assert(get_game_value('heard') == 1, 'init event never delivered')\n\
+             assert(get_game_value('heard_at_update') == 0, 'delivered before update')\n\
+             assert(event_occurred('ready'))",
+        );
         assert!(result.passed, "{:?}", result.error);
     }
 

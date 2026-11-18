@@ -153,29 +153,44 @@ impl EventBus {
                     callback(event);
                 }
             }
-
-            // Add to ring buffer
-            if self.log.len() >= self.log_capacity {
-                self.log.pop_front();
-            }
-            self.log.push_back(event.clone());
-
-            // File logging
-            if let Some(log_path) = &self.log_file {
-                if let Ok(json) = serde_json::to_string(event) {
-                    let _ = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(log_path)
-                        .and_then(|mut f| {
-                            use std::io::Write;
-                            writeln!(f, "{}", json)
-                        });
-                }
-            }
+            self.append_to_log(event);
         }
 
         events
+    }
+
+    /// Add an event to the log now, without delivering it to any listener
+    /// and leaving pending events queued. For markers only tools read, such
+    /// as the headless runner's `lifecycle.scene_loaded`: flushing to log one
+    /// would also log, undelivered, whatever scripts emitted in `init`.
+    pub fn record(&mut self, event_type: &str, data: HashMap<String, serde_json::Value>) {
+        let event = GameEvent {
+            event_type: event_type.to_string(),
+            data,
+            timestamp: self.total_time,
+        };
+        self.append_to_log(&event);
+    }
+
+    /// Add to the ring buffer and, when enabled, the log file.
+    fn append_to_log(&mut self, event: &GameEvent) {
+        if self.log.len() >= self.log_capacity {
+            self.log.pop_front();
+        }
+        self.log.push_back(event.clone());
+
+        if let Some(log_path) = &self.log_file {
+            if let Ok(json) = serde_json::to_string(event) {
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_path)
+                    .and_then(|mut f| {
+                        use std::io::Write;
+                        writeln!(f, "{}", json)
+                    });
+            }
+        }
     }
 
     /// Advance time.
@@ -186,6 +201,11 @@ impl EventBus {
     /// Get the event log (ring buffer).
     pub fn get_log(&self) -> &VecDeque<GameEvent> {
         &self.log
+    }
+
+    /// Events emitted since the last flush, which listeners have not heard yet.
+    pub fn pending(&self) -> &[GameEvent] {
+        &self.pending
     }
 
     /// Get total elapsed time.
@@ -253,6 +273,29 @@ mod tests {
         bus.emit_simple("test");
         bus.flush();
         assert_eq!(*received.lock().unwrap(), 1); // Still 1, listener was removed
+    }
+
+    #[test]
+    fn recorded_events_are_logged_without_delivery_or_flushing_pending() {
+        let mut bus = EventBus::new(100);
+        let received = Arc::new(Mutex::new(0));
+        let received_by_listener = received.clone();
+        bus.listen("marker", move |_| {
+            *received_by_listener.lock().unwrap() += 1
+        });
+        bus.emit_simple("queued");
+
+        bus.record("marker", HashMap::new());
+
+        assert_eq!(*received.lock().unwrap(), 0);
+        let logged = |bus: &EventBus| -> Vec<String> {
+            bus.get_log().iter().map(|e| e.event_type.clone()).collect()
+        };
+        assert_eq!(logged(&bus), ["marker"]);
+        let flushed = bus.flush();
+        assert_eq!(flushed.len(), 1);
+        assert_eq!(flushed[0].event_type, "queued");
+        assert_eq!(logged(&bus), ["marker", "queued"]);
     }
 
     #[test]
