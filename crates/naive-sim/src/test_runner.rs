@@ -308,8 +308,9 @@ impl TestRunner {
     /// engine does (`Engine::replace_scene`), with `crate::sim::clear_scene`.
     /// The Lua VM keeps its globals, such as the shared `game` table, and the
     /// event log keeps its history. A scene that fails to load or preflight
-    /// leaves the current one running. The engine only logs such failures;
-    /// here they fail the test.
+    /// leaves the current one running; one that fails while being built
+    /// leaves a partial scene, as a failing test-API load does. The engine
+    /// only logs such failures; here they fail the test.
     fn replace_scene(&mut self, scene_rel: &str) -> Result<(), String> {
         let scene_path = crate::project_path::resolve(&self.project_root, scene_rel)?;
         let scene = crate::scene::load_scene(&scene_path)

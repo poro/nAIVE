@@ -382,8 +382,18 @@ pub mod trace {
 
     /// Run `f` and return the phases that ran on this thread meanwhile.
     pub fn record_phases(f: impl FnOnce()) -> Vec<FramePhase> {
-        let outer = PHASES.with(|phases| phases.replace(Some(Vec::new())));
+        /// Puts the outer recording back even if `f` panics.
+        struct Restore(Option<Option<Vec<FramePhase>>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                if let Some(outer) = self.0.take() {
+                    PHASES.with(|phases| phases.replace(outer));
+                }
+            }
+        }
+        let mut restore = Restore(Some(PHASES.with(|phases| phases.replace(Some(Vec::new())))));
         f();
+        let outer = restore.0.take().unwrap_or_default();
         PHASES
             .with(|phases| phases.replace(outer))
             .unwrap_or_default()
