@@ -354,12 +354,15 @@ impl ScriptRuntime {
             .create_function(move |_, prefix: String| {
                 let sw = sw.borrow();
                 let mut cmd = cmd.borrow_mut();
-                let ids: Vec<String> = sw
+                let mut ids: Vec<String> = sw
                     .entity_registry
                     .keys()
                     .filter(|id| id.starts_with(&prefix))
                     .cloned()
                     .collect();
+                // Id order, not hash order: the destroys' hooks and trigger
+                // exits then run in the same order on every run.
+                ids.sort_unstable();
                 for id in ids {
                     cmd.destroys.push(id);
                 }
