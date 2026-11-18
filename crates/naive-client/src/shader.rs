@@ -50,14 +50,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
 /// Attempt to compile a SLANG file to WGSL.
 /// Falls back to hardcoded WGSL on any failure.
-pub fn compile_triangle_shader(slang_path: Option<&Path>) -> Result<String, ShaderError> {
+pub fn compile_triangle_shader(
+    slang_path: Option<&Path>,
+    project_root: &Path,
+) -> Result<String, ShaderError> {
     if let Some(path) = slang_path {
         if !path.exists() {
             tracing::warn!("SLANG file not found: {:?}, using fallback WGSL", path);
             return Ok(get_triangle_wgsl());
         }
 
-        match compile_slang_to_wgsl(path) {
+        match compile_slang_to_wgsl(path, project_root) {
             Ok(wgsl) => {
                 tracing::info!("SLANG compiled successfully: {:?}", path);
                 return Ok(wgsl);
@@ -72,14 +75,12 @@ pub fn compile_triangle_shader(slang_path: Option<&Path>) -> Result<String, Shad
     Ok(get_triangle_wgsl())
 }
 
-/// Public SLANG-to-WGSL compilation for use by the pipeline module.
-pub fn compile_slang_to_wgsl_public(path: &Path) -> Result<String, ShaderError> {
-    compile_slang_to_wgsl(path)
-}
-
 /// Load an explicitly referenced project shader. Compilation and artifact
 /// failures are errors; only `builtin:` pipeline references use engine WGSL.
-pub(crate) fn load_required_shader(path: &Path) -> Result<String, ShaderError> {
+pub(crate) fn load_required_shader(
+    path: &Path,
+    project_root: &Path,
+) -> Result<String, ShaderError> {
     let source = if path.extension().is_some_and(|ext| ext == "wgsl") {
         std::fs::read_to_string(path).map_err(ShaderError::IoError)?
     } else if path.extension().is_some_and(|ext| ext == "slang") {
@@ -88,7 +89,7 @@ pub(crate) fn load_required_shader(path: &Path) -> Result<String, ShaderError> {
         if cfg!(feature = "slang") && !path.exists() {
             std::fs::read_to_string(precompiled_wgsl_path(path)).map_err(ShaderError::IoError)?
         } else {
-            compile_slang_to_wgsl(path)?
+            compile_slang_to_wgsl(path, project_root)?
         }
     } else {
         return Err(ShaderError::SlangCompilationFailed(format!(
@@ -123,35 +124,52 @@ pub(crate) fn load_required_shader(path: &Path) -> Result<String, ShaderError> {
 }
 
 /// Actual SLANG-to-WGSL compilation using shader-slang crate.
+/// Compile the Slang shader at `path` to WGSL. Every file it reads (its own,
+/// `#include`s and imported modules) must be inside `project_root`; `import`
+/// of a relative or absolute path, or a symlink, would otherwise compile files
+/// from elsewhere on disk into the game.
 #[cfg(feature = "slang")]
-fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
+fn compile_slang_to_wgsl(path: &Path, project_root: &Path) -> Result<String, ShaderError> {
     use shader_slang as slang;
     use std::ffi::CString;
+
+    let root = project_root.canonicalize().map_err(|error| {
+        ShaderError::SlangCompilationFailed(format!(
+            "Cannot resolve project {}: {error}",
+            project_root.display()
+        ))
+    })?;
+    let inside = |candidate: &Path| {
+        candidate
+            .canonicalize()
+            .is_ok_and(|resolved| resolved.starts_with(&root))
+    };
 
     let global_session = slang::GlobalSession::new().ok_or_else(|| {
         ShaderError::SlangCompilationFailed("Failed to create SLANG global session".to_string())
     })?;
 
-    let search_path = path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .to_string_lossy()
-        .to_string();
-    let search_path_c = CString::new(search_path.as_str()).map_err(|e| {
-        ShaderError::SlangCompilationFailed(format!("Invalid search path: {:?}", e))
-    })?;
-    // Also add the modules directory so `import camera;` etc. resolve
-    let modules_path = path
-        .parent()
-        .and_then(|p| p.parent())
-        .map(|p| p.join("modules"))
-        .unwrap_or_else(|| Path::new("modules").to_path_buf())
-        .to_string_lossy()
-        .to_string();
-    let modules_path_c = CString::new(modules_path.as_str()).map_err(|e| {
-        ShaderError::SlangCompilationFailed(format!("Invalid search path: {:?}", e))
-    })?;
-    let search_paths_ptrs = [search_path_c.as_ptr(), modules_path_c.as_ptr()];
+    // Search the shader's directory and, so `import camera;` resolves, the
+    // `modules` directory beside it (`shaders/modules` for a shader in
+    // `shaders/passes`), each only when it is inside the project.
+    let shader_dir = path.parent().unwrap_or(Path::new("."));
+    let mut search_paths = Vec::new();
+    for directory in [
+        Some(shader_dir.to_path_buf()),
+        shader_dir.parent().map(|p| p.join("modules")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if inside(&directory) {
+            search_paths.push(
+                CString::new(directory.to_string_lossy().as_bytes()).map_err(|e| {
+                    ShaderError::SlangCompilationFailed(format!("Invalid search path: {:?}", e))
+                })?,
+            );
+        }
+    }
+    let search_paths_ptrs: Vec<_> = search_paths.iter().map(|path| path.as_ptr()).collect();
 
     let target_desc = slang::TargetDesc::default().format(slang::CompileTarget::Wgsl);
     let targets = [target_desc];
@@ -180,6 +198,14 @@ fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
             file_name, e
         ))
     })?;
+    for dependency in module.dependency_file_paths() {
+        if !inside(Path::new(dependency)) {
+            return Err(ShaderError::SlangCompilationFailed(format!(
+                "{} reads {dependency}, which is outside the project",
+                path.display()
+            )));
+        }
+    }
 
     let vertex_entry = module.find_entry_point_by_name("vs_main").ok_or_else(|| {
         ShaderError::SlangCompilationFailed("Vertex entry point 'vs_main' not found".to_string())
@@ -331,7 +357,7 @@ pub fn precompiled_wgsl_path(slang_path: &Path) -> std::path::PathBuf {
 /// Without the Slang compiler, use the WGSL that `naive build` compiled from
 /// this shader, if there is one (as in a shipped game bundle).
 #[cfg(not(feature = "slang"))]
-fn compile_slang_to_wgsl(path: &Path) -> Result<String, ShaderError> {
+fn compile_slang_to_wgsl(path: &Path, _project_root: &Path) -> Result<String, ShaderError> {
     let precompiled = precompiled_wgsl_path(path);
     tracing::debug!("Loading precompiled WGSL {:?}", precompiled);
     std::fs::read_to_string(&precompiled).map_err(|_| {
@@ -436,124 +462,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     .to_string()
 }
 
-/// Compile a SLANG file with flexible entry points and return both WGSL and reflection data.
-#[allow(dead_code)]
-#[cfg(feature = "slang")]
-pub fn compile_shader(
-    path: &Path,
-    entry_points: &[(&str, shader_slang::Stage)],
-) -> Result<(String, crate::reflect::ShaderReflection), ShaderError> {
-    use shader_slang as slang;
-    use std::ffi::CString;
-
-    let global_session = slang::GlobalSession::new().ok_or_else(|| {
-        ShaderError::SlangCompilationFailed("Failed to create SLANG global session".to_string())
-    })?;
-
-    // Add both the shader's parent directory and the project-relative modules directory
-    let shader_dir = path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .to_string_lossy()
-        .to_string();
-
-    // Also add the shaders/modules directory for shared imports
-    let modules_dir = path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .parent()
-        .map(|p| p.join("modules"))
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-
-    let shader_dir_c = CString::new(shader_dir.as_str()).map_err(|e| {
-        ShaderError::SlangCompilationFailed(format!("Invalid search path: {:?}", e))
-    })?;
-    let modules_dir_c = CString::new(modules_dir.as_str()).map_err(|e| {
-        ShaderError::SlangCompilationFailed(format!("Invalid search path: {:?}", e))
-    })?;
-    let search_paths_ptrs = [shader_dir_c.as_ptr(), modules_dir_c.as_ptr()];
-
-    let target_desc = slang::TargetDesc::default().format(slang::CompileTarget::Wgsl);
-    let targets = [target_desc];
-
-    let options = slang::CompilerOptions::default().matrix_layout_column(true);
-
-    let session_desc = slang::SessionDesc::default()
-        .targets(&targets)
-        .search_paths(&search_paths_ptrs)
-        .options(&options);
-
-    let session = global_session
-        .create_session(&session_desc)
-        .ok_or_else(|| {
-            ShaderError::SlangCompilationFailed("Failed to create SLANG session".to_string())
-        })?;
-
-    let file_name = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| ShaderError::SlangCompilationFailed("Invalid file name".to_string()))?;
-
-    let module = session.load_module(file_name).map_err(|e| {
-        ShaderError::SlangCompilationFailed(format!(
-            "Failed to load module '{}': {:?}",
-            file_name, e
-        ))
-    })?;
-
-    // Find all requested entry points
-    use slang::Downcast;
-    let mut components: Vec<slang::ComponentType> = vec![module.downcast().clone()];
-
-    for (ep_name, _stage) in entry_points {
-        let entry = module.find_entry_point_by_name(ep_name).ok_or_else(|| {
-            ShaderError::SlangCompilationFailed(format!(
-                "Entry point '{}' not found in {}",
-                ep_name, file_name
-            ))
-        })?;
-        components.push(entry.downcast().clone());
-    }
-
-    let program = session
-        .create_composite_component_type(&components)
-        .map_err(|e| {
-            ShaderError::SlangCompilationFailed(format!("Failed to compose program: {:?}", e))
-        })?;
-
-    let linked = program.link().map_err(|e| {
-        ShaderError::SlangCompilationFailed(format!("Failed to link program: {:?}", e))
-    })?;
-
-    // Extract reflection data
-    let reflection = crate::reflect::reflect_shader(&linked)?;
-
-    // Get the compiled WGSL
-    let code = linked.target_code(0).map_err(|e| {
-        ShaderError::SlangCompilationFailed(format!("Failed to get compiled code: {:?}", e))
-    })?;
-
-    let wgsl = code.as_str().map(|s| s.to_string()).map_err(|e| {
-        ShaderError::SlangCompilationFailed(format!("Invalid UTF-8 in WGSL output: {:?}", e))
-    })?;
-
-    Ok((wgsl, reflection))
-}
-
-/// Fallback when SLANG feature is disabled.
-#[allow(dead_code)]
-#[cfg(not(feature = "slang"))]
-pub fn compile_shader(
-    _path: &Path,
-    _entry_points: &[(&str, ())],
-) -> Result<(String, crate::reflect::ShaderReflection), ShaderError> {
-    Err(ShaderError::SlangCompilationFailed(
-        "SLANG support not compiled in (feature 'slang' disabled)".to_string(),
-    ))
-}
-
 /// A project's own forward shader, which replaces the engine's for scenes
 /// drawn without a render pipeline. `naive build` packages its WGSL.
 pub const FORWARD_SHADER: &str = "shaders/passes/mesh_forward.slang";
@@ -562,9 +470,8 @@ pub const FORWARD_SHADER: &str = "shaders/passes/mesh_forward.slang";
 /// project's [`FORWARD_SHADER`] when it has one, otherwise the engine's.
 pub fn load_project_forward_shader(project_root: &Path) -> String {
     match crate::project_path::resolve(project_root, FORWARD_SHADER) {
-        Ok(path) => {
-            compile_mesh_forward_shader(Some(&path)).unwrap_or_else(|_| get_mesh_forward_wgsl())
-        }
+        Ok(path) => compile_mesh_forward_shader(Some(&path), project_root)
+            .unwrap_or_else(|_| get_mesh_forward_wgsl()),
         Err(error) => {
             tracing::warn!("Forward shader {FORWARD_SHADER}: {error}; using the engine's");
             get_mesh_forward_wgsl()
@@ -578,6 +485,7 @@ pub fn load_project_forward_shader(project_root: &Path) -> String {
 /// it fails.
 pub fn compile_mesh_forward_shader(
     slang_path: Option<&std::path::Path>,
+    project_root: &Path,
 ) -> Result<String, ShaderError> {
     if let Some(path) = slang_path {
         if !path.exists() && !precompiled_wgsl_path(path).exists() {
@@ -588,7 +496,7 @@ pub fn compile_mesh_forward_shader(
             return Ok(get_mesh_forward_wgsl());
         }
 
-        match load_required_shader(path) {
+        match load_required_shader(path, project_root) {
             Ok(wgsl) => {
                 tracing::info!("Forward shader loaded: {:?}", path);
                 return Ok(wgsl);
@@ -1959,9 +1867,99 @@ mod precompiled_tests {
         std::fs::create_dir_all(&dir).unwrap();
         let slang = dir.join("bloom.slang");
         std::fs::write(&slang, "// slang source").unwrap();
-        assert!(compile_slang_to_wgsl(&slang).is_err());
+        assert!(compile_slang_to_wgsl(&slang, &dir).is_err());
         std::fs::write(precompiled_wgsl_path(&slang), "// compiled").unwrap();
-        assert_eq!(compile_slang_to_wgsl(&slang).unwrap(), "// compiled");
+        assert_eq!(compile_slang_to_wgsl(&slang, &dir).unwrap(), "// compiled");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// Slang reads only files inside the project, however a shader names them.
+#[cfg(all(test, feature = "slang"))]
+mod slang_confinement_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    const ENTRY_POINTS: &str = "struct VertexOutput { float4 position : SV_Position; };\n\
+        [shader(\"vertex\")] VertexOutput vs_main(uint i : SV_VertexID) {\n\
+            VertexOutput o; o.position = float4(0, 0, 0, 1); return o;\n\
+        }\n\
+        [shader(\"fragment\")] float4 fs_main(VertexOutput input) : SV_Target0 { return color(); }\n";
+    const COLOR_MODULE: &str = "float4 color() { return float4(0, 1, 0, 1); }\n";
+
+    struct Dirs(PathBuf);
+
+    impl Dirs {
+        fn new(label: &str) -> Self {
+            let base = std::env::temp_dir().join(format!(
+                "naive-slang-confine-{label}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(base.join("project")).unwrap();
+            Self(base)
+        }
+        fn project(&self) -> PathBuf {
+            self.0.join("project")
+        }
+        fn write(&self, relative: &str, contents: &str) -> PathBuf {
+            let path = self.0.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, contents).unwrap();
+            path
+        }
+    }
+
+    impl Drop for Dirs {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn imports_and_includes_inside_the_project_compile() {
+        let dirs = Dirs::new("inside");
+        dirs.write("project/shaders/modules/palette.slang", COLOR_MODULE);
+        dirs.write("project/shaders/passes/common.h", "#define UNUSED 1\n");
+        let shader = dirs.write(
+            "project/shaders/passes/inside.slang",
+            &format!("#include \"common.h\"\nimport palette;\n{ENTRY_POINTS}"),
+        );
+        compile_slang_to_wgsl(&shader, &dirs.project()).unwrap();
+    }
+
+    #[test]
+    fn files_outside_the_project_are_never_compiled_in() {
+        let dirs = Dirs::new("outside");
+        let leak = dirs.write("outside/leak.slang", COLOR_MODULE);
+        let relative = dirs.write(
+            "project/effects/relative.slang",
+            &format!("import \"../../outside/leak.slang\";\n{ENTRY_POINTS}"),
+        );
+        let absolute = dirs.write(
+            "project/effects/absolute.slang",
+            &format!("#include \"{}\"\n{ENTRY_POINTS}", leak.display()),
+        );
+        std::os::unix::fs::symlink(&leak, dirs.project().join("effects/linked.slang")).unwrap();
+        let symlinked = dirs.write(
+            "project/effects/symlinked.slang",
+            &format!("import linked;\n{ENTRY_POINTS}"),
+        );
+        for shader in [relative, absolute, symlinked] {
+            let error = compile_slang_to_wgsl(&shader, &dirs.project()).unwrap_err();
+            assert!(
+                format!("{error:?}").contains("outside the project"),
+                "{}: {error:?}",
+                shader.display()
+            );
+        }
+
+        // A shader at the project root used to search `../modules`.
+        dirs.write("modules/palette.slang", COLOR_MODULE);
+        let root = dirs.write(
+            "project/root.slang",
+            &format!("import palette;\n{ENTRY_POINTS}"),
+        );
+        assert!(compile_slang_to_wgsl(&root, &dirs.project()).is_err());
     }
 }
