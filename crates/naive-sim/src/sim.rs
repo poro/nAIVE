@@ -680,13 +680,16 @@ pub fn clear_scene(
         ui_frame,
         swarm_bus,
     } = teardown;
-    // Never hold world borrows while invoking user callbacks.
-    let ids: Vec<_> = scene_world
+    // Never hold world borrows while invoking user callbacks. Destroy in id
+    // order, not the registry's hash order, so `on_destroy` hooks and the
+    // trigger exits removals cause run in the same order on every run.
+    let mut ids: Vec<_> = scene_world
         .borrow()
         .entity_registry
         .keys()
         .cloned()
         .collect();
+    ids.sort_unstable();
     for id in ids {
         destroy_entity(
             scene_world,

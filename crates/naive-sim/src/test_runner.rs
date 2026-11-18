@@ -1927,6 +1927,65 @@ end
         assert_eq!(errors.len(), 1, "{errors:?}");
     }
 
+    /// Scene teardown and `entity.destroy_by_prefix` destroy in id order, so
+    /// `on_destroy` hooks (and the trigger exits removals cause) run in the
+    /// same order every time, not the registry's hash order.
+    #[test]
+    fn teardown_and_prefix_destroys_run_in_id_order() {
+        let project = Project::new(
+            "function on_destroy() table.insert(game.destroyed, _entity_string_id) end\n\
+             function update(dt) if _entity_string_id == 'e_c' and game.prefix then entity.destroy_by_prefix('e_') end end\n",
+        );
+        let ids = ["e_c", "e_a", "e_e", "e_b", "e_f", "e_d"];
+        let scene = ids.iter().fold(String::from("name: Order\nentities:\n"), |yaml, id| {
+            yaml + &format!(
+                "  - id: {id}\n    components:\n      transform: {{}}\n      script: {{ source: game.lua }}\n"
+            )
+        });
+        project.write("scene.yaml", &scene);
+        project.write("next.yaml", "name: Next\nentities: []\n");
+        let destroyed = |runner: &TestRunner| -> Vec<String> {
+            let game: mlua::Table = runner.script_runtime.lua.globals().get("game").unwrap();
+            game.get::<mlua::Table>("destroyed")
+                .unwrap()
+                .sequence_values::<String>()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        let sorted = ["e_a", "e_b", "e_c", "e_d", "e_e", "e_f"];
+
+        let mut runner = TestRunner::new(&project.0);
+        runner.load_scene("scene.yaml").unwrap();
+        runner
+            .script_runtime
+            .lua
+            .load("game.destroyed = {}; game.prefix = true")
+            .exec()
+            .unwrap();
+        runner.step_frames(2);
+        assert_eq!(destroyed(&runner), sorted, "destroy_by_prefix");
+
+        runner.load_scene("scene.yaml").unwrap();
+        runner
+            .script_runtime
+            .lua
+            .load("game.destroyed = {}")
+            .exec()
+            .unwrap();
+        // The test-API load replaces the VM, so read the old one afterwards.
+        let previous = runner.script_runtime.lua.clone();
+        runner.load_scene("next.yaml").unwrap();
+        let game: mlua::Table = previous.globals().get("game").unwrap();
+        let torn_down: Vec<String> = game
+            .get::<mlua::Table>("destroyed")
+            .unwrap()
+            .sequence_values::<String>()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(torn_down, sorted, "scene teardown");
+        assert!(runner.take_errors().is_empty());
+    }
+
     #[test]
     fn wait_until_preserves_the_predicate_error() {
         let project = Project::new("");

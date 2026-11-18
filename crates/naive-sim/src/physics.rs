@@ -136,6 +136,24 @@ pub struct TriggerEvent {
     pub entered: bool,
 }
 
+/// A sensor overlap that has begun and not yet ended.
+#[derive(Clone, Copy, Debug)]
+struct ActiveTrigger {
+    pair: [ColliderHandle; 2],
+    trigger_entity: hecs::Entity,
+    other_entity: hecs::Entity,
+}
+
+impl ActiveTrigger {
+    fn event(&self, entered: bool) -> TriggerEvent {
+        TriggerEvent {
+            trigger_entity: self.trigger_entity,
+            other_entity: self.other_entity,
+            entered,
+        }
+    }
+}
+
 /// Central physics world state.
 pub struct PhysicsWorld {
     pub gravity: Vec3,
@@ -162,9 +180,11 @@ pub struct PhysicsWorld {
     // Track active contact pairs from the previous step to detect new-only contacts
     active_contact_pairs: HashSet<[ColliderHandle; 2]>,
 
-    // Directed sensor/other pairs, retaining entity handles until exit even
-    // when a collider has been removed. Two sensors produce two directed pairs.
-    active_trigger_pairs: HashMap<[ColliderHandle; 2], (hecs::Entity, hecs::Entity)>,
+    // Directed sensor/other pairs in the order their overlaps began,
+    // retaining entity handles until exit even when a collider has been
+    // removed. Two sensors produce two directed pairs. Exits fire in this
+    // order, so they are the same on every run.
+    active_trigger_pairs: Vec<ActiveTrigger>,
 
     // Frame time not yet consumed by fixed steps
     accumulator: f32,
@@ -207,7 +227,7 @@ impl PhysicsWorld {
             collision_events: Vec::new(),
             trigger_events: Vec::new(),
             active_contact_pairs: HashSet::new(),
-            active_trigger_pairs: HashMap::new(),
+            active_trigger_pairs: Vec::new(),
             // Start half a step in. When frames arrive at a whole number of
             // steps apart, timing jitter then cannot flip a frame between one
             // step too few and one too many.
@@ -458,7 +478,8 @@ impl PhysicsWorld {
         }
         self.active_contact_pairs = current_pairs;
 
-        let mut current_triggers = HashMap::new();
+        // Overlaps after this step, in the narrow phase's order.
+        let mut current_triggers = Vec::new();
         for (a, b, intersecting) in self.narrow_phase.intersection_pairs() {
             if !intersecting {
                 continue;
@@ -473,27 +494,31 @@ impl PhysicsWorld {
                 ) else {
                     continue;
                 };
-                let key = [sensor, other];
-                current_triggers.insert(key, (trigger_entity, other_entity));
-                if !self.active_trigger_pairs.contains_key(&key) {
-                    self.trigger_events.push(TriggerEvent {
-                        trigger_entity,
-                        other_entity,
-                        entered: true,
-                    });
-                }
-            }
-        }
-        for (key, &(trigger_entity, other_entity)) in &self.active_trigger_pairs {
-            if !current_triggers.contains_key(key) {
-                self.trigger_events.push(TriggerEvent {
+                current_triggers.push(ActiveTrigger {
+                    pair: [sensor, other],
                     trigger_entity,
                     other_entity,
-                    entered: false,
                 });
             }
         }
-        self.active_trigger_pairs = current_triggers;
+        let previous: HashSet<_> = self.active_trigger_pairs.iter().map(|t| t.pair).collect();
+        let current: HashSet<_> = current_triggers.iter().map(|t| t.pair).collect();
+        let began: Vec<_> = current_triggers
+            .into_iter()
+            .filter(|t| !previous.contains(&t.pair))
+            .collect();
+        for trigger in &began {
+            self.trigger_events.push(trigger.event(true));
+        }
+        // Exits in the order the overlaps began; the rest keep their places.
+        self.active_trigger_pairs.retain(|trigger| {
+            let still = current.contains(&trigger.pair);
+            if !still {
+                self.trigger_events.push(trigger.event(false));
+            }
+            still
+        });
+        self.active_trigger_pairs.extend(began);
     }
 
     /// Move a character controller and return the effective movement.
@@ -720,14 +745,10 @@ impl PhysicsWorld {
     pub fn remove_body(&mut self, rb_handle: RigidBodyHandle) {
         if let Some(body) = self.rigid_body_set.get(rb_handle) {
             let removed = body.colliders();
-            self.active_trigger_pairs.retain(|pair, entities| {
-                let (trigger_entity, other_entity) = *entities;
-                if removed.contains(&pair[0]) || removed.contains(&pair[1]) {
-                    self.trigger_events.push(TriggerEvent {
-                        trigger_entity,
-                        other_entity,
-                        entered: false,
-                    });
+            self.active_trigger_pairs.retain(|trigger| {
+                let [sensor, other] = trigger.pair;
+                if removed.contains(&sensor) || removed.contains(&other) {
+                    self.trigger_events.push(trigger.event(false));
                     false
                 } else {
                     true
@@ -982,6 +1003,73 @@ mod tests {
         physics.begin_frame(FIXED_TIMESTEP);
         physics.step_fixed();
         assert!(physics.trigger_events.is_empty());
+    }
+
+    /// Exits come in the order the overlaps began, whether the bodies leave
+    /// in one step or one is removed; hash order would differ run to run.
+    #[test]
+    fn trigger_exits_follow_the_order_overlaps_began() {
+        let mut world = hecs::World::new();
+        let sensor = world.spawn(());
+        let mut physics = PhysicsWorld::new(Vec3::ZERO);
+        let (sensor_body, _) = add_test_body(&mut physics, sensor, PhysicsBodyType::Static, true);
+        let others: Vec<_> = (0..8)
+            .map(|_| {
+                let entity = world.spawn(());
+                let (body, _) =
+                    add_test_body(&mut physics, entity, PhysicsBodyType::Kinematic, false);
+                (entity, body)
+            })
+            .collect();
+        let place = |physics: &mut PhysicsWorld, body: RigidBodyHandle, x: f32| {
+            physics.rigid_body_set[body].set_translation(to_rapier_vec(Vec3::X * x), true);
+        };
+        let step = |physics: &mut PhysicsWorld| {
+            physics.begin_frame(FIXED_TIMESTEP);
+            physics.step_fixed();
+            physics
+                .trigger_events
+                .iter()
+                .map(|event| (event.trigger_entity, event.other_entity, event.entered))
+                .collect::<Vec<_>>()
+        };
+        let enter_one_by_one = |physics: &mut PhysicsWorld, order: &[usize]| {
+            for (n, &i) in order.iter().enumerate() {
+                place(physics, others[i].1, 0.0);
+                assert_eq!(step(physics), [(sensor, others[i].0, true)], "enter {n}");
+            }
+            order.iter().map(|&i| others[i].0).collect::<Vec<_>>()
+        };
+        for (_, body) in &others {
+            place(&mut physics, *body, 50.0);
+        }
+        assert!(step(&mut physics).is_empty());
+
+        let began = enter_one_by_one(&mut physics, &[5, 2, 7, 0, 3, 6, 1, 4]);
+        for (_, body) in &others {
+            place(&mut physics, *body, 50.0);
+        }
+        let exits: Vec<_> = step(&mut physics)
+            .into_iter()
+            .map(|(trigger, other, entered)| {
+                assert!(trigger == sensor && !entered);
+                other
+            })
+            .collect();
+        assert_eq!(exits, began);
+
+        let began = enter_one_by_one(&mut physics, &[3, 7, 1, 6, 0, 4, 2, 5]);
+        physics.begin_frame(0.0);
+        physics.remove_body(sensor_body);
+        let exits: Vec<_> = physics
+            .trigger_events
+            .iter()
+            .map(|event| {
+                assert!(event.trigger_entity == sensor && !event.entered);
+                event.other_entity
+            })
+            .collect();
+        assert_eq!(exits, began);
     }
 
     #[test]
