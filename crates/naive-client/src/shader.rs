@@ -554,27 +554,49 @@ pub fn compile_shader(
     ))
 }
 
-/// Attempt to compile the mesh forward shader, falling back to WGSL.
+/// A project's own forward shader, which replaces the engine's for scenes
+/// drawn without a render pipeline. `naive build` packages its WGSL.
+pub const FORWARD_SHADER: &str = "shaders/passes/mesh_forward.slang";
+
+/// The forward shader for scenes drawn without a render pipeline: the
+/// project's [`FORWARD_SHADER`] when it has one, otherwise the engine's.
+pub fn load_project_forward_shader(project_root: &Path) -> String {
+    match crate::project_path::resolve(project_root, FORWARD_SHADER) {
+        Ok(path) => {
+            compile_mesh_forward_shader(Some(&path)).unwrap_or_else(|_| get_mesh_forward_wgsl())
+        }
+        Err(error) => {
+            tracing::warn!("Forward shader {FORWARD_SHADER}: {error}; using the engine's");
+            get_mesh_forward_wgsl()
+        }
+    }
+}
+
+/// Load the forward shader at `slang_path`, or the WGSL `naive build`
+/// compiled from it (all a bundled game has), checked like any required
+/// shader. Falls back to the engine's forward shader when there is none or
+/// it fails.
 pub fn compile_mesh_forward_shader(
     slang_path: Option<&std::path::Path>,
 ) -> Result<String, ShaderError> {
     if let Some(path) = slang_path {
-        if !path.exists() {
-            tracing::warn!(
-                "Forward SLANG file not found: {:?}, using fallback WGSL",
+        if !path.exists() && !precompiled_wgsl_path(path).exists() {
+            tracing::debug!(
+                "No project forward shader at {:?}; using the engine's",
                 path
             );
             return Ok(get_mesh_forward_wgsl());
         }
 
-        match compile_slang_to_wgsl(path) {
+        match load_required_shader(path) {
             Ok(wgsl) => {
-                tracing::info!("Forward SLANG compiled successfully: {:?}", path);
+                tracing::info!("Forward shader loaded: {:?}", path);
                 return Ok(wgsl);
             }
             Err(e) => {
                 tracing::warn!(
-                    "Forward SLANG compilation failed: {}, using fallback WGSL",
+                    "Forward shader {:?} failed: {}, using the engine's",
+                    path,
                     e
                 );
                 return Ok(get_mesh_forward_wgsl());
