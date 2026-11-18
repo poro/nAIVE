@@ -136,6 +136,14 @@ pub struct TriggerEvent {
     pub entered: bool,
 }
 
+/// The body pairings a trigger notices: all but static with static. Rapier's
+/// default leaves out kinematic pairs, which would hide character controllers
+/// from a static trigger zone. Static with static is left out because neither
+/// side moves: a static trigger would otherwise report the floor or wall it
+/// is placed against, and two static triggers each other, at scene start.
+pub const TRIGGER_COLLISION_TYPES: ActiveCollisionTypes =
+    ActiveCollisionTypes::all().difference(ActiveCollisionTypes::FIXED_FIXED);
+
 /// A sensor overlap that has begun and not yet ended.
 #[derive(Clone, Copy, Debug)]
 struct ActiveTrigger {
@@ -262,7 +270,7 @@ impl PhysicsWorld {
         let collider = if is_trigger {
             collider_builder
                 .sensor(true)
-                .active_collision_types(ActiveCollisionTypes::all())
+                .active_collision_types(TRIGGER_COLLISION_TYPES)
                 .build()
         } else {
             collider_builder.build()
@@ -303,7 +311,7 @@ impl PhysicsWorld {
         let collider = if is_trigger {
             collider_builder
                 .sensor(true)
-                .active_collision_types(ActiveCollisionTypes::all())
+                .active_collision_types(TRIGGER_COLLISION_TYPES)
                 .build()
         } else {
             collider_builder.build()
@@ -376,7 +384,7 @@ impl PhysicsWorld {
         let collider = if is_trigger {
             collider_builder
                 .sensor(true)
-                .active_collision_types(ActiveCollisionTypes::all())
+                .active_collision_types(TRIGGER_COLLISION_TYPES)
                 .build()
         } else {
             collider_builder.build()
@@ -908,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn every_sensor_body_type_enters_and_exits_each_body_type_once() {
+    fn every_sensor_body_pairing_but_static_with_static_enters_and_exits_once() {
         for sensor_type in [
             PhysicsBodyType::Static,
             PhysicsBodyType::Kinematic,
@@ -929,6 +937,13 @@ mod tests {
                 assert!(physics.collider_set[collider].is_sensor());
                 physics.begin_frame(FIXED_TIMESTEP);
                 physics.step_fixed();
+                if sensor_type == PhysicsBodyType::Static && other_type == PhysicsBodyType::Static {
+                    assert!(
+                        physics.trigger_events.is_empty(),
+                        "a static trigger must not report a static collider"
+                    );
+                    continue;
+                }
                 assert_eq!(
                     trigger_tuples(&physics),
                     HashSet::from([(sensor, other, true)]),
@@ -960,6 +975,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A static trigger zone resting on a static floor, next to another
+    /// static zone, reports the character that walks in and nothing else.
+    #[test]
+    fn static_triggers_ignore_static_colliders_but_see_characters() {
+        let mut world = hecs::World::new();
+        let zone = world.spawn(());
+        let floor = world.spawn(());
+        let other_zone = world.spawn(());
+        let character = world.spawn(());
+        let mut physics = PhysicsWorld::new(Vec3::ZERO);
+        add_test_body(&mut physics, zone, PhysicsBodyType::Static, true);
+        add_test_body(&mut physics, floor, PhysicsBodyType::Static, false);
+        add_test_body(&mut physics, other_zone, PhysicsBodyType::Static, true);
+        let (body, _) = add_test_body(&mut physics, character, PhysicsBodyType::Kinematic, false);
+        physics.rigid_body_set[body].set_translation(to_rapier_vec(Vec3::X * 10.0), true);
+        physics.begin_frame(FIXED_TIMESTEP);
+        physics.step_fixed();
+        assert!(
+            physics.trigger_events.is_empty(),
+            "{:?}",
+            trigger_tuples(&physics)
+        );
+        physics.rigid_body_set[body].set_translation(to_rapier_vec(Vec3::ZERO), true);
+        physics.begin_frame(FIXED_TIMESTEP);
+        physics.step_fixed();
+        assert_eq!(
+            trigger_tuples(&physics),
+            HashSet::from([(zone, character, true), (other_zone, character, true)])
+        );
     }
 
     #[test]
