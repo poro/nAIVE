@@ -603,6 +603,35 @@ pub fn destroy_entity(
     crate::world::destroy_runtime_entity(&mut scene_world.borrow_mut(), id)
 }
 
+/// Check every script `scene` names before it replaces the running scene:
+/// each must resolve inside the project, read and compile. Run with the
+/// asset preflight, before teardown, so a missing or broken script leaves
+/// the current scene running. Errors a script raises while its top level or
+/// `init` runs only show once the new scene is live; that script is then
+/// detached and the failure recorded.
+pub fn preflight_scripts(
+    scene: &crate::scene::SceneFile,
+    runtime: &ScriptRuntime,
+    project_root: &std::path::Path,
+) -> Result<(), String> {
+    let failures: Vec<String> = scene
+        .entities
+        .iter()
+        .filter_map(|definition| {
+            let script = definition.components.script.as_ref()?;
+            runtime
+                .check_script(project_root, std::path::Path::new(&script.source))
+                .err()
+                .map(|error| format!("Failed to load script for '{}': {error}", definition.id))
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
 /// The per-scene state [`clear_scene`] resets.
 pub struct SceneTeardown<'a> {
     pub scene_world: &'a SharedSceneWorld,

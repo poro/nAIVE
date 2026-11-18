@@ -140,6 +140,7 @@ impl TestRunner {
             &mut *self.asset_catalog.borrow_mut(),
             Some(&mut self.physics_world.borrow_mut()),
         )?;
+        crate::sim::preflight_scripts(&scene, &self.script_runtime, &self.project_root)?;
 
         // Tear down as a game script's `scene.load` does, then start the Lua
         // VM and the event log afresh: a test begins from a clean runner, as
@@ -224,15 +225,14 @@ impl TestRunner {
         // Load event schema
         self.event_bus.borrow_mut().load_schema(&self.project_root);
 
-        crate::sim::initialize_pending_scripts(
+        // A script that fails in its top level or `init` is detached and its
+        // failure recorded; the scene itself is live, as in the engine. The
+        // recorded failures, not the returned copy, are the load's error.
+        let _ = crate::sim::initialize_pending_scripts(
             &self.scene_world,
             &mut self.script_runtime,
             &self.project_root,
-        )?;
-        let errors = self.script_runtime.take_errors();
-        if !errors.is_empty() {
-            return Err(errors.join("\n"));
-        }
+        );
 
         // `wait_for_event("lifecycle.scene_loaded")` finds this in the log at
         // once. Recording it, rather than flushing, leaves what scripts emitted
@@ -243,7 +243,12 @@ impl TestRunner {
             .record("lifecycle.scene_loaded", std::collections::HashMap::new());
 
         tracing::info!("Test runner: scene loaded");
-        Ok(())
+        let errors = self.script_runtime.take_errors();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("\n"))
+        }
     }
 
     /// Advance the simulation by one frame, through the same schedule as the
@@ -267,10 +272,10 @@ impl TestRunner {
     /// A game script's `scene.load`: replace the scene in place, as the
     /// engine does (`Engine::replace_scene`), with `crate::sim::clear_scene`.
     /// The Lua VM keeps its globals, such as the shared `game` table, and the
-    /// event log keeps its history. A scene that fails to load or preflight
-    /// leaves the current one running; one that fails while being built
-    /// leaves a partial scene, as a failing test-API load does. The engine
-    /// only logs such failures; here they fail the test.
+    /// event log keeps its history. A scene that fails to load or preflight,
+    /// including a script that is missing or does not compile, leaves the
+    /// current one running. The engine only logs such failures; here they
+    /// fail the test.
     fn replace_scene(&mut self, scene_rel: &str) -> Result<(), String> {
         let scene_path = crate::project_path::resolve(&self.project_root, scene_rel)?;
         let scene = crate::scene::load_scene(&scene_path)
@@ -280,13 +285,17 @@ impl TestRunner {
             &mut *self.asset_catalog.borrow_mut(),
             Some(&mut self.physics_world.borrow_mut()),
         )?;
+        crate::sim::preflight_scripts(&scene, &self.script_runtime, &self.project_root)?;
         self.tear_down_scene(glam::Vec3::from(scene.settings.gravity));
         self.build_scene(scene)?;
-        crate::sim::initialize_pending_scripts(
+        // Failures in a script's top level or `init` are recorded, which fails
+        // the test; the new scene stays live with that script detached.
+        let _ = crate::sim::initialize_pending_scripts(
             &self.scene_world,
             &mut self.script_runtime,
             &self.project_root,
-        )
+        );
+        Ok(())
     }
 
     /// Empty the scene with `crate::sim::clear_scene`, as the engine does
@@ -1835,6 +1844,87 @@ end
             errors[0].contains("scene.load('missing.yaml')"),
             "{errors:?}"
         );
+    }
+
+    const MISSING_SCRIPT_SCENE: &str = "name: Missing\nentities:\n  - id: next\n    components:\n      transform: {}\n      script: { source: absent.lua }\n";
+
+    /// A scene whose script is missing or does not compile fails before
+    /// teardown, so the running scene and its scripts carry on.
+    #[test]
+    fn a_scene_with_a_broken_script_fails_before_replacing_the_running_one() {
+        let project =
+            Project::new("function update(dt) game.updates = (game.updates or 0) + 1 end");
+        project.write("bad_syntax.lua", "function update(dt) this is not lua end");
+        project.write("missing.yaml", MISSING_SCRIPT_SCENE);
+        project.write(
+            "syntax.yaml",
+            &MISSING_SCRIPT_SCENE.replace("absent.lua", "bad_syntax.lua"),
+        );
+        for (scene, script) in [
+            ("missing.yaml", "absent.lua"),
+            ("syntax.yaml", "bad_syntax.lua"),
+        ] {
+            let mut runner = TestRunner::new(&project.0);
+            runner.load_scene("scene.yaml").unwrap();
+            runner.step_frame();
+            let error = runner.load_scene(scene).unwrap_err();
+            assert!(
+                error.contains("Failed to load script for 'next'") && error.contains(script),
+                "{error}"
+            );
+            assert!(runner.get_entity_position("next").is_none(), "{scene}");
+            assert!(runner.get_entity_position("actor").is_some(), "{scene}");
+            runner.step_frame();
+            let game: mlua::Table = runner.script_runtime.lua.globals().get("game").unwrap();
+            assert_eq!(
+                game.get::<i64>("updates").unwrap(),
+                2,
+                "{scene}: old scene stopped"
+            );
+            let errors = runner.take_errors();
+            assert_eq!(errors.len(), 1, "{scene}: {errors:?}");
+        }
+    }
+
+    #[test]
+    fn a_script_scene_load_with_a_missing_script_keeps_the_running_scene() {
+        let project = Project::new(
+            "function update(dt)\n    game.updates = (game.updates or 0) + 1\n    if game.updates == 1 then scene.load('missing.yaml') end\nend\n",
+        );
+        project.write("missing.yaml", MISSING_SCRIPT_SCENE);
+        let mut runner = TestRunner::new(&project.0);
+        runner.load_scene("scene.yaml").unwrap();
+        runner.step_frames(3);
+        assert!(runner.get_entity_position("next").is_none());
+        assert!(runner.get_entity_position("actor").is_some());
+        let game: mlua::Table = runner.script_runtime.lua.globals().get("game").unwrap();
+        assert_eq!(game.get::<i64>("updates").unwrap(), 3);
+        let errors = runner.take_errors();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("scene.load('missing.yaml')") && errors[0].contains("absent.lua"),
+            "{errors:?}"
+        );
+    }
+
+    /// An error a script raises in `init` only shows once the scene is live:
+    /// the scene stays loaded with that script detached, as in the engine,
+    /// and the failure is reported once.
+    #[test]
+    fn a_script_failing_in_init_is_detached_and_reported_once() {
+        let project = Project::new(
+            "function init() error('init exploded') end\nfunction update(dt) game.updated = true end",
+        );
+        let mut runner = TestRunner::new(&project.0);
+        let error = runner.load_scene("scene.yaml").unwrap_err();
+        assert!(error.contains("init exploded"), "{error}");
+        assert!(runner.get_entity_position("actor").is_some());
+        assert!(runner.event_occurred("lifecycle.scene_loaded", &HashMap::new()));
+        runner.step_frame();
+        let game: mlua::Table = runner.script_runtime.lua.globals().get("game").unwrap();
+        assert_eq!(game.get::<Option<bool>>("updated").unwrap(), None);
+        let errors = runner.take_errors();
+        assert_eq!(errors.len(), 1, "{errors:?}");
     }
 
     #[test]
