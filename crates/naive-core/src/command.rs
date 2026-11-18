@@ -190,10 +190,10 @@ commands! {
     RuntimeControl => "runtime_control", "Pause, resume or get the status of the game runtime.", {
         action: String => "pause, resume or status"
     };
-    SaveScene => "save_scene", "Save the current scene as YAML inside the project, keeping authored scripts, physics and gameplay components with live transform and light edits. Runtime state that a scene file cannot represent is reported as an error.", {
+    SaveScene => "save_scene", "Save the current scene as YAML inside the project, keeping authored scripts, physics and gameplay components with live transform and light edits. Entities that scene scripts spawned are left out, since the scripts spawn them again when the scene loads; entities spawned through run_lua are saved. Runtime state that a scene file cannot represent is reported as an error.", {
         path: Option<String> => "Output path relative to the project root (default scenes/editor_scene.yaml)"
     };
-    GetSceneYaml => "get_scene_yaml", "Get the current scene as YAML. Use it to see which entities exist and their properties before making changes.", {};
+    GetSceneYaml => "get_scene_yaml", "Get the current scene as YAML, as save_scene would write it: entities that scene scripts spawned are left out (list_entities shows them). Use it to see the authored entities and their properties before making changes.", {};
     SetCamera => "set_camera", "Set the editor camera position and orientation. Use look_at to point the camera at a world position.", {
         position: Option<[f32; 3]> => "Camera position [x, y, z]",
         yaw: Option<f32> => "Yaw in degrees",
@@ -219,7 +219,7 @@ commands! {
         output: Option<String> => "Where to write the diff image (default captures/diff.png)",
         threshold: Option<u32> => "Largest per-channel difference (0-255) still counted as unchanged (default 8)"
     };
-    Undo => "undo", "Undo the last spawn_entity, destroy_entity, modify_entity or run_lua by restoring the scene as it was before it. Scripts restart from init; Lua variables and velocities are not restored. Up to 32 steps; a change made while the scene held state a scene file cannot represent cannot be undone.", {};
+    Undo => "undo", "Undo the last spawn_entity, destroy_entity, modify_entity or run_lua by restoring the scene as it was before it. Scripts restart from init and spawn their entities again; Lua variables, velocities and entities scripts spawned later are not restored. Up to 32 steps; a change made while the scene held state a scene file cannot represent cannot be undone.", {};
     RunLua => "run_lua", "Run Lua in the running engine, sandboxed with instruction and memory limits. Tables: entity (spawn, spawn_dynamic, destroy, get_position/set_position, get_rotation/set_rotation, set_scale, find_by_tag, damage, heal, set_base_color, set_emission, ...), physics (apply_impulse, apply_force, set_velocity, raycast, hitscan), events (emit, on, off), audio (play_sfx, play_music, stop_music), particles (spawn_burst), camera (shake, world_to_screen), animation, mesh, input and swarm. Use it for batch edits and anything the other tools do not cover.", {
         code: String => "Lua code to run. Its return value and print() output are returned."
     }

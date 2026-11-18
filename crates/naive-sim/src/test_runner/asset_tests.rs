@@ -376,6 +376,65 @@ fn demo_runtime_meshes_come_from_their_scripts() {
     assert_eq!(mesh.vertices[0].position, [-4.0, 0.0, -0.75]);
 }
 
+/// Editor undo and save snapshot the scene. The demos' scripts spawn
+/// entities with `mesh.create` meshes, which have no scene-file form; those
+/// entities are the scripts' output, so the snapshot is exactly the authored
+/// scene, which loads again with the scripts spawning them anew.
+#[test]
+fn demo_scenes_with_runtime_meshes_snapshot_their_authored_entities() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../project");
+    for path in ["scenes/tier3_showcase.yaml", "scenes/procedural_world.yaml"] {
+        let mut runner = TestRunner::new(&root);
+        runner.load_scene(path).unwrap();
+        runner.step_seconds(1.0);
+        assert!(runner.take_errors().is_empty(), "{path}");
+        let saved = {
+            let world = runner.scene_world.borrow();
+            assert!(
+                world.entity_registry.len() > world.current_scene.as_ref().unwrap().entities.len(),
+                "{path}: the scripts spawned nothing"
+            );
+            crate::scene_snapshot::snapshot_scene(
+                &world,
+                &*runner.asset_catalog.borrow(),
+                Some(&runner.physics_world.borrow()),
+            )
+            .unwrap_or_else(|error| panic!("{path}: {error}"))
+        };
+        let authored = crate::scene::load_scene(&root.join(path)).unwrap();
+        let mut expected: Vec<_> = authored.entities.iter().map(|e| e.id.clone()).collect();
+        expected.sort();
+        let ids: Vec<_> = saved.entities.iter().map(|e| e.id.clone()).collect();
+        assert_eq!(ids, expected, "{path}");
+
+        // The saved document parses and passes the load's asset preflight.
+        let yaml = serde_norway::to_string(&saved).unwrap();
+        let reloaded = crate::scene::parse_scene(&yaml).unwrap();
+        crate::world::preflight_scene(&reloaded, &mut *runner.asset_catalog.borrow_mut(), None)
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+    }
+}
+
+/// Spawns from scripts are marked as script output in the headless runner
+/// too, so both hosts snapshot the same entities.
+#[test]
+fn queued_spawns_are_marked_as_script_output() {
+    let project = Project::new();
+    scripted_scene(&project, WEDGE_SCRIPT);
+    let mut runner = TestRunner::new(&project.0);
+    runner.load_scene("scene.yaml").unwrap();
+    runner.step_frame();
+    let world = runner.scene_world.borrow();
+    let marked = |id: &str| {
+        world
+            .world
+            .get::<&crate::world::ScriptSpawned>(world.entity_registry[id])
+            .is_ok()
+    };
+    assert!(marked("wedge"));
+    assert!(!marked("author"));
+}
+
 #[test]
 fn splat_entities_with_trimesh_colliders_take_their_shape_from_the_authored_mesh() {
     let project = Project::new();

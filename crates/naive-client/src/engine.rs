@@ -1366,6 +1366,9 @@ impl Engine {
             }
         }
 
+        // Spawns an editor command queued are authored; the rest are script
+        // output, which scene snapshots leave out.
+        let editor_spawns = std::mem::take(&mut self.entity_commands.borrow_mut().editor_spawns);
         let spawns = std::mem::take(&mut self.entity_commands.borrow_mut().spawns);
         for command in &spawns {
             if let Some(scene_world) = &self.scene_world {
@@ -1385,7 +1388,14 @@ impl Engine {
                         self.texture_resources.as_ref(),
                         Some(&mut self.texture_cache),
                     ) {
-                        Ok(_) => true,
+                        Ok(_) => {
+                            crate::world::mark_script_spawned(
+                                &mut world,
+                                &command.id,
+                                &editor_spawns,
+                            );
+                            true
+                        }
                         Err(error) => {
                             tracing::error!("Entity spawn failed: {error}");
                             false
@@ -1416,12 +1426,15 @@ impl Engine {
                     self.texture_resources.as_ref(),
                     Some(&mut self.texture_cache),
                 ) {
-                    Ok(entity) => crate::world::finish_projectile_spawn(
-                        &mut world,
-                        &mut physics,
-                        entity,
-                        command,
-                    ),
+                    Ok(entity) => {
+                        crate::world::finish_projectile_spawn(
+                            &mut world,
+                            &mut physics,
+                            entity,
+                            command,
+                        );
+                        crate::world::mark_script_spawned(&mut world, &command.id, &editor_spawns);
+                    }
                     Err(error) => tracing::error!("Projectile spawn failed: {error}"),
                 }
             }
@@ -1445,12 +1458,15 @@ impl Engine {
                     self.texture_resources.as_ref(),
                     Some(&mut self.texture_cache),
                 ) {
-                    Ok(entity) => crate::world::finish_dynamic_spawn(
-                        &mut world,
-                        &mut physics,
-                        entity,
-                        command,
-                    ),
+                    Ok(entity) => {
+                        crate::world::finish_dynamic_spawn(
+                            &mut world,
+                            &mut physics,
+                            entity,
+                            command,
+                        );
+                        crate::world::mark_script_spawned(&mut world, &command.id, &editor_spawns);
+                    }
                     Err(error) => tracing::error!("Dynamic spawn failed: {error}"),
                 }
             }

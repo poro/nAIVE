@@ -1,5 +1,7 @@
 //! Deferred entity commands shared by native and headless simulation.
 
+use std::collections::HashSet;
+
 use crate::scene::EntityDef;
 
 /// Deferred pool operation.
@@ -22,6 +24,10 @@ pub struct EntityCommandQueue {
     pub pending_scene_load: Option<String>,
     pub texture_swaps: Vec<TextureSwapCommand>,
     pub mesh_creates: Vec<MeshCreateCommand>,
+    /// IDs of queued spawns an editor command (`run_lua`) asked for. Those
+    /// entities are authored; every other queued spawn is script output and
+    /// gets [`super::ScriptSpawned`]. Drained with the spawns.
+    pub editor_spawns: HashSet<String>,
 }
 
 /// Deferred texture swap: change an entity's albedo or normal map at runtime.
@@ -162,5 +168,75 @@ impl EntityCommandQueue {
         self.pending_scene_load = None;
         self.texture_swaps.clear();
         self.mesh_creates.clear();
+        self.editor_spawns.clear();
+    }
+
+    /// How many spawns of each kind are queued, for
+    /// [`Self::record_editor_spawns`].
+    pub fn spawn_counts(&self) -> [usize; 3] {
+        [
+            self.spawns.len(),
+            self.projectile_spawns.len(),
+            self.dynamic_spawns.len(),
+        ]
+    }
+
+    /// Record the spawns queued since `before` as editor-authored.
+    pub fn record_editor_spawns(&mut self, before: [usize; 3]) {
+        let ids = self.spawns.iter().skip(before[0]).map(|c| &c.id);
+        let ids = ids.chain(self.projectile_spawns.iter().skip(before[1]).map(|c| &c.id));
+        let ids = ids.chain(self.dynamic_spawns.iter().skip(before[2]).map(|c| &c.id));
+        let ids: Vec<String> = ids.cloned().collect();
+        self.editor_spawns.extend(ids);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spawn(id: &str) -> SpawnCommand {
+        SpawnCommand {
+            id: id.into(),
+            mesh: "procedural:cube".into(),
+            material: "procedural:default".into(),
+            position: [0.; 3],
+            scale: [1.; 3],
+            collider: None,
+            rigid_body: None,
+            script: None,
+        }
+    }
+
+    fn dynamic(id: &str) -> DynamicSpawnCommand {
+        DynamicSpawnCommand {
+            id: id.into(),
+            mesh: "procedural:sphere".into(),
+            material: "procedural:default".into(),
+            position: [0.; 3],
+            velocity: [0.; 3],
+            scale: [1.; 3],
+            radius: 0.5,
+            mass: 1.,
+            restitution: 0.,
+            friction: 0.5,
+            lifetime: 1.,
+        }
+    }
+
+    /// Only spawns queued after the editor command started are its own.
+    #[test]
+    fn editor_spawns_are_the_ones_queued_during_the_command() {
+        let mut queue = EntityCommandQueue::new();
+        queue.spawns.push(spawn("from_script"));
+        let before = queue.spawn_counts();
+        queue.spawns.push(spawn("from_editor"));
+        queue.dynamic_spawns.push(dynamic("ball_from_editor"));
+        queue.record_editor_spawns(before);
+        let mut ids: Vec<_> = queue.editor_spawns.iter().cloned().collect();
+        ids.sort();
+        assert_eq!(ids, ["ball_from_editor", "from_editor"]);
+        queue.clear();
+        assert!(queue.editor_spawns.is_empty());
     }
 }

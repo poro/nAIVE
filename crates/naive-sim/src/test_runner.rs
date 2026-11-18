@@ -355,6 +355,8 @@ impl TestRunner {
     fn process_entity_commands(&mut self) {
         let (meshes, spawns, projectiles, dynamics, scales, visibility, pools, gpu_ops) = {
             let mut queue = self.entity_commands.borrow_mut();
+            // No editor commands run here: every queued spawn is script output.
+            queue.editor_spawns.clear();
             let gpu_ops = queue.texture_swaps.len();
             queue.texture_swaps.clear();
             (
@@ -389,29 +391,37 @@ impl TestRunner {
             }
         }
 
+        let none = std::collections::HashSet::new();
         for command in spawns {
             if self.spawn_definition(&command.entity_def()).is_some() {
+                let mut world = self.scene_world.borrow_mut();
+                crate::world::mark_script_spawned(&mut world, &command.id, &none);
+                drop(world);
                 crate::sim::finish_pool_spawn(&self.scene_world, &self.pool_manager, &command);
             }
         }
         for command in projectiles {
             if let Some(entity) = self.spawn_definition(&command.entity_def()) {
+                let mut world = self.scene_world.borrow_mut();
                 crate::world::finish_projectile_spawn(
-                    &mut self.scene_world.borrow_mut(),
+                    &mut world,
                     &mut self.physics_world.borrow_mut(),
                     entity,
                     &command,
                 );
+                crate::world::mark_script_spawned(&mut world, &command.id, &none);
             }
         }
         for command in dynamics {
             if let Some(entity) = self.spawn_definition(&command.entity_def()) {
+                let mut world = self.scene_world.borrow_mut();
                 crate::world::finish_dynamic_spawn(
-                    &mut self.scene_world.borrow_mut(),
+                    &mut world,
                     &mut self.physics_world.borrow_mut(),
                     entity,
                     &command,
                 );
+                crate::world::mark_script_spawned(&mut world, &command.id, &none);
             }
         }
         for (id, scale) in scales {

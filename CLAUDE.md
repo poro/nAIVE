@@ -155,7 +155,7 @@ When the editor is running, Claude Code can use these MCP tools via `naive_mcp`:
 | `naive_inject_input` | Synthesize keyboard/mouse input as if the user pressed it |
 | `naive_runtime_control` | Pause / resume / step the engine runtime |
 | `naive_beautify_scene` | Trigger the scene beautification pipeline (mesh → Gaussian splat) |
-| `naive_save_scene` | Serialize current scene to YAML file |
+| `naive_save_scene` | Serialize current scene to YAML file. Entities scene scripts spawned are left out (the scripts spawn them again on load); `run_lua` spawns are saved |
 | `naive_get_scene_yaml` | Get current scene as YAML string (for understanding context) |
 | `naive_set_camera` | Move/orient the editor camera (position, yaw, pitch, look_at) |
 | `naive_editor_status` | Get editor mode info, entity count, camera position |
@@ -163,7 +163,7 @@ When the editor is running, Claude Code can use these MCP tools via `naive_mcp`:
 | `naive_benchmark` | Run N whole frames back to back offscreen (no vsync, no window throttling) and report fps, ms per frame and GPU time per pass. The simulation advances. Use this, not the on-screen frame rate, to measure performance |
 | `naive_run_tests` | Run Lua tests in a supervised subprocess (one file or all from `naive.yaml`); `timeout_seconds` is 1–300, default 30. One suite at a time; the editor stays responsive and `editor_status.tests_running` reports activity |
 | `naive_screenshot_diff` | Compare two PNG captures in the project: changed pixels, max and mean difference, and a diff image (changes in red) |
-| `naive_undo` | Undo the last `spawn_entity`, `destroy_entity`, `modify_entity` or `run_lua` by restoring the scene snapshot taken before it (32 steps; scripts restart) |
+| `naive_undo` | Undo the last `spawn_entity`, `destroy_entity`, `modify_entity` or `run_lua` by restoring the scene snapshot taken before it (32 steps; scripts restart and spawn their entities again) |
 | `naive_gpu_timings` | GPU ms per frame over the last 60 frames, per pass. On screen with vsync the GPU clocks down to just fit the refresh, so these read high |
 
 ### Procedural Meshes

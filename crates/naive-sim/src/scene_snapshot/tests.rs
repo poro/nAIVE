@@ -549,3 +549,49 @@ fn generated_authored_fallback_is_still_unsavable() {
         world.world.despawn(entity).unwrap();
     }
 }
+
+/// Script output is left out, whatever state would otherwise block a save;
+/// the same entity without the marker still reports why it cannot be saved.
+#[test]
+fn script_spawned_entities_are_left_out_of_snapshots() {
+    let mut world = SceneWorld::new();
+    let authored = register(&mut world, &definition("id: author"));
+    let mut spawned = definition("id: spawned");
+    spawned.components.mesh_renderer = Some(MeshRendererDef {
+        mesh: "runtime:diamond".into(),
+        material: "procedural:default".into(),
+        cast_shadows: true,
+        receive_shadows: true,
+    });
+    let entity = register(&mut world, &spawned);
+    world
+        .world
+        .insert_one(
+            entity,
+            MeshRenderer {
+                mesh_handle: MeshHandle(usize::MAX),
+                material_handle: MaterialHandle(usize::MAX),
+            },
+        )
+        .unwrap();
+    world.world.insert_one(entity, Hidden).unwrap();
+    world
+        .world
+        .insert_one(
+            entity,
+            Projectile {
+                damage: 1.,
+                lifetime: 2.,
+                age: 0.,
+                owner_id: String::new(),
+            },
+        )
+        .unwrap();
+    assert!(snapshot_scene(&world, &catalog(), None).is_err());
+
+    world.world.insert_one(entity, ScriptSpawned).unwrap();
+    let saved = snapshot_scene(&world, &catalog(), None).unwrap();
+    let ids: Vec<_> = saved.entities.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, ["author"]);
+    assert!(world.world.contains(authored));
+}
