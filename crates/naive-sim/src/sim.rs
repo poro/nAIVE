@@ -629,7 +629,13 @@ pub struct SceneTeardown<'a> {
 /// colliders. The Lua VM and its globals (such as the shared `game` table),
 /// the event log and input carry over to the next scene; GPU or CPU swarm
 /// instances are the host's to clear.
-pub fn clear_scene(teardown: SceneTeardown<'_>, gravity: glam::Vec3) {
+///
+/// Returns the deferred commands it discards, including any `on_destroy`
+/// queued, so the headless runner can still fail a test on GPU-only ones.
+pub fn clear_scene(
+    teardown: SceneTeardown<'_>,
+    gravity: glam::Vec3,
+) -> crate::world::EntityCommandQueue {
     let SceneTeardown {
         scene_world,
         physics_world,
@@ -666,7 +672,7 @@ pub fn clear_scene(teardown: SceneTeardown<'_>, gravity: glam::Vec3) {
             runtime.forget_entity(entity);
         }
     }
-    entity_commands.borrow_mut().clear();
+    let discarded = std::mem::take(&mut *entity_commands.borrow_mut());
     // Events from the previous scene, including teardown hooks, must not
     // reach subscriptions registered by the replacement scene.
     event_bus.borrow_mut().discard_pending();
@@ -687,6 +693,7 @@ pub fn clear_scene(teardown: SceneTeardown<'_>, gravity: glam::Vec3) {
     *camera_shake.borrow_mut() = crate::presentation::CameraShakeState::new();
     *ui_frame.borrow_mut() = Default::default();
     *swarm_bus.borrow_mut() = crate::swarm_api::SwarmBus::new();
+    discarded
 }
 
 /// Initialize newly attached scripts after construction has released its world
