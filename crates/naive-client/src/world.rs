@@ -421,6 +421,8 @@ entities:
       script: {source: sensor.lua}
   - id: replaced
     components:
+      # Kinematic: two static triggers do not report each other.
+      rigid_body: {type: kinematic}
       collider: {shape: sphere, radius: 1, is_trigger: true}
       script: {source: sensor.lua}
 "#,

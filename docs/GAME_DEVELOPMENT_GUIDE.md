@@ -300,7 +300,10 @@ kinematic, or dynamic body. Trigger hooks run on the trigger's script and receiv
 the other entity's string ID. Two overlapping triggers each receive their own
 hooks. An overlap produces one enter and one exit, including when the other entity
 is destroyed; continuing overlaps do not repeat enters. Events from every fixed
-physics step are delivered in both native play and `naive test`.
+physics step are delivered in both native play and `naive test`. A trigger on a
+static body ignores other static colliders, such as the floor it rests on or
+another static trigger, because neither side can move into the other; it still
+sees kinematic bodies (character controllers) and dynamic ones.
 
 **Note:** Scripts do not receive an `entity` object. Instead, the variable `_entity_string_id` contains the entity's YAML `id` string. Use it with the `entity.*` API functions below. Per-script state can be stored on the `self` table.
 

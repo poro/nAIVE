@@ -334,7 +334,7 @@ fn renderer_handles_do_not_change_gameplay_components_or_physics_options() {
         assert_eq!(state["collider"]["sensor"], true);
         assert_eq!(
             state["collider"]["collision_types"],
-            json!(rapier3d::prelude::ActiveCollisionTypes::all().bits())
+            json!(crate::physics::TRIGGER_COLLISION_TYPES.bits())
         );
         if kind == "dynamic" {
             assert_eq!(state["collider"]["mass"], 2.5);
