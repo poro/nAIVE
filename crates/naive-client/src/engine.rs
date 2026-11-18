@@ -1625,7 +1625,8 @@ impl Engine {
     /// the usual path (so `on_destroy` hooks run), reset per-scene state, then
     /// build and initialize the new entities. Shared by `scene.load` and the
     /// `undo` command. Returns false when native construction is unavailable
-    /// or scene preflight fails, preserving the current scene.
+    /// or scene preflight fails (an asset, or a script that is missing or does
+    /// not compile), preserving the current scene.
     pub(crate) fn replace_scene(&mut self, scene: crate::scene::SceneFile) -> bool {
         let Some(gpu) = &self.gpu else {
             return false;
@@ -1648,6 +1649,11 @@ impl Engine {
                 .map(|world| world.borrow_mut())
                 .as_deref_mut(),
         );
+        // Missing or broken scripts must also fail before teardown.
+        let preflight = preflight.and_then(|()| match &self.script_runtime {
+            Some(runtime) => crate::sim::preflight_scripts(&scene, runtime, &self.project_root),
+            None => Ok(()),
+        });
         if let Err(error) = preflight {
             tracing::error!("Scene replacement failed: {error}, keeping old scene");
             return false;

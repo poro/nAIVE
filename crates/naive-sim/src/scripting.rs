@@ -584,6 +584,21 @@ impl ScriptRuntime {
         Ok(())
     }
 
+    /// Check that `source` resolves inside the project, reads and compiles,
+    /// without running it: what a scene replacement can verify before it
+    /// tears down the running scene. Errors read like `load_script`'s.
+    pub fn check_script(&self, project_root: &Path, source: &Path) -> Result<(), String> {
+        let full_path = crate::project_path::resolve(project_root, source)?;
+        let code = std::fs::read_to_string(&full_path)
+            .map_err(|error| format!("Failed to read script {:?}: {}", full_path, error))?;
+        self.lua
+            .load(&code)
+            .set_name(source.to_string_lossy())
+            .into_function()
+            .map(|_| ())
+            .map_err(|error| format!("Script error in {:?}: {}", source, error))
+    }
+
     /// Call the `init` lifecycle hook on an entity's script.
     pub fn call_init(&self, entity: hecs::Entity) {
         self.call_hook(entity, "init", ());
