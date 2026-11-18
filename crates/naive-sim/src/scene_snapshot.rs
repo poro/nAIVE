@@ -7,7 +7,7 @@
 use crate::components::*;
 use crate::physics::{Collider, PhysicsBodyType, PhysicsShape, PhysicsWorld, RigidBody};
 use crate::scene::*;
-use crate::world::{SceneEntityDefinition, SceneWorld, UnsavedRuntimeState};
+use crate::world::{SceneEntityDefinition, SceneWorld, ScriptSpawned, UnsavedRuntimeState};
 
 /// Read-only asset names needed to rebuild renderer-independent scene files.
 /// Handles belong to the asset store that populated the world. Return its
@@ -20,6 +20,8 @@ pub trait SnapshotAssetLookup {
 
 /// A scene snapshot preserves scene-authoring state, not an arbitrary savegame.
 /// Unsupported transient state is reported instead of silently discarded.
+/// Entities scripts spawned ([`ScriptSpawned`]) are left out: they are the
+/// scripts' output, and the scripts create them again when the scene loads.
 pub fn snapshot_scene(
     world: &SceneWorld,
     assets: &impl SnapshotAssetLookup,
@@ -32,6 +34,9 @@ pub fn snapshot_scene(
         let entity = world.entity_registry[id];
         if !world.world.contains(entity) {
             return Err(format!("Entity registry contains missing entity '{id}'"));
+        }
+        if world.world.get::<&ScriptSpawned>(entity).is_ok() {
+            continue;
         }
         if let Ok(state) = world.world.get::<&UnsavedRuntimeState>(entity) {
             return Err(format!("Cannot save entity '{id}': {}", state.0));

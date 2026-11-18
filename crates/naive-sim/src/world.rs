@@ -12,7 +12,7 @@ pub use commands::{
 pub use construction::{preflight_scene, spawn_entity_with_resolver, SpawnAssetResolver};
 pub use pools::EntityPoolManager;
 pub use spawning::{
-    destroy_runtime_entity, finish_dynamic_spawn, finish_projectile_spawn,
+    destroy_runtime_entity, finish_dynamic_spawn, finish_projectile_spawn, mark_script_spawned,
     spawn_entity_headless_with_assets,
 };
 #[cfg(any(test, feature = "test-support"))]
@@ -35,6 +35,14 @@ pub struct SceneEntityDefinition(pub EntityDef);
 /// the editor saves the scene. The operation that creates such state records
 /// its reason here, and the snapshot reports it to the caller.
 pub struct UnsavedRuntimeState(pub String);
+
+/// An entity a running script created through the command queue
+/// (`entity.spawn`, `entity.spawn_ex`, pools, projectiles, dynamic bodies).
+/// It is the script's output, not authored content: scene snapshots leave it
+/// out, because loading the saved scene, or undo restarting its scripts,
+/// creates it again. Spawns an editor command (`run_lua`) queued are
+/// authored and stay unmarked.
+pub struct ScriptSpawned;
 
 /// Central scene state: the ECS world plus entity name registry.
 pub struct SceneWorld {

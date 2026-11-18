@@ -153,15 +153,18 @@ impl EnginePhases {
             Some(&mut self.runtime),
             &self.commands,
         );
+        let editor_spawns = std::mem::take(&mut self.commands.borrow_mut().editor_spawns);
         let spawns = std::mem::take(&mut self.commands.borrow_mut().spawns);
         for command in spawns {
+            let mut world = self.world.borrow_mut();
             crate::world::spawn_entity_headless_with_assets(
-                &mut self.world.borrow_mut(),
+                &mut world,
                 &command.entity_def(),
                 &mut self.physics.borrow_mut(),
                 &mut self.assets,
             )
             .unwrap();
+            crate::world::mark_script_spawned(&mut world, &command.id, &editor_spawns);
         }
         crate::sim::initialize_pending_scripts(&self.world, &mut self.runtime, &project.0).unwrap();
         crate::sim::dispatch_lua_events(&self.events, &self.listeners, Some(&self.runtime), dt);

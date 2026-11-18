@@ -6,7 +6,10 @@ use crate::scene::*;
 
 #[cfg(any(test, feature = "test-support"))]
 use super::construction::{construct_entity, PreparedSpawnAssets};
-use super::{spawn_entity_with_resolver, DynamicSpawnCommand, ProjectileSpawnCommand, SceneWorld};
+use super::{
+    spawn_entity_with_resolver, DynamicSpawnCommand, ProjectileSpawnCommand, SceneWorld,
+    ScriptSpawned,
+};
 
 /// Destroy a runtime entity by its string ID.
 pub fn destroy_runtime_entity(scene_world: &mut SceneWorld, id: &str) -> bool {
@@ -15,6 +18,22 @@ pub fn destroy_runtime_entity(scene_world: &mut SceneWorld, id: &str) -> bool {
         true
     } else {
         false
+    }
+}
+
+/// Mark the entity a queued spawn created as script output, unless an
+/// editor command queued it (`editor_spawns`, taken from the queue with the
+/// spawns). Both hosts call this after each successful queued spawn.
+pub fn mark_script_spawned(
+    scene_world: &mut SceneWorld,
+    id: &str,
+    editor_spawns: &std::collections::HashSet<String>,
+) {
+    if editor_spawns.contains(id) {
+        return;
+    }
+    if let Some(&entity) = scene_world.entity_registry.get(id) {
+        let _ = scene_world.world.insert_one(entity, ScriptSpawned);
     }
 }
 

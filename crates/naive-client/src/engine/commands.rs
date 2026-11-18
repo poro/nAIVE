@@ -619,7 +619,14 @@ impl Engine {
                 Err(_) => compile(code)?,
             };
             *may_have_changed = true;
-            let value = script_runtime.run_limited(|| chunk.call::<mlua::Value>(()))?;
+            // Entities this code spawns are the editor's (authored), not a
+            // script's, so snapshots keep them. Record them even on error.
+            let before = self.entity_commands.borrow().spawn_counts();
+            let value = script_runtime.run_limited(|| chunk.call::<mlua::Value>(()));
+            self.entity_commands
+                .borrow_mut()
+                .record_editor_spawns(before);
+            let value = value?;
 
             // Format return value
             let result_str = match &value {
@@ -858,6 +865,60 @@ mod tests {
         assert_eq!(stack.len(), UNDO_LIMIT);
         assert_eq!(stack.first().unwrap().label, "1");
         assert_eq!(stack.last().unwrap().label, "successful change");
+    }
+
+    /// Entities `run_lua` spawns are the editor's, so snapshots keep them;
+    /// a script's spawns queued earlier stay script output. A failure after
+    /// the spawn still records it, since the spawn goes ahead.
+    #[test]
+    fn run_lua_spawns_are_recorded_as_editor_authored() {
+        let mut engine = Engine::new(CliArgs {
+            command: None,
+            scene: None,
+            pipeline: None,
+            project: ".".to_string(),
+            socket: "/tmp/unused-naive-editor-spawn-test.sock".to_string(),
+            hud: false,
+            editor_mode: false,
+        });
+        let world = Rc::new(RefCell::new(SceneWorld::new()));
+        let physics = Rc::new(RefCell::new(PhysicsWorld::new(glam::Vec3::ZERO)));
+        let runtime = ScriptRuntime::new();
+        runtime.register_entity_api(world.clone(), physics).unwrap();
+        runtime
+            .register_entity_command_api(
+                world.clone(),
+                engine.entity_commands.clone(),
+                engine.pool_manager.clone(),
+            )
+            .unwrap();
+        engine.scene_world = Some(world);
+        engine.script_runtime = Some(runtime);
+        let spawn = |id: &str| {
+            format!("entity.spawn_ex({{id = '{id}', mesh = 'procedural:cube', material = 'procedural:default'}})")
+        };
+        engine
+            .script_runtime
+            .as_ref()
+            .unwrap()
+            .lua
+            .load(spawn("from_script"))
+            .exec()
+            .unwrap();
+        let request = serde_json::from_value(json!({
+            "cmd": "run_lua",
+            "code": format!("{}; error('after spawn')", spawn("from_editor")),
+        }))
+        .unwrap();
+        let mut may_have_changed = false;
+        let response = engine.handle_run_lua(&request, &mut may_have_changed);
+        assert_eq!(response.status, "error");
+        let queue = engine.entity_commands.borrow();
+        assert_eq!(queue.spawns.len(), 2);
+        assert_eq!(
+            queue.editor_spawns,
+            std::collections::HashSet::from(["from_editor".to_string()])
+        );
     }
 
     #[test]

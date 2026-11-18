@@ -6,10 +6,11 @@ mod spawning;
 pub(crate) use naive_sim::world::preflight_scene;
 pub use naive_sim::world::{
     destroy_runtime_entity, euler_degrees_to_quat, finish_dynamic_spawn, finish_projectile_spawn,
-    parse_collider_shape, spawn_entity_headless_with_assets, spawn_entity_with_resolver,
-    DynamicSpawnCommand, EntityCommandQueue, EntityPoolManager, MeshCreateCommand, PoolOp,
-    ProjectileSpawnCommand, SceneEntityDefinition, SceneWorld, SpawnAssetResolver,
-    SpawnColliderSpec, SpawnCommand, TextureSwapCommand, UnsavedRuntimeState,
+    mark_script_spawned, parse_collider_shape, spawn_entity_headless_with_assets,
+    spawn_entity_with_resolver, DynamicSpawnCommand, EntityCommandQueue, EntityPoolManager,
+    MeshCreateCommand, PoolOp, ProjectileSpawnCommand, SceneEntityDefinition, SceneWorld,
+    ScriptSpawned, SpawnAssetResolver, SpawnColliderSpec, SpawnCommand, TextureSwapCommand,
+    UnsavedRuntimeState,
 };
 #[cfg(test)]
 pub use naive_sim::world::{spawn_all_entities_headless, spawn_entity_headless};
