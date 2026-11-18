@@ -3,6 +3,10 @@
 //!
 //! Scripts can call back into the physics and entity APIs, so none of these
 //! functions keeps engine state borrowed while a script runs.
+//!
+//! [`frame`] runs them in the one order both hosts share.
+
+pub mod frame;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -597,6 +601,92 @@ pub fn destroy_entity(
         }
     }
     crate::world::destroy_runtime_entity(&mut scene_world.borrow_mut(), id)
+}
+
+/// The per-scene state [`clear_scene`] resets.
+pub struct SceneTeardown<'a> {
+    pub scene_world: &'a SharedSceneWorld,
+    pub physics_world: Option<&'a SharedPhysicsWorld>,
+    pub script_runtime: Option<&'a mut ScriptRuntime>,
+    pub entity_commands: &'a SharedEntityCommandQueue,
+    pub event_bus: &'a SharedEventBus,
+    pub pool_manager: &'a RefCell<crate::world::EntityPoolManager>,
+    pub particle_system: &'a RefCell<dyn AsMut<crate::particles::ParticleSystem>>,
+    pub lua_event_listeners: &'a RefCell<HashMap<String, Vec<mlua::RegistryKey>>>,
+    pub next_lua_listener_id: &'a RefCell<u64>,
+    pub lua_listener_id_map: &'a RefCell<HashMap<u64, (String, usize)>>,
+    pub camera_shake: &'a RefCell<crate::presentation::CameraShakeState>,
+    pub ui_frame: &'a RefCell<crate::presentation::UiFrame>,
+    pub swarm_bus: &'a crate::swarm_api::SharedSwarmBus,
+}
+
+/// Empty the running scene before a game script's `scene.load` (or the
+/// editor's undo) builds the next one, the same way in the engine and the
+/// headless runner. Every entity is destroyed through the usual path, so its
+/// `on_destroy` runs; then per-scene state is cleared in place, so the `Rc`
+/// handles Lua closures captured stay valid and no old entity handle can
+/// name a new entity. Physics restarts with `gravity` and keeps its cooked
+/// colliders. The Lua VM and its globals (such as the shared `game` table),
+/// the event log and input carry over to the next scene; GPU or CPU swarm
+/// instances are the host's to clear.
+pub fn clear_scene(teardown: SceneTeardown<'_>, gravity: glam::Vec3) {
+    let SceneTeardown {
+        scene_world,
+        physics_world,
+        mut script_runtime,
+        entity_commands,
+        event_bus,
+        pool_manager,
+        particle_system,
+        lua_event_listeners,
+        next_lua_listener_id,
+        lua_listener_id_map,
+        camera_shake,
+        ui_frame,
+        swarm_bus,
+    } = teardown;
+    // Never hold world borrows while invoking user callbacks.
+    let ids: Vec<_> = scene_world
+        .borrow()
+        .entity_registry
+        .keys()
+        .cloned()
+        .collect();
+    for id in ids {
+        destroy_entity(
+            scene_world,
+            physics_world,
+            script_runtime.as_deref_mut(),
+            &id,
+        );
+    }
+    if let Some(runtime) = script_runtime {
+        let stale: Vec<_> = runtime.entity_envs.keys().copied().collect();
+        for entity in stale {
+            runtime.forget_entity(entity);
+        }
+    }
+    entity_commands.borrow_mut().clear();
+    // Events from the previous scene, including teardown hooks, must not
+    // reach subscriptions registered by the replacement scene.
+    event_bus.borrow_mut().discard_pending();
+    {
+        let mut world = scene_world.borrow_mut();
+        world.world.clear();
+        world.entity_registry.clear();
+        world.current_scene = None;
+    }
+    if let Some(physics) = physics_world {
+        physics.borrow_mut().reset(gravity);
+    }
+    *pool_manager.borrow_mut() = crate::world::EntityPoolManager::new();
+    *particle_system.borrow_mut().as_mut() = crate::particles::ParticleSystem::new();
+    lua_event_listeners.borrow_mut().clear();
+    *next_lua_listener_id.borrow_mut() = 0;
+    lua_listener_id_map.borrow_mut().clear();
+    *camera_shake.borrow_mut() = crate::presentation::CameraShakeState::new();
+    *ui_frame.borrow_mut() = Default::default();
+    *swarm_bus.borrow_mut() = crate::swarm_api::SwarmBus::new();
 }
 
 /// Initialize newly attached scripts after construction has released its world

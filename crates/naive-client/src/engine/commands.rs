@@ -740,9 +740,7 @@ impl Engine {
         self.delta_time = 1.0 / 60.0;
         let start = std::time::Instant::now();
         for _ in 0..frames {
-            if !self.paused {
-                self.tick_simulation();
-            }
+            self.tick_simulation();
             self.prepare_render();
             if let Some(gpu) = &self.gpu {
                 self.render_scene_to(gpu, &view, self.gpu_timer.as_ref());
@@ -999,10 +997,9 @@ mod tests {
         let original = root.join("original.yaml");
         engine.scene_path = Some(original.clone());
         engine.undo_stack.push(undo_entry("keep this change"));
-        engine.entity_commands.borrow_mut().pending_scene_load = Some("replacement.yaml".into());
         // No renderer is available, so replacement must fail without discarding
         // the current document's history. Asset preflight failures use the same return path.
-        engine.process_pending_scene_load();
+        engine.load_requested_scene("replacement.yaml");
         assert_eq!(engine.scene_path, Some(original));
         assert_eq!(engine.undo_stack.len(), 1);
         assert_eq!(engine.undo_stack[0].label, "keep this change");

@@ -15,7 +15,7 @@ use crate::audio::AudioSystem;
 use crate::camera::CameraState;
 use crate::cli::CliArgs;
 use crate::command::CommandServer;
-use crate::components::{Camera, CameraRole, GaussianSplat, MeshRenderer, Player, Transform};
+use crate::components::{Camera, CameraRole, GaussianSplat, MeshRenderer, Transform};
 use crate::editor_camera::EditorCamera;
 use crate::events::EventBus;
 use crate::font::BitmapFont;
@@ -33,6 +33,7 @@ use crate::watcher::WatchEvent;
 use crate::world::SceneWorld;
 
 mod commands;
+mod frame;
 mod winit_input;
 
 /// Main engine struct implementing winit's ApplicationHandler.
@@ -1302,36 +1303,6 @@ impl Engine {
         }
     }
 
-    /// Update the FPS camera controller: mouse look + WASD movement + physics.
-    fn update_fps_controller(&self) {
-        if let (Some(input), Some(scene_world), Some(physics_world)) =
-            (&self.input_state, &self.scene_world, &self.physics_world)
-        {
-            crate::sim::update_fps_controller(input, scene_world, physics_world, self.delta_time);
-        }
-    }
-
-    /// Process collision damage: auto-damage on physics contact.
-    fn process_collision_damage(&mut self) {
-        if let (Some(scene_world), Some(physics_world), Some(script_runtime)) =
-            (&self.scene_world, &self.physics_world, &self.script_runtime)
-        {
-            crate::sim::process_collision_damage(
-                scene_world,
-                physics_world,
-                script_runtime,
-                &self.entity_commands,
-            );
-        }
-    }
-
-    /// Update projectile ages and destroy expired ones.
-    fn update_projectiles(&mut self) {
-        if let Some(scene_world) = &self.scene_world {
-            crate::sim::update_projectiles(scene_world, &self.entity_commands, self.delta_time);
-        }
-    }
-
     /// Register skeletons from newly loaded meshes and attach Animator components
     /// to entities whose meshes have skin data.
     fn register_skeletons(&mut self) {
@@ -1344,13 +1315,12 @@ impl Engine {
     }
 
     /// Tick skeletal animations: advance time, compute bone matrix palettes.
-    fn tick_animations(&mut self) {
+    fn tick_animations(&mut self, dt: f32) {
         let scene_world_rc = match &self.scene_world {
             Some(sw) => sw,
             None => return,
         };
         let scene_world = scene_world_rc.borrow_mut();
-        let dt = self.delta_time;
 
         // Collect entities with animators
         let animated: Vec<hecs::Entity> = scene_world
@@ -1373,30 +1343,13 @@ impl Engine {
         }
     }
 
-    /// Process the health system: detect deaths and fire on_death callbacks.
-    fn process_health_system(&mut self) {
-        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime)
-        {
-            crate::sim::process_health(scene_world, script_runtime);
-        }
-    }
-
-    /// Process deferred entity commands (spawn/destroy/scale/visibility).
+    /// Process deferred entity commands (spawn/scale/visibility/textures).
+    /// The shared frame schedule has already run this frame's destroys.
     fn process_entity_commands(&mut self) {
         let gpu = match &self.gpu {
             Some(gpu) => gpu,
             None => return,
         };
-
-        // Tier 2: Process destroys FIRST (fixes destroy+spawn same-frame bug)
-        if let Some(scene_world) = &self.scene_world {
-            crate::sim::process_destroys(
-                scene_world,
-                self.physics_world.as_ref(),
-                self.script_runtime.as_mut(),
-                &self.entity_commands,
-            );
-        }
 
         // Runtime meshes first: a script that calls mesh.create and spawns
         // the mesh in the same frame must find it. (Spawning first used to
@@ -1635,14 +1588,9 @@ impl Engine {
         }
     }
 
-    /// Process a pending scene load (deferred from Lua `scene.load(path)`).
-    fn process_pending_scene_load(&mut self) {
-        let scene_rel = match self.entity_commands.borrow_mut().pending_scene_load.take() {
-            Some(p) => p,
-            None => return,
-        };
-
-        let scene_path = match crate::project_path::resolve(&self.project_root, &scene_rel) {
+    /// Load the scene a script passed to `scene.load(path)` this frame.
+    fn load_requested_scene(&mut self, scene_rel: &str) {
+        let scene_path = match crate::project_path::resolve(&self.project_root, scene_rel) {
             Ok(path) => path,
             Err(e) => {
                 tracing::error!("scene.load: {}", e);
@@ -1704,53 +1652,28 @@ impl Engine {
             tracing::error!("Scene replacement failed: {error}, keeping old scene");
             return false;
         }
-        // Destroy through the same path as Lua and MCP. Never hold world borrows
-        // while invoking user callbacks.
-        if let Some(world) = &self.scene_world {
-            let ids: Vec<_> = world.borrow().entity_registry.keys().cloned().collect();
-            for id in ids {
-                crate::sim::destroy_entity(
-                    world,
-                    self.physics_world.as_ref(),
-                    self.script_runtime.as_mut(),
-                    &id,
-                );
-            }
+        // Empty the scene the same way the headless runner does: the Lua VM
+        // and the event log carry over, per-scene state starts again.
+        if let Some(scene_world) = &self.scene_world {
+            crate::sim::clear_scene(
+                crate::sim::SceneTeardown {
+                    scene_world,
+                    physics_world: self.physics_world.as_ref(),
+                    script_runtime: self.script_runtime.as_mut(),
+                    entity_commands: &self.entity_commands,
+                    event_bus: &self.event_bus,
+                    pool_manager: &self.pool_manager,
+                    particle_system: &*self.particle_system,
+                    lua_event_listeners: &self.lua_event_listeners,
+                    next_lua_listener_id: &self.next_lua_listener_id,
+                    lua_listener_id_map: &self.lua_listener_id_map,
+                    camera_shake: &self.camera_shake,
+                    ui_frame: &self.script_ui,
+                    swarm_bus: &self.swarm_bus,
+                },
+                glam::Vec3::from(scene.settings.gravity),
+            );
         }
-        if let Some(runtime) = self.script_runtime.as_mut() {
-            let stale: Vec<_> = runtime.entity_envs.keys().copied().collect();
-            for entity in stale {
-                runtime.forget_entity(entity);
-            }
-        }
-        self.entity_commands.borrow_mut().clear();
-        // Events from the previous scene, including teardown hooks, must not
-        // reach subscriptions registered by the replacement scene.
-        self.event_bus.borrow_mut().discard_pending();
-
-        // 3. Clear ECS world and entity registry in-place
-        if let Some(sw) = &self.scene_world {
-            let mut sw = sw.borrow_mut();
-            sw.world.clear();
-            sw.entity_registry.clear();
-            sw.current_scene = None;
-        }
-
-        // 4. Reset the physics world in place, keeping the cooked colliders
-        let gravity = glam::Vec3::from(scene.settings.gravity);
-        if let Some(pw) = &self.physics_world {
-            pw.borrow_mut().reset(gravity);
-        }
-
-        // 5. Clear pool manager, particle system, lua event listeners, camera shake
-        *self.pool_manager.borrow_mut() = crate::world::EntityPoolManager::new();
-        *self.particle_system.borrow_mut() = crate::particles::ParticleSystem::new();
-        self.lua_event_listeners.borrow_mut().clear();
-        *self.next_lua_listener_id.borrow_mut() = 0;
-        self.lua_listener_id_map.borrow_mut().clear();
-        *self.camera_shake.borrow_mut() = CameraShakeState::new();
-        *self.script_ui.borrow_mut() = Default::default();
-        *self.swarm_bus.borrow_mut() = crate::swarm_api::SwarmBus::new();
         self.swarm_system.clear();
 
         let gpu = match &self.gpu {
@@ -1956,9 +1879,7 @@ impl Engine {
         self.poll_changes();
 
         if self.scene_world.is_some() {
-            if !self.paused {
-                self.tick_simulation();
-            }
+            self.tick_simulation();
             self.prepare_render();
             self.render_frame();
 
@@ -2128,148 +2049,10 @@ impl Engine {
         }
     }
 
-    /// Advance the game by one frame: player and physics, gameplay systems,
-    /// scripts, deferred commands, events, then audio and particles. Not
-    /// called while the engine is paused.
-    fn tick_simulation(&mut self) {
-        let dt = self.delta_time;
-
-        // Phase 5: FPS controller update (skip in editor mode — uses free camera)
-        if !self.args.editor_mode
-            && self
-                .input_state
-                .as_ref()
-                .map(|i| i.borrow().cursor_captured)
-                .unwrap_or(false)
-        {
-            self.update_fps_controller();
-        }
-
-        // Always advance physics (gravity, collisions, etc.), in
-        // fixed steps so the simulation does not depend on the
-        // frame rate. Scripts get `fixed_update` before each step.
-        if let (Some(scene_world), Some(physics_world)) = (&self.scene_world, &self.physics_world) {
-            crate::sim::run_fixed_steps(
-                physics_world,
-                scene_world,
-                self.script_runtime.as_ref(),
-                self.delta_time,
-            );
-        }
-
-        self.dispatch_physics_events();
-
-        // Tier 1: Process collision damage (auto-damage + projectile hits)
-        self.process_collision_damage();
-
-        // Tier 1: Update projectiles (age tracking, lifetime expiry)
-        self.update_projectiles();
-
-        // Tier 4: swarm attacks hurt their targets; kill and hit events
-        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime)
-        {
-            crate::sim::process_swarm_reports(
-                &self.swarm_bus,
-                scene_world,
-                script_runtime,
-                &self.event_bus,
-            );
-        }
-
-        // Tier 1: Process health system (on_death callbacks)
-        self.process_health_system();
-
-        // Phase 6: Update scripts
-        self.update_scripts(dt);
-
-        self.script_ui.borrow_mut().advance(dt);
-        self.camera_shake.borrow_mut().advance(dt);
-
-        // Tick skeletal animations
-        self.tick_animations();
-
-        // Process deferred entity commands from Lua
-        self.process_entity_commands();
-
-        // Process deferred scene load (must be after entity commands)
-        self.process_pending_scene_load();
-
-        // Tier 2: Dispatch Lua event listeners
-        self.dispatch_lua_events(dt);
-
-        // Show any script or listener that was stopped for exceeding a limit
-        if let Some(script_runtime) = &self.script_runtime {
-            for message in script_runtime.take_limit_reports() {
-                self.reload_notifications.push((
-                    message,
-                    std::time::Instant::now(),
-                    [1.0, 0.3, 0.3, 1.0],
-                ));
-            }
-        }
-
-        let _tween_results = self.tween_system.update(dt);
-        self.audio_system.borrow_mut().cleanup();
-
-        // Tier 2: Update particle system
-        if let Some(scene_world) = &self.scene_world {
-            let scene_world = scene_world.borrow();
-            self.particle_system
-                .borrow_mut()
-                .update(dt, &scene_world.world);
-        }
-
-        // Update listener position for spatial audio
-        if let Some(scene_world) = &self.scene_world {
-            let scene_world = scene_world.borrow();
-            // Only the first player entity drives the listener.
-            let listener_pos = scene_world
-                .world
-                .query::<(hecs::Entity, (&Transform, &Player))>()
-                .iter()
-                .next()
-                .map(|(_entity, (transform, _player))| transform.position);
-            if let Some(pos) = listener_pos {
-                self.audio_system.borrow_mut().set_listener_position(pos);
-            }
-        }
-    }
-
-    /// Deliver contact and trigger hooks accumulated by the fixed steps.
-    fn dispatch_physics_events(&self) {
-        if let (Some(scene_world), Some(physics_world), Some(script_runtime)) =
-            (&self.scene_world, &self.physics_world, &self.script_runtime)
-        {
-            crate::sim::dispatch_physics_events(scene_world, physics_world, script_runtime);
-        }
-    }
-
-    /// Call `update(dt)` on every scripted entity.
-    fn update_scripts(&self, dt: f32) {
-        if let (Some(scene_world), Some(script_runtime)) = (&self.scene_world, &self.script_runtime)
-        {
-            crate::sim::update_scripts(scene_world, script_runtime, dt);
-        }
-    }
-
-    /// Advance the event bus and hand this frame's events to Lua listeners.
-    fn dispatch_lua_events(&self, dt: f32) {
-        crate::sim::dispatch_lua_events(
-            &self.event_bus,
-            &self.lua_event_listeners,
-            self.script_runtime.as_ref(),
-            dt,
-        );
-    }
-
-    /// Get the scene ready to draw: world transforms, camera, GPU draw
-    /// buffer size, splat order and the editor overlay. Requires a loaded scene.
+    /// Get the scene ready to draw: camera, GPU draw buffer size, splat order
+    /// and the editor overlay. Requires a loaded scene; the frame schedule
+    /// (`tick_simulation`) has already updated world transforms and swarms.
     fn prepare_render(&mut self) {
-        // Update transforms and camera
-        {
-            let mut sw = self.scene_world.as_ref().unwrap().borrow_mut();
-            crate::transform::update_transforms(&mut sw.world);
-        }
         // Editor mode: camera already updated above via update_editor_camera()
         if !self.args.editor_mode {
             self.update_camera();
@@ -2310,26 +2093,6 @@ impl Engine {
                 visible_count += 1;
             }
             draw_pool.ensure_capacity(&gpu.device, visible_count);
-        }
-
-        // Tier 4: step GPU swarms once per frame (not again for captures).
-        // While paused they only rewrite their draw data.
-        if let (Some(gpu), Some(scene_world), Some(draw_pool)) =
-            (&self.gpu, &self.scene_world, &self.draw_pool)
-        {
-            let dt = if self.paused { 0.0 } else { self.delta_time };
-            let physics = self.physics_world.as_ref().map(|p| p.borrow());
-            self.swarm_system.update(
-                gpu,
-                &scene_world.borrow(),
-                physics.as_deref(),
-                &self.mesh_cache,
-                &self.material_cache,
-                draw_pool,
-                &mut self.swarm_bus.borrow_mut(),
-                self.gpu_timer.as_ref(),
-                dt,
-            );
         }
 
         // Sort splats for correct alpha blending (CPU back-to-front)

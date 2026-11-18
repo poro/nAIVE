@@ -24,6 +24,7 @@ use crate::events::EventBus;
 use crate::input::InputState;
 use crate::physics::PhysicsWorld;
 use crate::scripting::ScriptRuntime;
+use crate::sim::frame::{FrameHost, FrameMode, FrameState};
 use crate::swarm::CpuSwarms;
 use crate::swarm_api::{register_swarm_api, SharedSwarmBus, SwarmBus};
 use crate::tween::TweenSystem;
@@ -285,100 +286,85 @@ impl TestRunner {
         Ok(())
     }
 
-    /// Advance the simulation by one frame.
+    /// Advance the simulation by one frame, through the same schedule as the
+    /// engine (`crate::sim::frame`).
     pub fn step_frame(&mut self) {
         if self.execution_budget.check().is_err() {
             return;
         }
         let dt = self.delta_time;
+        // Tests may read the UI a frame drew until the next frame starts;
+        // the engine hands it to the renderer instead.
         if self.ui_presented {
             self.ui_frame.borrow_mut().intents.clear();
         }
-
-        // Apply synthetic inputs
-        self.input_state.borrow_mut().begin_frame();
-
-        // Auto-capture cursor for FPS controller
-        self.input_state.borrow_mut().cursor_captured = true;
-
-        // The same steps the engine runs each frame, minus the ones that need a GPU.
-        crate::sim::update_fps_controller(
-            &self.input_state,
-            &self.scene_world,
-            &self.physics_world,
-            dt,
-        );
-        crate::sim::run_fixed_steps(
-            &self.physics_world,
-            &self.scene_world,
-            Some(&self.script_runtime),
-            dt,
-        );
-        crate::sim::dispatch_physics_events(
-            &self.scene_world,
-            &self.physics_world,
-            &self.script_runtime,
-        );
-        crate::sim::process_collision_damage(
-            &self.scene_world,
-            &self.physics_world,
-            &self.script_runtime,
-            &self.entity_commands,
-        );
-        crate::sim::update_projectiles(&self.scene_world, &self.entity_commands, dt);
-        crate::sim::process_swarm_reports(
-            &self.swarm_bus,
-            &self.scene_world,
-            &self.script_runtime,
-            &self.event_bus,
-        );
-        crate::sim::process_health(&self.scene_world, &self.script_runtime);
-        crate::sim::update_scripts(&self.scene_world, &self.script_runtime, dt);
-        self.tick_animations(dt);
-        self.ui_frame.borrow_mut().advance(dt);
-        self.camera_shake.borrow_mut().advance(dt);
-        self.process_entity_commands();
-        crate::sim::dispatch_lua_events(
-            &self.event_bus,
-            &self.lua_event_listeners,
-            Some(&self.script_runtime),
-            dt,
-        );
-        let _tween_results = self.tween_system.update(dt);
-
-        self.particle_system
-            .borrow_mut()
-            .update(dt, &self.scene_world.borrow().world);
-
-        // Update transforms
-        {
-            let mut sw = self.scene_world.borrow_mut();
-            crate::transform::update_transforms(&mut sw.world);
-        }
-
-        // Swarms step after the transforms, where the engine steps them on the GPU.
-        self.cpu_swarms.update(
-            &self.scene_world.borrow(),
-            Some(&self.physics_world.borrow()),
-            &mut self.swarm_bus.borrow_mut(),
-            dt,
-        );
-
+        crate::sim::frame::run_frame(&mut HeadlessFrame(self), dt, FrameMode::Running);
         self.ui_presented = true;
         self.total_time += dt;
         self.frame_count += 1;
     }
 
+    /// A game script's `scene.load`: replace the scene in place, as the
+    /// engine does (`Engine::replace_scene`), with `crate::sim::clear_scene`.
+    /// The Lua VM keeps its globals, such as the shared `game` table, and the
+    /// event log keeps its history. A scene that fails to load or preflight
+    /// leaves the current one running. The engine only logs such failures;
+    /// here they fail the test.
+    fn replace_scene(&mut self, scene_rel: &str) -> Result<(), String> {
+        let scene_path = crate::project_path::resolve(&self.project_root, scene_rel)?;
+        let scene = crate::scene::load_scene(&scene_path)
+            .map_err(|e| format!("Failed to load scene: {:?}", e))?;
+        crate::world::preflight_scene(
+            &scene,
+            &mut *self.asset_catalog.borrow_mut(),
+            Some(&mut self.physics_world.borrow_mut()),
+        )?;
+        crate::sim::clear_scene(
+            crate::sim::SceneTeardown {
+                scene_world: &self.scene_world,
+                physics_world: Some(&self.physics_world),
+                script_runtime: Some(&mut self.script_runtime),
+                entity_commands: &self.entity_commands,
+                event_bus: &self.event_bus,
+                pool_manager: &self.pool_manager,
+                particle_system: &*self.particle_system,
+                lua_event_listeners: &self.lua_event_listeners,
+                next_lua_listener_id: &self.next_lua_listener_id,
+                lua_listener_id_map: &self.lua_listener_id_map,
+                camera_shake: &self.camera_shake,
+                ui_frame: &self.ui_frame,
+                swarm_bus: &self.swarm_bus,
+            },
+            glam::Vec3::from(scene.settings.gravity),
+        );
+        self.cpu_swarms.clear();
+        self.ui_presented = false;
+        {
+            let mut world = self.scene_world.borrow_mut();
+            let mut physics = self.physics_world.borrow_mut();
+            for definition in &scene.entities {
+                crate::world::spawn_entity_headless_with_assets(
+                    &mut world,
+                    definition,
+                    &mut physics,
+                    &mut self.asset_catalog.borrow_mut(),
+                )?;
+            }
+            world.current_scene = Some(scene);
+        }
+        self.attach_animators();
+        crate::sim::initialize_pending_scripts(
+            &self.scene_world,
+            &mut self.script_runtime,
+            &self.project_root,
+        )
+    }
+
     /// Apply gameplay operations through the same constructors/lifecycle as
     /// the engine. GPU-only operations fail the test explicitly.
+    /// The schedule has already run this frame's destroys.
     fn process_entity_commands(&mut self) {
-        crate::sim::process_destroys(
-            &self.scene_world,
-            Some(&self.physics_world),
-            Some(&mut self.script_runtime),
-            &self.entity_commands,
-        );
-        let (meshes, spawns, projectiles, dynamics, scales, visibility, pools, scene_load, gpu_ops) = {
+        let (meshes, spawns, projectiles, dynamics, scales, visibility, pools, gpu_ops) = {
             let mut queue = self.entity_commands.borrow_mut();
             let gpu_ops = queue.texture_swaps.len();
             queue.texture_swaps.clear();
@@ -390,7 +376,6 @@ impl TestRunner {
                 std::mem::take(&mut queue.scale_updates),
                 std::mem::take(&mut queue.visibility_updates),
                 std::mem::take(&mut queue.pool_ops),
-                queue.pending_scene_load.take(),
                 gpu_ops,
             )
         };
@@ -482,9 +467,6 @@ impl TestRunner {
             &self.project_root,
         ) {
             self.errors.borrow_mut().push(error);
-        }
-        if let Some(path) = scene_load {
-            let _ = self.load_scene(&path); // load_scene records the failure for the test result.
         }
     }
 
@@ -641,6 +623,78 @@ impl TestRunner {
         let entity = *sw.entity_registry.get(entity_id)?;
         let transform = sw.world.get::<&Transform>(entity).ok()?;
         Some(transform.position)
+    }
+}
+
+/// The headless runner's side of the shared frame schedule.
+struct HeadlessFrame<'a>(&'a mut TestRunner);
+
+impl FrameHost for HeadlessFrame<'_> {
+    fn frame_state(&mut self) -> Option<FrameState<'_>> {
+        let runner = &mut *self.0;
+        Some(FrameState {
+            scene_world: &runner.scene_world,
+            physics_world: &runner.physics_world,
+            input: &runner.input_state,
+            script_runtime: &mut runner.script_runtime,
+            event_bus: &runner.event_bus,
+            lua_event_listeners: &runner.lua_event_listeners,
+            entity_commands: &runner.entity_commands,
+            swarm_bus: &runner.swarm_bus,
+            ui_frame: &runner.ui_frame,
+            camera_shake: &runner.camera_shake,
+            particle_system: &*runner.particle_system,
+            tween_system: &mut runner.tween_system,
+        })
+    }
+
+    fn begin_input(&mut self) {
+        let mut input = self.0.input_state.borrow_mut();
+        // Apply what the test injected since the last frame.
+        input.begin_frame();
+        // There is no window: tests drive the player as if the cursor were
+        // captured.
+        input.cursor_captured = true;
+    }
+
+    fn player_control_allowed(&self) -> bool {
+        true
+    }
+
+    fn advance_animations(&mut self, dt: f32) {
+        self.0.tick_animations(dt);
+    }
+
+    fn apply_entity_commands(&mut self) {
+        self.0.process_entity_commands();
+    }
+
+    fn load_requested_scene(&mut self, path: String) {
+        if let Err(error) = self.0.replace_scene(&path) {
+            self.0
+                .errors
+                .borrow_mut()
+                .push(format!("scene.load('{path}'): {error}"));
+        }
+    }
+
+    fn report_limits(&mut self, _messages: Vec<String>) {
+        // The runtime recorded each one as an error, which fails the test.
+    }
+
+    fn update_audio(&mut self) {
+        // Headless audio is silent: nothing plays and there is no listener.
+    }
+
+    fn step_swarms(&mut self, dt: f32) {
+        // The CPU reference simulation, where the engine steps them on the GPU.
+        let runner = &mut *self.0;
+        runner.cpu_swarms.update(
+            &runner.scene_world.borrow(),
+            Some(&runner.physics_world.borrow()),
+            &mut runner.swarm_bus.borrow_mut(),
+            dt,
+        );
     }
 }
 
@@ -1693,6 +1747,55 @@ function on_destroy() entity.set_position('actor', 1, 2, 3) end
         );
         let result = project.run("scene.load('scene.yaml')\nwait_frames(2)\nassert(scene.find('next') ~= nil)\nassert(scene.find('actor') == nil)");
         assert!(result.passed, "{:?}", result.error);
+    }
+
+    /// A game script's `scene.load` replaces the scene the way the engine
+    /// does: the Lua VM keeps its globals and the event log its history.
+    #[test]
+    fn script_scene_loads_keep_lua_globals_and_event_history_like_the_engine() {
+        let project = Project::new(
+            r#"
+function init()
+    game.loads = (game.loads or 0) + 1
+end
+function update(dt)
+    game.frames = (game.frames or 0) + 1
+    if game.loads == 1 and game.frames == 1 then events.emit('first.frame', {}) end
+    if game.loads == 1 and game.frames == 2 then scene.load('next.yaml') end
+end
+"#,
+        );
+        project.write(
+            "next.yaml",
+            "name: Next\nentities:\n  - id: next\n    components:\n      transform: {}\n      script: { source: game.lua }\n",
+        );
+        let mut runner = TestRunner::new(&project.0);
+        runner.load_scene("scene.yaml").unwrap();
+        runner.step_frames(3);
+        assert!(runner.get_entity_position("next").is_some());
+        assert!(runner.get_entity_position("actor").is_none());
+        let game: mlua::Table = runner.script_runtime.lua.globals().get("game").unwrap();
+        assert_eq!(game.get::<i64>("loads").unwrap(), 2);
+        assert_eq!(game.get::<i64>("frames").unwrap(), 3);
+        assert!(runner.event_occurred("first.frame", &HashMap::new()));
+        assert!(runner.take_errors().is_empty());
+    }
+
+    #[test]
+    fn a_failed_script_scene_load_keeps_the_scene_and_fails_the_test() {
+        let project = Project::new(
+            "function update(dt)\n    if not game.tried then game.tried = true; scene.load('missing.yaml') end\nend\n",
+        );
+        let mut runner = TestRunner::new(&project.0);
+        runner.load_scene("scene.yaml").unwrap();
+        runner.step_frames(2);
+        assert!(runner.get_entity_position("actor").is_some());
+        let errors = runner.take_errors();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("scene.load('missing.yaml')"),
+            "{errors:?}"
+        );
     }
 
     #[test]
