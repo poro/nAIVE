@@ -30,6 +30,10 @@ use crate::swarm_api::{register_swarm_api, SharedSwarmBus, SwarmBus};
 use crate::tween::TweenSystem;
 use crate::world::{EntityCommandQueue, EntityPoolManager, SceneWorld};
 
+/// Why a test fails when its scripts use a command only the GPU can run.
+const GPU_TEXTURE_COMMANDS_UNSUPPORTED: &str =
+    "Headless tests cannot execute GPU texture commands; use the native release smoke test";
+
 /// Result of a single test function execution.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct TestResult {
@@ -137,57 +141,14 @@ impl TestRunner {
             Some(&mut self.physics_world.borrow_mut()),
         )?;
 
-        // Use the same teardown as live destruction, without holding a world
-        // borrow while callbacks run. Preserve failures before replacing the VM.
-        let ids: Vec<_> = self
-            .scene_world
-            .borrow()
-            .entity_registry
-            .keys()
-            .cloned()
-            .collect();
-        for id in ids {
-            crate::sim::destroy_entity(
-                &self.scene_world,
-                Some(&self.physics_world),
-                Some(&mut self.script_runtime),
-                &id,
-            );
-        }
+        // Tear down as a game script's `scene.load` does, then start the Lua
+        // VM and the event log afresh: a test begins from a clean runner, as
+        // the engine's startup load does. Keep the old VM's failures first.
+        self.tear_down_scene(glam::Vec3::from(scene.settings.gravity));
         let previous_errors = self.take_errors();
         self.errors.borrow_mut().extend(previous_errors);
-        self.lua_event_listeners.borrow_mut().clear();
-        self.lua_listener_id_map.borrow_mut().clear();
-        *self.next_lua_listener_id.borrow_mut() = 0;
-        *self.pool_manager.borrow_mut() = EntityPoolManager::new();
         *self.event_bus.borrow_mut() = EventBus::new(1000);
-
-        // Set gravity from scene settings
-        let gravity = glam::Vec3::from(scene.settings.gravity);
-        // Keep the colliders preflight cooked for this scene.
-        self.physics_world.borrow_mut().reset(gravity);
-
-        // Spawn entities headlessly (no GPU)
-        *self.scene_world.borrow_mut() = SceneWorld::new();
-        {
-            let mut sw = self.scene_world.borrow_mut();
-            let mut pw = self.physics_world.borrow_mut();
-            for definition in &scene.entities {
-                crate::world::spawn_entity_headless_with_assets(
-                    &mut sw,
-                    definition,
-                    &mut pw,
-                    &mut self.asset_catalog.borrow_mut(),
-                )?;
-            }
-            sw.current_scene = Some(scene.clone());
-        }
-
-        *self.ui_frame.borrow_mut() = Default::default();
-        self.ui_presented = false;
-        *self.particle_system.borrow_mut() = crate::particles::ParticleSystem::new();
-        *self.camera_shake.borrow_mut() = Default::default();
-        self.attach_animators();
+        self.build_scene(scene)?;
 
         // Initialize scripting
         self.script_runtime = ScriptRuntime::new();
@@ -205,7 +166,6 @@ impl TestRunner {
         self.script_runtime
             .register_entity_api(self.scene_world.clone(), self.physics_world.clone())
             .map_err(|e| format!("Entity API: {}", e))?;
-        *self.entity_commands.borrow_mut() = EntityCommandQueue::new();
         self.script_runtime
             .register_entity_command_api(
                 self.scene_world.clone(),
@@ -254,8 +214,6 @@ impl TestRunner {
         self.script_runtime
             .register_animation_api(self.scene_world.clone())
             .map_err(|e| format!("Animation API: {e}"))?;
-        *self.swarm_bus.borrow_mut() = SwarmBus::new();
-        self.cpu_swarms.clear();
         register_swarm_api(
             &self.script_runtime.lua,
             self.swarm_bus.clone(),
@@ -322,7 +280,21 @@ impl TestRunner {
             &mut *self.asset_catalog.borrow_mut(),
             Some(&mut self.physics_world.borrow_mut()),
         )?;
-        crate::sim::clear_scene(
+        self.tear_down_scene(glam::Vec3::from(scene.settings.gravity));
+        self.build_scene(scene)?;
+        crate::sim::initialize_pending_scripts(
+            &self.scene_world,
+            &mut self.script_runtime,
+            &self.project_root,
+        )
+    }
+
+    /// Empty the scene with `crate::sim::clear_scene`, as the engine does
+    /// for `scene.load`, and clear the CPU swarms. GPU-only commands it had
+    /// to discard, such as a texture swap an `on_destroy` queued, fail the
+    /// test.
+    fn tear_down_scene(&mut self, gravity: glam::Vec3) {
+        let discarded = crate::sim::clear_scene(
             crate::sim::SceneTeardown {
                 scene_world: &self.scene_world,
                 physics_world: Some(&self.physics_world),
@@ -338,10 +310,19 @@ impl TestRunner {
                 ui_frame: &self.ui_frame,
                 swarm_bus: &self.swarm_bus,
             },
-            glam::Vec3::from(scene.settings.gravity),
+            gravity,
         );
+        if !discarded.texture_swaps.is_empty() {
+            self.errors
+                .borrow_mut()
+                .push(GPU_TEXTURE_COMMANDS_UNSUPPORTED.into());
+        }
         self.cpu_swarms.clear();
         self.ui_presented = false;
+    }
+
+    /// Build `scene`'s entities on the CPU into the emptied world.
+    fn build_scene(&mut self, scene: crate::scene::SceneFile) -> Result<(), String> {
         {
             let mut world = self.scene_world.borrow_mut();
             let mut physics = self.physics_world.borrow_mut();
@@ -356,11 +337,7 @@ impl TestRunner {
             world.current_scene = Some(scene);
         }
         self.attach_animators();
-        crate::sim::initialize_pending_scripts(
-            &self.scene_world,
-            &mut self.script_runtime,
-            &self.project_root,
-        )
+        Ok(())
     }
 
     /// Apply gameplay operations through the same constructors/lifecycle as
@@ -383,7 +360,9 @@ impl TestRunner {
             )
         };
         if gpu_ops > 0 {
-            self.errors.borrow_mut().push("Headless tests cannot execute GPU texture commands; use the native release smoke test".into());
+            self.errors
+                .borrow_mut()
+                .push(GPU_TEXTURE_COMMANDS_UNSUPPORTED.into());
         }
         // Runtime meshes first, as the engine does, so this frame's spawns
         // can use them.
@@ -564,7 +543,7 @@ impl TestRunner {
         errors.extend(self.script_runtime.take_errors());
         let pending = self.entity_commands.borrow();
         if !pending.texture_swaps.is_empty() {
-            errors.push("Headless tests cannot execute GPU texture commands; use the native release smoke test".into());
+            errors.push(GPU_TEXTURE_COMMANDS_UNSUPPORTED.into());
         }
         errors
     }
@@ -1733,6 +1712,31 @@ end
         let result = project.run("scene.load('scene.yaml')\nscene.load('next.yaml')");
         assert!(!result.passed);
         assert!(result.error.unwrap().contains("GPU texture"));
+    }
+
+    /// Teardown discards queued commands; a GPU-only one an `on_destroy`
+    /// queued must still fail the test, through either kind of scene load.
+    #[test]
+    fn gpu_commands_queued_while_tearing_down_a_scene_fail_the_test() {
+        let project = Project::new(
+            "function on_destroy() entity.set_texture('actor', 'albedo', 'image.png') end",
+        );
+        project.write("next.yaml", "name: Next\nentities: []\n");
+        let result = project.run("scene.load('scene.yaml')\nscene.load('next.yaml')");
+        assert!(!result.passed);
+        assert!(result.error.unwrap().contains("GPU texture"));
+
+        let project = Project::new(
+            "function update(dt) scene.load('next.yaml') end\n\
+             function on_destroy() entity.set_texture('actor', 'albedo', 'image.png') end",
+        );
+        project.write("next.yaml", "name: Next\nentities: []\n");
+        let mut runner = TestRunner::new(&project.0);
+        runner.load_scene("scene.yaml").unwrap();
+        runner.step_frame();
+        assert!(runner.get_entity_position("actor").is_none());
+        let errors = runner.take_errors();
+        assert_eq!(errors, [GPU_TEXTURE_COMMANDS_UNSUPPORTED], "{errors:?}");
     }
 
     #[test]

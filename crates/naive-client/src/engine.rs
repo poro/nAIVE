@@ -1653,9 +1653,10 @@ impl Engine {
             return false;
         }
         // Empty the scene the same way the headless runner does: the Lua VM
-        // and the event log carry over, per-scene state starts again.
+        // and the event log carry over, per-scene state starts again. Commands
+        // queued by `on_destroy` hooks belong to the old scene and are dropped.
         if let Some(scene_world) = &self.scene_world {
-            crate::sim::clear_scene(
+            let _discarded = crate::sim::clear_scene(
                 crate::sim::SceneTeardown {
                     scene_world,
                     physics_world: self.physics_world.as_ref(),
