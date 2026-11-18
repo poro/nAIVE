@@ -203,6 +203,11 @@ impl EventBus {
         &self.log
     }
 
+    /// Events emitted since the last flush, which listeners have not heard yet.
+    pub fn pending(&self) -> &[GameEvent] {
+        &self.pending
+    }
+
     /// Get total elapsed time.
     pub fn total_time(&self) -> f64 {
         self.total_time
