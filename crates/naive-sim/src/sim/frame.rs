@@ -206,159 +206,126 @@ pub fn run_frame<H: FrameHost + ?Sized>(host: &mut H, dt: f32, mode: FrameMode) 
 /// controller is off.
 fn run_phase<H: FrameHost + ?Sized>(host: &mut H, phase: FramePhase, dt: f32) -> bool {
     match phase {
+        // Host hooks alone; they run even before a scene has loaded.
         FramePhase::Input => host.begin_input(),
-        FramePhase::PlayerController => {
-            if !host.player_control_allowed() {
-                return false;
-            }
+        FramePhase::Animations => host.advance_animations(dt),
+        FramePhase::Audio => host.update_audio(),
+        FramePhase::Swarms => host.step_swarms(dt),
+        FramePhase::PlayerController if !host.player_control_allowed() => return false,
+        _ => {
             let Some(state) = host.frame_state() else {
                 return false;
             };
-            if !state.input.borrow().cursor_captured {
-                return false;
+            // The shared step consumes the state, so nothing is still
+            // borrowed when the host's hook runs after it.
+            match run_shared_step(state, phase, dt) {
+                Then::Done => {}
+                Then::Skip => return false,
+                Then::ApplyEntityCommands => host.apply_entity_commands(),
+                Then::LoadScene(path) => host.load_requested_scene(path),
+                Then::ReportLimits(messages) => host.report_limits(messages),
             }
-            super::update_fps_controller(state.input, state.scene_world, state.physics_world, dt);
+        }
+    }
+    true
+}
+
+/// What is left of a phase once its shared step has released the state.
+enum Then {
+    Done,
+    /// The phase did not run: the cursor is not captured.
+    Skip,
+    ApplyEntityCommands,
+    LoadScene(String),
+    ReportLimits(Vec<String>),
+}
+
+/// The GPU-free step of `phase`, on the state its host lent.
+fn run_shared_step(state: FrameState<'_>, phase: FramePhase, dt: f32) -> Then {
+    let FrameState {
+        scene_world,
+        physics_world,
+        input,
+        script_runtime,
+        event_bus,
+        lua_event_listeners,
+        entity_commands,
+        swarm_bus,
+        ui_frame,
+        camera_shake,
+        particle_system,
+        tween_system,
+    } = state;
+    match phase {
+        FramePhase::PlayerController => {
+            if !input.borrow().cursor_captured {
+                return Then::Skip;
+            }
+            super::update_fps_controller(input, scene_world, physics_world, dt);
         }
         FramePhase::FixedSteps => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            super::run_fixed_steps(
-                state.physics_world,
-                state.scene_world,
-                Some(state.script_runtime),
-                dt,
-            );
+            super::run_fixed_steps(physics_world, scene_world, Some(script_runtime), dt);
         }
         FramePhase::PhysicsEvents => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            super::dispatch_physics_events(
-                state.scene_world,
-                state.physics_world,
-                state.script_runtime,
-            );
+            super::dispatch_physics_events(scene_world, physics_world, script_runtime)
         }
-        FramePhase::CollisionDamage => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            super::process_collision_damage(
-                state.scene_world,
-                state.physics_world,
-                state.script_runtime,
-                state.entity_commands,
-            );
-        }
-        FramePhase::Projectiles => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            super::update_projectiles(state.scene_world, state.entity_commands, dt);
-        }
+        FramePhase::CollisionDamage => super::process_collision_damage(
+            scene_world,
+            physics_world,
+            script_runtime,
+            entity_commands,
+        ),
+        FramePhase::Projectiles => super::update_projectiles(scene_world, entity_commands, dt),
         FramePhase::SwarmReports => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            super::process_swarm_reports(
-                state.swarm_bus,
-                state.scene_world,
-                state.script_runtime,
-                state.event_bus,
-            );
+            super::process_swarm_reports(swarm_bus, scene_world, script_runtime, event_bus)
         }
-        FramePhase::Health => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            super::process_health(state.scene_world, state.script_runtime);
-        }
-        FramePhase::Scripts => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            super::update_scripts(state.scene_world, state.script_runtime, dt);
-        }
-        FramePhase::Animations => host.advance_animations(dt),
+        FramePhase::Health => super::process_health(scene_world, script_runtime),
+        FramePhase::Scripts => super::update_scripts(scene_world, script_runtime, dt),
         FramePhase::PresentationTimers => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            state.ui_frame.borrow_mut().advance(dt);
-            state.camera_shake.borrow_mut().advance(dt);
+            ui_frame.borrow_mut().advance(dt);
+            camera_shake.borrow_mut().advance(dt);
         }
         FramePhase::EntityCommands => {
-            {
-                let Some(state) = host.frame_state() else {
-                    return false;
-                };
-                // Destroys go first, so a destroy and a spawn of the same id
-                // in one frame leave the new entity.
-                super::process_destroys(
-                    state.scene_world,
-                    Some(state.physics_world),
-                    Some(state.script_runtime),
-                    state.entity_commands,
-                );
-            }
-            host.apply_entity_commands();
+            // Destroys go first, so a destroy and a spawn of the same id in
+            // one frame leave the new entity.
+            super::process_destroys(
+                scene_world,
+                Some(physics_world),
+                Some(script_runtime),
+                entity_commands,
+            );
+            return Then::ApplyEntityCommands;
         }
         FramePhase::SceneLoad => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            let requested = state.entity_commands.borrow_mut().pending_scene_load.take();
+            let requested = entity_commands.borrow_mut().pending_scene_load.take();
             if let Some(path) = requested {
-                host.load_requested_scene(path);
+                return Then::LoadScene(path);
             }
         }
         FramePhase::LuaEvents => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            super::dispatch_lua_events(
-                state.event_bus,
-                state.lua_event_listeners,
-                Some(state.script_runtime),
-                dt,
-            );
+            super::dispatch_lua_events(event_bus, lua_event_listeners, Some(script_runtime), dt)
         }
         FramePhase::LimitReports => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            let messages = state.script_runtime.take_limit_reports();
+            let messages = script_runtime.take_limit_reports();
             if !messages.is_empty() {
-                host.report_limits(messages);
+                return Then::ReportLimits(messages);
             }
         }
         FramePhase::Tweens => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            let _completed = state.tween_system.update(dt);
+            let _completed = tween_system.update(dt);
         }
-        FramePhase::Particles => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            state
-                .particle_system
-                .borrow_mut()
-                .as_mut()
-                .update(dt, &state.scene_world.borrow().world);
-        }
-        FramePhase::Audio => host.update_audio(),
+        FramePhase::Particles => particle_system
+            .borrow_mut()
+            .as_mut()
+            .update(dt, &scene_world.borrow().world),
         FramePhase::Transforms => {
-            let Some(state) = host.frame_state() else {
-                return false;
-            };
-            crate::transform::update_transforms(&mut state.scene_world.borrow_mut().world);
+            crate::transform::update_transforms(&mut scene_world.borrow_mut().world)
         }
-        FramePhase::Swarms => host.step_swarms(dt),
+        FramePhase::Input | FramePhase::Animations | FramePhase::Audio | FramePhase::Swarms => {
+            unreachable!("{phase:?} is a host hook, which run_phase runs itself")
+        }
     }
-    true
+    Then::Done
 }
 
 /// Records which phases ran, so tests can check that the engine and the
