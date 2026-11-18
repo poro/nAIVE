@@ -33,6 +33,7 @@ AI-native game engine — create worlds with YAML, Lua, and natural language.
 | `crates/naive-client/src/engine.rs` | Main `Engine` struct, game loop (`run_frame` → `tick_simulation`, `prepare_render`, `render_frame`), camera, scene loading |
 | `crates/naive-client/src/engine/commands.rs` | Editor/MCP dispatch, entity creation, persistence, Lua evaluation, frame capture and benchmarking |
 | `crates/naive-sim/src/sim.rs` | GPU-free frame steps shared by the engine and the headless test runner (character controller, fixed physics steps, collision/event dispatch, collision damage, projectiles, health, entity destruction, script updates). Collect what a script callback needs first, release every borrow, then call the script. |
+| `crates/naive-sim/src/sim/frame.rs` | The one ordered frame schedule (`FRAME_PHASES`) both `Engine::tick_simulation` and `TestRunner::step_frame` run. Add or reorder a per-frame step here, never in either host; GPU, audio and HUD work plugs in through `FrameHost` hooks (native: `naive-client/src/engine/frame.rs`) |
 | `crates/naive-sim/src/physics.rs` | `PhysicsWorld` — Rapier3D wrapper (bodies, colliders, CCD, impulse/force) |
 | `crates/naive-sim/src/world.rs` | Canonical scene state plus exports for CPU construction, deferred command contracts, pooling, metadata and scene conversion helpers |
 | `crates/naive-sim/src/components.rs` | Core component re-exports and the shared plain `Script` component; client import paths preserve type identity |
