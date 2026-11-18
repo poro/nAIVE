@@ -564,14 +564,16 @@ impl TestRunner {
         self.step_frames(frames);
     }
 
-    /// Check if a specific event occurred in the log.
+    /// Check whether an event was emitted: logged, or still queued for this
+    /// frame's listeners. What scripts emit in `init` stays queued until the
+    /// first frame delivers it, as in the engine, yet a test sees it at once.
     pub fn event_occurred(
         &self,
         event_type: &str,
         filter: &std::collections::HashMap<String, String>,
     ) -> bool {
         let eb = self.event_bus.borrow();
-        for event in eb.get_log() {
+        for event in eb.get_log().iter().chain(eb.pending()) {
             if event.event_type == event_type {
                 if filter.is_empty() {
                     return true;
@@ -1757,7 +1759,8 @@ function on_destroy() entity.set_position('actor', 1, 2, 3) end
     }
 
     /// Events scripts emit in `init` reach `events.on` listeners on the first
-    /// frame, after `update`, as in the engine. The test-API load used to log
+    /// frame, after `update`, as in the engine, while `event_occurred` sees
+    /// them as soon as the scene has loaded. The test-API load used to log
     /// them undelivered.
     #[test]
     fn init_events_reach_lua_listeners_on_the_first_frame() {
@@ -1776,7 +1779,7 @@ end
             "scene.load('scene.yaml')\n\
              wait_for_event('lifecycle.scene_loaded')\n\
              assert(not get_game_value('heard'), 'delivered before a frame ran')\n\
-             assert(not event_occurred('ready'), 'logged before a frame ran')\n\
+             assert(event_occurred('ready'), 'emitted in init but invisible to the test')\n\
              wait_frames(1)\n\
              assert(get_game_value('heard') == 1, 'init event never delivered')\n\
              assert(get_game_value('heard_at_update') == 0, 'delivered before update')\n\
