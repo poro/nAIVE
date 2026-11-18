@@ -131,8 +131,7 @@ impl EnginePhases {
         crate::sim::initialize_pending_scripts(&self.world, &mut self.runtime, &project.0).unwrap();
         self.events
             .borrow_mut()
-            .emit("lifecycle.scene_loaded", HashMap::new());
-        self.events.borrow_mut().flush();
+            .record("lifecycle.scene_loaded", HashMap::new());
     }
 
     fn frame(&mut self, project: &Project, dt: f32) -> u32 {
