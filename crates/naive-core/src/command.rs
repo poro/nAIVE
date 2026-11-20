@@ -205,7 +205,7 @@ commands! {
         path: Option<String> => "Where to write the PNG, relative to the project root (default captures/frame.png)",
         include_ui: Option<bool> => "Also draw the HUD (what Lua drew with ui.text and ui.rect in the last frame) over the scene. Default false."
     };
-    Benchmark => "benchmark", "Measure what the engine sustains: run whole frames back to back (simulation, swarms and every render pass) into an offscreen target without presenting, then report frames per second, milliseconds per frame and GPU time per pass. Unaffected by vsync or by the window being in the background. The simulation really advances.", {
+    Benchmark => "benchmark", "Measure what the engine sustains: run whole frames back to back (simulation, swarms and every render pass) into an offscreen target without presenting, then report frames per second, milliseconds per frame and GPU time per pass. Unaffected by vsync or by the window being in the background. The simulation really advances, even while the runtime is paused.", {
         frames: Option<u32> => "Frames to run (default 240)"
     };
     GpuTimings => "gpu_timings", "GPU milliseconds per frame over the last 60 frames, for the whole frame and per render pass (the swarm step is \"swarms\"), from timestamp queries. On screen with vsync the GPU slows to fit the display refresh, so use naive_benchmark to measure headroom.", {};

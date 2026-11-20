@@ -12,8 +12,9 @@
 //!   visits or per 16 bytes it copies (per 4 bytes it decodes or compiles),
 //!   so a call that would exceed the budget is refused instead of started;
 //! - reimplemented: pattern matching (`find`, `match`, `gmatch`, `gsub`) runs
-//!   in Rust and charges each matcher step, and inserting or removing inside a
-//!   table with a metatable shifts elements in Lua.
+//!   in Rust and charges each matcher step and each byte `gsub` copies into
+//!   its result, which may not outgrow the memory limit; inserting or removing
+//!   inside a table with a metatable shifts elements in Lua.
 //!
 //! Charges smaller than 16 units are not sent to the budget; the wrapper's
 //! own instructions, which the hook does count, cost about as much.
@@ -68,12 +69,17 @@ pub struct SandboxOptions {
     pub allow_load: bool,
 }
 
+/// The memory limit, for library code that builds a result in a Rust
+/// buffer before handing it to Lua (and so outside the allocator's check).
+struct MemoryCap(usize);
+
 /// Create a sandboxed Lua state whose library work is charged to `charge`.
 /// The caller installs its instruction hook, which charges the same budget.
 pub fn create_lua(options: SandboxOptions, charge: Charge) -> LuaResult<Lua> {
     let libs = StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH;
     let lua = Lua::new_with(libs, LuaOptions::default())?;
     lua.set_memory_limit(options.memory_bytes)?;
+    lua.set_app_data(MemoryCap(options.memory_bytes));
 
     let globals = lua.globals();
     globals.set("loadfile", LuaNil)?;
@@ -350,6 +356,8 @@ fn gsub(lua: &Lua, meter: &mut Meter<'_>, args: &[LuaValue]) -> Result<Vec<LuaVa
         &pattern.as_bytes(),
         &replacement.as_bytes(),
         max,
+        lua.app_data_ref::<MemoryCap>()
+            .map_or(usize::MAX, |cap| cap.0),
     )?;
     let first = match result {
         Some(bytes) => LuaValue::String(lua.create_string(bytes)?),

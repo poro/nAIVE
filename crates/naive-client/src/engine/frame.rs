@@ -16,6 +16,17 @@ impl Engine {
         } else {
             FrameMode::Running
         };
+        self.tick_simulation_as(mode);
+    }
+
+    /// Run a whole simulation frame even while the editor is paused. The
+    /// benchmark measures whole frames, gameplay included, and promises
+    /// that the simulation advances.
+    pub(super) fn tick_simulation_running(&mut self) {
+        self.tick_simulation_as(FrameMode::Running);
+    }
+
+    fn tick_simulation_as(&mut self, mode: FrameMode) {
         let dt = self.delta_time;
         run_frame(&mut NativeFrame(self), dt, mode);
     }
@@ -295,5 +306,25 @@ end
             .get("game")
             .unwrap();
         assert_eq!(game.get::<Option<i64>>("updates").unwrap(), None);
+    }
+
+    /// The benchmark runs whole frames while the editor is paused: a paused
+    /// frame would skip physics and scripts and flatter the measurement.
+    #[test]
+    fn benchmark_frames_simulate_while_paused() {
+        let project = Project::new();
+        let mut paused = engine(&project, false);
+        paused.paused = true;
+        for _ in 0..2 {
+            assert_eq!(
+                record_phases(|| paused.tick_simulation_running()),
+                FRAME_PHASES
+            );
+        }
+        assert!(paused.paused, "the pause outlasts the benchmark");
+        assert_eq!(
+            game_value(paused.script_runtime.as_ref().unwrap(), "updates"),
+            2
+        );
     }
 }

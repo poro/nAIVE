@@ -576,6 +576,7 @@ pub(super) fn gsub_string(
     pat: &[u8],
     replacement: &[u8],
     max_replacements: i64,
+    max_len: usize,
 ) -> MatchResult<(Option<Vec<u8>>, i64)> {
     let (anchor, pat) = match pat.first() {
         Some(b'^') => (true, &pat[1..]),
@@ -593,7 +594,7 @@ pub(super) fn gsub_string(
             .filter(|&end| Some(end) != last_end);
         if let Some(end) = matched {
             count += 1;
-            append_replacement(&mut state, &mut out, replacement, position, end)?;
+            append_replacement(&mut state, &mut out, replacement, position, end, max_len)?;
             position = end;
             last_end = Some(end);
         } else if position < src.len() {
@@ -614,13 +615,44 @@ pub(super) fn gsub_string(
     Ok((Some(out), count))
 }
 
+/// The result buffer is Rust's, outside the Lua allocator's memory limit
+/// until it becomes the result string, so it may not grow past that limit.
+fn too_long<T>() -> MatchResult<T> {
+    Err(MatchError::Lua(LuaError::MemoryError(
+        "not enough memory".into(),
+    )))
+}
+
+/// Copy one `%0`-`%9` expansion, charged like any byte copy. Repeated
+/// captures can expand a short replacement many times over, so each copy is
+/// checked against `max_len` before it is made.
+fn push_expansion(
+    meter: &mut Meter<'_>,
+    out: &mut Vec<u8>,
+    bytes: &[u8],
+    max_len: usize,
+) -> MatchResult<()> {
+    meter.add(bytes.len() as u64 / 16)?;
+    if out.len().saturating_add(bytes.len()) > max_len {
+        return too_long();
+    }
+    out.extend_from_slice(bytes);
+    Ok(())
+}
+
 fn append_replacement(
     state: &mut MatchState<'_, '_, '_, '_>,
     out: &mut Vec<u8>,
     replacement: &[u8],
     s: usize,
     e: usize,
+    max_len: usize,
 ) -> MatchResult<()> {
+    // Literal bytes add at most the replacement's length, a Lua string the
+    // memory limit already covers; check the total once per match.
+    if out.len().saturating_add(replacement.len()) > max_len {
+        return too_long();
+    }
     state.meter.add(replacement.len() as u64 / 16)?;
     let mut i = 0;
     while i < replacement.len() {
@@ -634,11 +666,11 @@ fn append_replacement(
         i += 1;
         match escaped {
             b'%' => out.push(b'%'),
-            b'0' => out.extend_from_slice(&state.src[s..e]),
+            b'0' => push_expansion(state.meter, out, &state.src[s..e], max_len)?,
             b'1'..=b'9' => match state.capture(usize::from(escaped - b'1'), s, e)? {
-                CaptureValue::Bytes(bytes) => out.extend_from_slice(bytes),
+                CaptureValue::Bytes(bytes) => push_expansion(state.meter, out, bytes, max_len)?,
                 CaptureValue::Position(position) => {
-                    out.extend_from_slice(position.to_string().as_bytes())
+                    push_expansion(state.meter, out, position.to_string().as_bytes(), max_len)?
                 }
             },
             _ => return pattern_error("invalid use of '%' in replacement string"),

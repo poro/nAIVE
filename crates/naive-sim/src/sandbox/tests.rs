@@ -364,6 +364,64 @@ fn backtracking_patterns_stop_at_the_budget() {
     }
 }
 
+/// A short replacement can repeat captures: 32 copies of an 8 KiB capture
+/// make 256 KiB, charged as a 256 KiB copy, not by the replacement's length.
+#[test]
+fn gsub_charges_the_bytes_its_captures_expand_to() {
+    let cost = |copies: usize| {
+        let (lua, used) = sandbox(u64::MAX);
+        let code = format!(
+            "local s = string.rep('x', 8192) return #s:gsub('^(.*)$', string.rep('%1', {copies}))"
+        );
+        let length: i64 = lua.load(code).eval().unwrap();
+        assert_eq!(length, 8192 * copies as i64);
+        used.get()
+    };
+    // The same match and setup; only the expansion differs.
+    let extra = cost(32) - cost(1);
+    assert!(
+        extra >= 31 * 8192 / 16,
+        "31 more 8 KiB copies charged {extra}"
+    );
+}
+
+/// The result is built in a Rust buffer, outside the Lua allocator, so
+/// expansion stops with an allocation failure as soon as the buffer would
+/// pass the memory limit, before it grows any further.
+#[test]
+fn gsub_stops_expanding_at_the_memory_limit() {
+    let charge = |_units: u64| Ok(());
+    let mut meter = super::patterns::Meter::new(&charge);
+    let src = [b'x'; 100];
+    let replacement = "%0".repeat(100);
+    let gsub = |meter: &mut super::patterns::Meter<'_>, max_len| {
+        super::patterns::gsub_string(meter, &src, b"^.*$", replacement.as_bytes(), 1, max_len)
+    };
+    let error = match gsub(&mut meter, 9_999) {
+        Err(super::patterns::MatchError::Lua(error)) => error,
+        Err(_) => panic!("a pattern error"),
+        Ok(_) => panic!("a 10,000-byte result passed a 9,999-byte limit"),
+    };
+    assert!(matches!(error, LuaError::MemoryError(_)), "{error}");
+    let (result, count) = gsub(&mut meter, 10_000).ok().unwrap();
+    assert_eq!((result.unwrap().len(), count), (10_000, 1));
+
+    // Through Lua: 1 MiB repeated 128 times would be 128 MiB, over the
+    // sandbox's 64 MiB, and fails as an allocation failure; the state still
+    // works afterwards.
+    let (lua, _) = sandbox(u64::MAX);
+    let error = lua
+        .load("local s = string.rep('x', 1024 * 1024) return s:gsub('^.*$', string.rep('%0', 128))")
+        .exec()
+        .unwrap_err();
+    assert!(error.to_string().contains("not enough memory"), "{error}");
+    let length: i64 = lua
+        .load("local s = string.rep('x', 1024 * 1024) return #s:gsub('^.*$', '%0%0')")
+        .eval()
+        .unwrap();
+    assert_eq!(length, 2 * 1024 * 1024);
+}
+
 #[test]
 fn plain_search_is_linear_and_charged() {
     let (lua, used) = sandbox(u64::MAX);

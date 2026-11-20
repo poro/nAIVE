@@ -747,7 +747,8 @@ impl Engine {
         self.delta_time = 1.0 / 60.0;
         let start = std::time::Instant::now();
         for _ in 0..frames {
-            self.tick_simulation();
+            // Advance the simulation even while paused, as the command says.
+            self.tick_simulation_running();
             self.prepare_render();
             if let Some(gpu) = &self.gpu {
                 self.render_scene_to(gpu, &view, self.gpu_timer.as_ref());
