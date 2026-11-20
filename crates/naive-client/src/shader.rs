@@ -87,7 +87,9 @@ pub(crate) fn load_required_shader(
         // An artifact-only project can be repackaged even by a Slang-enabled
         // tool. When source exists, compile it and report any failure.
         if cfg!(feature = "slang") && !path.exists() {
-            std::fs::read_to_string(precompiled_wgsl_path(path)).map_err(ShaderError::IoError)?
+            let artifact = resolve_precompiled_wgsl(path, project_root)
+                .map_err(ShaderError::SlangCompilationFailed)?;
+            std::fs::read_to_string(artifact).map_err(ShaderError::IoError)?
         } else {
             compile_slang_to_wgsl(path, project_root)?
         }
@@ -354,11 +356,37 @@ pub fn precompiled_wgsl_path(slang_path: &Path) -> std::path::PathBuf {
     std::path::PathBuf::from(name)
 }
 
+/// The WGSL artifact beside a Slang shader inside `project_root`, held to the
+/// same confinement as the source: the source may be absent, and a symlinked
+/// artifact must not lead outside the project. Read artifacts only through
+/// this.
+pub(crate) fn resolve_precompiled_wgsl(
+    slang_path: &Path,
+    project_root: &Path,
+) -> Result<std::path::PathBuf, String> {
+    let artifact = precompiled_wgsl_path(slang_path);
+    let root = project_root
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve project {}: {error}", project_root.display()))?;
+    let relative = artifact
+        .strip_prefix(project_root)
+        .or_else(|_| artifact.strip_prefix(&root))
+        .map_err(|_| {
+            format!(
+                "shader artifact {} is outside the project",
+                artifact.display()
+            )
+        })?;
+    crate::project_path::resolve(project_root, relative)
+        .map_err(|error| format!("shader artifact {}: {error}", artifact.display()))
+}
+
 /// Without the Slang compiler, use the WGSL that `naive build` compiled from
 /// this shader, if there is one (as in a shipped game bundle).
 #[cfg(not(feature = "slang"))]
-fn compile_slang_to_wgsl(path: &Path, _project_root: &Path) -> Result<String, ShaderError> {
-    let precompiled = precompiled_wgsl_path(path);
+fn compile_slang_to_wgsl(path: &Path, project_root: &Path) -> Result<String, ShaderError> {
+    let precompiled = resolve_precompiled_wgsl(path, project_root)
+        .map_err(ShaderError::SlangCompilationFailed)?;
     tracing::debug!("Loading precompiled WGSL {:?}", precompiled);
     std::fs::read_to_string(&precompiled).map_err(|_| {
         ShaderError::SlangCompilationFailed(format!(
@@ -1854,6 +1882,40 @@ mod tests {
                 "{name}'s DrawUniforms is {span} bytes"
             );
         }
+    }
+}
+
+/// A shader's WGSL artifact is held to the project like its source, with or
+/// without the Slang compiler: a symlink cannot make the engine load a file
+/// from elsewhere.
+#[cfg(all(test, unix))]
+mod artifact_confinement_tests {
+    use super::*;
+
+    #[test]
+    fn a_forward_shader_artifact_symlinked_outside_the_project_is_not_loaded() {
+        let base =
+            std::env::temp_dir().join(format!("naive-artifact-confine-{}", std::process::id()));
+        let project = base.join("project");
+        std::fs::create_dir_all(project.join("shaders/passes")).unwrap();
+        let outside = base.join("outside.wgsl");
+        let leaked = format!("{}\n// outside the project\n", get_mesh_forward_wgsl());
+        std::fs::write(&outside, &leaked).unwrap();
+        let artifact = project.join(precompiled_wgsl_path(Path::new(FORWARD_SHADER)));
+        std::os::unix::fs::symlink(&outside, &artifact).unwrap();
+        assert_eq!(
+            load_project_forward_shader(&project),
+            get_mesh_forward_wgsl()
+        );
+        let slang = project.join(FORWARD_SHADER);
+        let error = resolve_precompiled_wgsl(&slang, &project).unwrap_err();
+        assert!(error.contains("outside the project"), "{error}");
+
+        // The same artifact inside the project is the project's shader.
+        std::fs::remove_file(&artifact).unwrap();
+        std::fs::copy(&outside, &artifact).unwrap();
+        assert_eq!(load_project_forward_shader(&project), leaked);
+        std::fs::remove_dir_all(base).unwrap();
     }
 }
 

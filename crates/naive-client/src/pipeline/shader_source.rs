@@ -196,14 +196,7 @@ pub(crate) fn load_pass_shader(
         .extension()
         .is_some_and(|extension| extension == "slang")
     {
-        let root = project_root
-            .canonicalize()
-            .map_err(PipelineError::IoError)?;
-        let artifact = crate::shader::precompiled_wgsl_path(&path);
-        let artifact_relative = artifact
-            .strip_prefix(&root)
-            .map_err(|error| PipelineError::ShaderError(error.to_string()))?;
-        crate::project_path::resolve(project_root, artifact_relative)
+        crate::shader::resolve_precompiled_wgsl(&path, project_root)
             .map_err(PipelineError::ShaderError)?;
     }
     let source = crate::shader::load_required_shader(&path, project_root).map_err(|error| {
