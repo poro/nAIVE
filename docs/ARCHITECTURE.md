@@ -1,6 +1,6 @@
 # nAIVE Engine — Architecture Reference
 
-**Version:** 0.1.24
+**Version:** 0.1.25
 **Reviewed:** November 16, 2026
 **Companion:** nAIVE Engine PRD v5.0
 **License:** MIT for core/client/runtime/web; BSL 1.1 for the server stub
