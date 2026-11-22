@@ -423,6 +423,179 @@ fn gsub_stops_expanding_at_the_memory_limit() {
 }
 
 #[test]
+fn gsub_checks_every_output_append_against_the_exact_cap() {
+    struct Case {
+        name: &'static str,
+        src: &'static [u8],
+        pattern: &'static [u8],
+        replacement: &'static [u8],
+        max_replacements: i64,
+        expected: &'static [u8],
+    }
+    let cases = [
+        Case {
+            name: "literal after expansion",
+            src: b"xxxxxxxxxx",
+            pattern: b"^.*$",
+            replacement: b"%0a",
+            max_replacements: 1,
+            expected: b"xxxxxxxxxxa",
+        },
+        Case {
+            name: "escaped percent after expansion",
+            src: b"xxxxxxxxxx",
+            pattern: b"^.*$",
+            replacement: b"%0%%",
+            max_replacements: 1,
+            expected: b"xxxxxxxxxx%",
+        },
+        Case {
+            name: "suffix after anchored match",
+            src: b"xxxxxxxxxx",
+            pattern: b"^x",
+            replacement: b"%0%0",
+            max_replacements: 20,
+            expected: b"xxxxxxxxxxx",
+        },
+        Case {
+            name: "suffix after replacement count limit",
+            src: b"xxxxxxxxxx",
+            pattern: b"x",
+            replacement: b"%0%0",
+            max_replacements: 1,
+            expected: b"xxxxxxxxxxx",
+        },
+        Case {
+            name: "unmatched byte loop after expansion",
+            src: b"x123456789",
+            pattern: b"x",
+            replacement: b"%0%0",
+            max_replacements: 20,
+            expected: b"xx123456789",
+        },
+        Case {
+            name: "position capture followed by literals",
+            src: b"abc",
+            pattern: b"^().*$",
+            replacement: b"%1abc",
+            max_replacements: 1,
+            expected: b"1abc",
+        },
+        Case {
+            name: "encoded replacement longer than its output",
+            src: b"a",
+            pattern: b"a",
+            replacement: b"%%",
+            max_replacements: 1,
+            expected: b"%",
+        },
+    ];
+    let charge = |_units: u64| Ok(());
+    for case in cases {
+        let run = |max_len| {
+            let mut meter = super::patterns::Meter::new(&charge);
+            super::patterns::gsub_string(
+                &mut meter,
+                case.src,
+                case.pattern,
+                case.replacement,
+                case.max_replacements,
+                max_len,
+            )
+        };
+        assert!(
+            matches!(
+                run(case.expected.len() - 1),
+                Err(super::patterns::MatchError::Lua(LuaError::MemoryError(_)))
+            ),
+            "{} must reject output one byte over its cap",
+            case.name
+        );
+        let (output, count) = match run(case.expected.len()) {
+            Ok(result) => result,
+            Err(super::patterns::MatchError::Lua(error)) => {
+                panic!("{} rejected an exact-cap result: {error}", case.name)
+            }
+            Err(super::patterns::MatchError::Pattern(error)) => {
+                panic!("{} produced a pattern error: {error}", case.name)
+            }
+        };
+        assert_eq!(output.as_deref(), Some(case.expected), "{}", case.name);
+        assert_eq!(count, 1, "{}", case.name);
+    }
+}
+
+#[test]
+fn gsub_allows_empty_output_at_a_zero_byte_cap() {
+    let charge = |_units: u64| Ok(());
+    for src in [b"abc".as_slice(), b"".as_slice()] {
+        let mut meter = super::patterns::Meter::new(&charge);
+        let (output, count) = super::patterns::gsub_string(&mut meter, src, b"^.*$", b"", 1, 0)
+            .ok()
+            .expect("deleting the entire match needs no output space");
+        assert_eq!(output, Some(Vec::new()));
+        assert_eq!(count, 1);
+    }
+}
+
+#[test]
+fn gsub_charges_unmatched_suffix_copying() {
+    let cost = |src: &[u8]| {
+        let used = Cell::new(0u64);
+        let charge = |units: u64| {
+            used.set(used.get().saturating_add(units));
+            Ok(())
+        };
+        let mut meter = super::patterns::Meter::new(&charge);
+        let (output, count) =
+            super::patterns::gsub_string(&mut meter, src, b"^x", b"y", 1, src.len())
+                .ok()
+                .expect("the unchanged-length result fits its cap");
+        let mut expected = src.to_vec();
+        expected[0] = b'y';
+        assert_eq!(output, Some(expected));
+        assert_eq!(count, 1);
+        used.get()
+    };
+    let src = vec![b'x'; 16 * 1024 + 1];
+    let extra = cost(&src) - cost(b"x");
+    assert!(
+        extra >= 16 * 1024 / 16,
+        "copying a 16 KiB unmatched suffix charged only {extra} extra units"
+    );
+}
+
+#[test]
+fn gsub_rejects_unmatched_suffix_copying_over_budget() {
+    // The small copy stays below the meter's automatic flush threshold, so
+    // it must still be charged by the final flush after appending the suffix.
+    for suffix_len in [1024, 16 * 1024] {
+        let used = Cell::new(0u64);
+        let charge = |units: u64| {
+            let total = used.get().saturating_add(units);
+            used.set(total);
+            if total > 32 {
+                Err(LuaError::runtime("suffix copy budget exceeded"))
+            } else {
+                Ok(())
+            }
+        };
+        let mut meter = super::patterns::Meter::new(&charge);
+        let src = vec![b'x'; suffix_len + 1];
+        match super::patterns::gsub_string(&mut meter, &src, b"^x", b"y", 1, src.len()) {
+            Err(super::patterns::MatchError::Lua(error)) => {
+                assert!(error.to_string().contains("suffix copy budget exceeded"));
+            }
+            Err(super::patterns::MatchError::Pattern(error)) => {
+                panic!("unexpected pattern error: {error}");
+            }
+            Ok(_) => panic!("an unmatched suffix was copied without charging its budget"),
+        }
+        assert!(used.get() > 32);
+    }
+}
+
+#[test]
 fn plain_search_is_linear_and_charged() {
     let (lua, used) = sandbox(u64::MAX);
     let (start, end): (i64, i64) = lua
