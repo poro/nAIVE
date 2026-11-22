@@ -598,7 +598,7 @@ pub(super) fn gsub_string(
             position = end;
             last_end = Some(end);
         } else if position < src.len() {
-            out.push(src[position]);
+            append_output(state.meter, &mut out, &src[position..position + 1], max_len)?;
             position += 1;
         } else {
             break;
@@ -607,11 +607,12 @@ pub(super) fn gsub_string(
             break;
         }
     }
-    state.meter.flush()?;
     if count == 0 {
+        state.meter.flush()?;
         return Ok((None, 0));
     }
-    out.extend_from_slice(&src[position..]);
+    append_output(state.meter, &mut out, &src[position..], max_len)?;
+    state.meter.flush()?;
     Ok((Some(out), count))
 }
 
@@ -623,17 +624,23 @@ fn too_long<T>() -> MatchResult<T> {
     )))
 }
 
-/// Copy one `%0`-`%9` expansion, charged like any byte copy. Repeated
-/// captures can expand a short replacement many times over, so each copy is
-/// checked against `max_len` before it is made.
-fn push_expansion(
+/// All result writes share the same length check and copy charge, including
+/// literals and unmatched input. Count complete groups of 16 output bytes
+/// across appends so single-byte writes do not escape the copy budget.
+fn append_output(
     meter: &mut Meter<'_>,
     out: &mut Vec<u8>,
     bytes: &[u8],
     max_len: usize,
 ) -> MatchResult<()> {
-    meter.add(bytes.len() as u64 / 16)?;
-    if out.len().saturating_add(bytes.len()) > max_len {
+    let Some(new_len) = out.len().checked_add(bytes.len()) else {
+        return too_long();
+    };
+    if new_len > max_len {
+        return too_long();
+    }
+    meter.add((new_len / 16 - out.len() / 16) as u64)?;
+    if out.try_reserve(bytes.len()).is_err() {
         return too_long();
     }
     out.extend_from_slice(bytes);
@@ -648,29 +655,30 @@ fn append_replacement(
     e: usize,
     max_len: usize,
 ) -> MatchResult<()> {
-    // Literal bytes add at most the replacement's length, a Lua string the
-    // memory limit already covers; check the total once per match.
-    if out.len().saturating_add(replacement.len()) > max_len {
-        return too_long();
-    }
+    // Charge parsing separately: an encoded replacement can be much longer
+    // than its output (for example, escaped percents or empty captures).
     state.meter.add(replacement.len() as u64 / 16)?;
     let mut i = 0;
     while i < replacement.len() {
         let c = replacement[i];
         i += 1;
         if c != b'%' {
-            out.push(c);
+            let start = i - 1;
+            while i < replacement.len() && replacement[i] != b'%' {
+                i += 1;
+            }
+            append_output(state.meter, out, &replacement[start..i], max_len)?;
             continue;
         }
         let escaped = replacement.get(i).copied().unwrap_or(0);
         i += 1;
         match escaped {
-            b'%' => out.push(b'%'),
-            b'0' => push_expansion(state.meter, out, &state.src[s..e], max_len)?,
+            b'%' => append_output(state.meter, out, b"%", max_len)?,
+            b'0' => append_output(state.meter, out, &state.src[s..e], max_len)?,
             b'1'..=b'9' => match state.capture(usize::from(escaped - b'1'), s, e)? {
-                CaptureValue::Bytes(bytes) => push_expansion(state.meter, out, bytes, max_len)?,
+                CaptureValue::Bytes(bytes) => append_output(state.meter, out, bytes, max_len)?,
                 CaptureValue::Position(position) => {
-                    push_expansion(state.meter, out, position.to_string().as_bytes(), max_len)?
+                    append_output(state.meter, out, position.to_string().as_bytes(), max_len)?
                 }
             },
             _ => return pattern_error("invalid use of '%' in replacement string"),
