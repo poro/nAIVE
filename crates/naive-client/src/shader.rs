@@ -978,7 +978,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 
 /// Hardcoded WGSL for the Gaussian splat rendering pass.
-/// Renders each splat as a camera-facing billboard quad with 2D Gaussian falloff.
+///
+/// Each splat's 3D covariance (its entity's transform, rotation and scale)
+/// is projected to a 2D screen-space ellipse, as in 3D Gaussian Splatting
+/// (Kerbl et al. 2023, after Zwicker et al.'s EWA splatting), and drawn as a
+/// quad along the ellipse's axes, sized to where the splat's alpha falls
+/// below 1/255. Splats behind the camera or well outside the view are
+/// dropped. The draw order comes from the GPU sort (`splat::sort`).
 pub fn get_splat_render_wgsl() -> String {
     r#"
 struct CameraUniform {
@@ -990,8 +996,8 @@ struct CameraUniform {
     far_plane: f32,
     _pad1: f32,
     viewport_size: vec2<f32>,
-    _padding: f32,
-    _pad2: vec3<f32>,
+    _pad2: vec4<f32>,
+    inv_view_projection: mat4x4<f32>,
 };
 
 struct GaussianSplat {
@@ -999,26 +1005,45 @@ struct GaussianSplat {
     opacity: f32,
     scale: vec3<f32>,
     _pad0: f32,
+    // 3DGS order: w, x, y, z.
     rotation: vec4<f32>,
     sh_dc: vec3<f32>,
     _pad1: f32,
+};
+
+struct InstanceUniforms {
+    model: mat4x4<f32>,
+    view_model: mat4x4<f32>,
+    count: u32,
+    padded: u32,
+    _pad: vec2<u32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
 
 @group(1) @binding(0) var<storage, read> splats: array<GaussianSplat>;
 @group(1) @binding(1) var<storage, read> sorted_indices: array<u32>;
+@group(1) @binding(2) var<uniform> instance: InstanceUniforms;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
+    // The fragment's offset from the splat's centre, in units where the
+    // Gaussian is exp(-dot(offset, offset)).
+    @location(0) offset: vec2<f32>,
     @location(1) color: vec3<f32>,
     @location(2) opacity: f32,
 };
 
-// Build a rotation matrix from a quaternion
+const MIN_ALPHA: f32 = 0.0039215686; // 1 / 255
+const MAX_ALPHA: f32 = 0.99;
+// Added to the 2D covariance so no splat is thinner than about a pixel.
+const LOW_PASS: f32 = 0.3;
+// The largest ellipse axis drawn, in pixels.
+const MAX_AXIS: f32 = 4096.0;
+
+// Rotation matrix from a unit quaternion in 3DGS order (w, x, y, z).
 fn quat_to_mat3(q: vec4<f32>) -> mat3x3<f32> {
-    let x = q.x; let y = q.y; let z = q.z; let w = q.w;
+    let w = q.x; let x = q.y; let y = q.z; let z = q.w;
     let x2 = x + x; let y2 = y + y; let z2 = z + z;
     let xx = x * x2; let xy = x * y2; let xz = x * z2;
     let yy = y * y2; let yz = y * z2; let zz = z * z2;
@@ -1030,21 +1055,77 @@ fn quat_to_mat3(q: vec4<f32>) -> mat3x3<f32> {
     );
 }
 
+fn dropped() -> VertexOutput {
+    var out: VertexOutput;
+    // Outside the clip volume, so the quad is clipped away.
+    out.clip_position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+    out.offset = vec2<f32>(0.0);
+    out.color = vec3<f32>(0.0);
+    out.opacity = 0.0;
+    return out;
+}
+
 @vertex
 fn vs_main(
     @builtin(instance_index) instance_index: u32,
     @builtin(vertex_index) vertex_index: u32,
 ) -> VertexOutput {
-    var out: VertexOutput;
+    let splat = splats[sorted_indices[instance_index]];
+    let opacity = min(splat.opacity, MAX_ALPHA);
+    if opacity < MIN_ALPHA {
+        return dropped();
+    }
 
-    // Look up the sorted splat index
-    let splat_idx = sorted_indices[instance_index];
-    let splat = splats[splat_idx];
+    let view_position = camera.view * instance.model * vec4<f32>(splat.position, 1.0);
+    // View space looks down -z.
+    let depth = -view_position.z;
+    if depth <= camera.near_plane {
+        return dropped();
+    }
+    let clip = camera.projection * view_position;
+    let ndc = clip.xy / clip.w;
+    if abs(ndc.x) > 1.3 || abs(ndc.y) > 1.3 {
+        return dropped();
+    }
 
-    // Quad vertices: two triangles forming a quad [-1,1] x [-1,1]
-    // Triangle 1: (0,1,2) = (-1,-1), (1,-1), (1,1)
-    // Triangle 2: (3,4,5) = (-1,-1), (1,1), (-1,1)
-    var quad_pos: array<vec2<f32>, 6> = array<vec2<f32>, 6>(
+    // The splat's axes in view space: T = V M R S, so its covariance is T T^T.
+    let model3 = mat3x3<f32>(instance.model[0].xyz, instance.model[1].xyz, instance.model[2].xyz);
+    let view3 = mat3x3<f32>(camera.view[0].xyz, camera.view[1].xyz, camera.view[2].xyz);
+    let m = view3 * model3 * quat_to_mat3(splat.rotation);
+    let axes = mat3x3<f32>(m[0] * splat.scale.x, m[1] * splat.scale.y, m[2] * splat.scale.z);
+
+    // The projection's Jacobian at the centre, in pixels (y up). Like 3DGS,
+    // clamp the centre's direction a little outside the view so splats at
+    // the edge do not blow up.
+    let focal = vec2<f32>(camera.projection[0][0], camera.projection[1][1]) * camera.viewport_size * 0.5;
+    let limit = 1.3 / vec2<f32>(camera.projection[0][0], camera.projection[1][1]);
+    let slope = clamp(view_position.xy / depth, -limit, limit);
+    let j0 = vec3<f32>(focal.x / depth, 0.0, focal.x * slope.x / depth);
+    let j1 = vec3<f32>(0.0, focal.y / depth, focal.y * slope.y / depth);
+    // Rows of J T; the 2D covariance is (J T)(J T)^T.
+    let r0 = vec3<f32>(dot(j0, axes[0]), dot(j0, axes[1]), dot(j0, axes[2]));
+    let r1 = vec3<f32>(dot(j1, axes[0]), dot(j1, axes[1]), dot(j1, axes[2]));
+    let a = dot(r0, r0) + LOW_PASS;
+    let b = dot(r0, r1);
+    let c = dot(r1, r1) + LOW_PASS;
+
+    // The ellipse's axes: eigenvectors of the covariance, scaled so the
+    // Gaussian is exp(-|q|^2) for q in axis units.
+    let mid = 0.5 * (a + c);
+    let radius = length(vec2<f32>(0.5 * (a - c), b));
+    let lambda1 = mid + radius;
+    let lambda2 = max(mid - radius, 0.1);
+    var direction = vec2<f32>(b, lambda1 - a);
+    if dot(direction, direction) < 1e-12 {
+        direction = vec2<f32>(1.0, 0.0);
+    }
+    direction = normalize(direction);
+    let major = min(sqrt(2.0 * lambda1), MAX_AXIS) * direction;
+    let minor = min(sqrt(2.0 * lambda2), MAX_AXIS) * vec2<f32>(direction.y, -direction.x);
+
+    // Stop where opacity * exp(-|q|^2) reaches 1/255.
+    let extent = sqrt(log(opacity / MIN_ALPHA));
+    var corners = array<vec2<f32>, 6>(
         vec2<f32>(-1.0, -1.0),
         vec2<f32>( 1.0, -1.0),
         vec2<f32>( 1.0,  1.0),
@@ -1052,41 +1133,25 @@ fn vs_main(
         vec2<f32>( 1.0,  1.0),
         vec2<f32>(-1.0,  1.0),
     );
+    let corner = corners[vertex_index] * extent;
+    let offset_pixels = corner.x * major + corner.y * minor;
+    let offset_ndc = offset_pixels / (0.5 * camera.viewport_size);
 
-    let uv = quad_pos[vertex_index];
-    out.uv = uv;
+    var out: VertexOutput;
+    out.clip_position = vec4<f32>(clip.xy + offset_ndc * clip.w, clip.z, clip.w);
+    out.offset = corner;
     out.color = splat.sh_dc;
-    out.opacity = splat.opacity;
-
-    // Compute the 3D covariance axes from rotation and scale
-    let rot_mat = quat_to_mat3(splat.rotation);
-    let scaled_x = rot_mat[0] * splat.scale.x;
-    let scaled_y = rot_mat[1] * splat.scale.y;
-
-    // Billboard: offset the splat center in world space along the covariance axes
-    // Use 2x scale for the quad extent (covers ~95% of Gaussian at 2 sigma)
-    let world_offset = scaled_x * uv.x * 2.0 + scaled_y * uv.y * 2.0;
-    let world_pos = splat.position + world_offset;
-
-    out.clip_position = camera.view_projection * vec4<f32>(world_pos, 1.0);
-
+    out.opacity = opacity;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // 2D Gaussian falloff: exp(-0.5 * |uv|^2)
-    let d = dot(in.uv, in.uv);
-    if d > 4.0 {
+    let alpha = in.opacity * exp(-dot(in.offset, in.offset));
+    if alpha < MIN_ALPHA {
         discard;
     }
-    let alpha = in.opacity * exp(-0.5 * d);
-
-    // Threshold very transparent fragments
-    if alpha < 0.004 {
-        discard;
-    }
-
+    // Premultiplied.
     return vec4<f32>(in.color * alpha, alpha);
 }
 "#
@@ -1827,7 +1892,7 @@ mod tests {
 
     #[test]
     fn built_in_shaders_are_valid_wgsl() {
-        let shaders: [(&str, String); 11] = [
+        let shaders: [(&str, String); 12] = [
             ("triangle", get_triangle_wgsl()),
             ("mesh forward", get_mesh_forward_wgsl()),
             ("gbuffer", get_gbuffer_wgsl()),
@@ -1845,6 +1910,7 @@ mod tests {
                 "swarm compute",
                 crate::swarm::SWARM_COMPUTE_WGSL.to_string(),
             ),
+            ("splat sort", crate::splat::sort::SORT_WGSL.to_string()),
         ];
         for (name, source) in &shaders {
             validate(name, source);
@@ -1880,6 +1946,34 @@ mod tests {
                 u64::from(span),
                 crate::renderer::DRAW_UNIFORM_SIZE,
                 "{name}'s DrawUniforms is {span} bytes"
+            );
+        }
+    }
+
+    /// The splat sort and draw read one entity's `InstanceUniforms` buffer,
+    /// written from the CPU struct.
+    #[test]
+    fn splat_instance_uniforms_match_the_cpu_struct() {
+        let shaders = [
+            ("splat render", get_splat_render_wgsl()),
+            ("splat sort", crate::splat::sort::SORT_WGSL.to_string()),
+        ];
+        for (name, source) in &shaders {
+            let module = validate(name, source);
+            let span = module
+                .types
+                .iter()
+                .find_map(|(_, ty)| match (&ty.name, &ty.inner) {
+                    (Some(n), naga::TypeInner::Struct { span, .. }) if n == "InstanceUniforms" => {
+                        Some(*span)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{name} has no InstanceUniforms struct"));
+            assert_eq!(
+                span as usize,
+                std::mem::size_of::<crate::splat::sort::InstanceUniforms>(),
+                "{name}'s InstanceUniforms is {span} bytes"
             );
         }
     }

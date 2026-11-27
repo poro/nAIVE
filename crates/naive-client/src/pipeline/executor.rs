@@ -848,18 +848,21 @@ fn execute_splat_pass(
         render_pass.set_pipeline(&pass.pipeline);
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
-        // For each entity with a GaussianSplat component, create a bind group and draw
-        for (_entity, splat) in scene_world
+        // Each splat entity draws its splats in the order this frame's sort
+        // gave it (`SplatCache::sort_splats`), with its own world matrix.
+        for (entity, splat) in scene_world
             .world
             .query::<(hecs::Entity, &GaussianSplat)>()
             .iter()
         {
-            let gpu_splat = splat_cache.get(splat.splat_handle);
-            if gpu_splat.splat_count == 0 {
+            let Some(instance) = splat_cache
+                .instance(entity)
+                .filter(|instance| instance.handle == splat.splat_handle)
+            else {
                 continue;
-            }
+            };
+            let gpu_splat = splat_cache.get(splat.splat_handle);
 
-            // Create bind group for this splat's data
             let splat_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Splat Data Bind Group"),
                 layout: splat_layout,
@@ -870,14 +873,18 @@ fn execute_splat_pass(
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: gpu_splat.sorted_index_buffer.as_entire_binding(),
+                        resource: instance.sorted_indices.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: instance.uniforms.as_entire_binding(),
                     },
                 ],
             });
 
             render_pass.set_bind_group(1, &splat_bind_group, &[]);
             // 6 vertices per quad, N instances (one per splat)
-            render_pass.draw(0..6, 0..gpu_splat.splat_count);
+            render_pass.draw(0..6, 0..instance.count);
         }
     }
 }

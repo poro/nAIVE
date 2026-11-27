@@ -2103,17 +2103,28 @@ impl Engine {
             draw_pool.ensure_capacity(&gpu.device, visible_count);
         }
 
-        // Sort splats for correct alpha blending (CPU back-to-front)
+        // Sort splats back to front on the GPU for correct alpha blending.
         if let (Some(gpu), Some(scene_world), Some(camera_state)) =
             (&self.gpu, &self.scene_world, &self.camera_state)
         {
-            let cs = camera_state.borrow();
-            let view_matrix = cs.view_matrix();
-            let sw = scene_world.borrow();
-            for (_entity, splat) in sw.world.query::<(hecs::Entity, &GaussianSplat)>().iter() {
-                self.splat_cache
-                    .sort_splats(splat.splat_handle, &view_matrix, &gpu.queue);
-            }
+            let view_matrix = camera_state.borrow().view_matrix();
+            let entities: Vec<_> = scene_world
+                .borrow()
+                .world
+                .query::<(hecs::Entity, &GaussianSplat, Option<&Transform>)>()
+                .iter()
+                .map(|(entity, splat, transform)| {
+                    let model = transform.map_or(glam::Mat4::IDENTITY, |t| t.world_matrix);
+                    (entity, splat.splat_handle, model)
+                })
+                .collect();
+            self.splat_cache.sort_splats(
+                &gpu.device,
+                &gpu.queue,
+                view_matrix,
+                &entities,
+                self.gpu_timer.as_ref(),
+            );
         }
 
         // Start this frame's UI from an empty queue. `render_frame` clears it

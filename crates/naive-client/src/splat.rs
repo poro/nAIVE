@@ -1,18 +1,23 @@
-//! Gaussian splat loading, caching, and CPU sorting.
+//! Gaussian splat loading, caching, and GPU sorting.
 //!
 //! Loads .ply files in standard 3DGS format (position, scale, rotation,
-//! opacity, spherical harmonics) and uploads to GPU storage buffers.
-//! Provides per-frame CPU depth sorting for correct alpha blending.
+//! opacity, spherical harmonics) and uploads them to GPU storage buffers.
+//! Every frame each splat entity's splats are sorted back to front on the GPU
+//! (`sort`) for correct alpha blending.
 
-use std::collections::HashMap;
+pub mod sort;
+
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use crate::components::SplatHandle;
+use crate::gpu_timer::GpuTimer;
 
 pub use naive_sim::assets::AssetError as SplatError;
+pub use sort::SplatInstance;
 
 /// GPU-side splat data. Packed to 64 bytes for efficient storage buffer access.
 #[repr(C)]
@@ -22,6 +27,7 @@ pub struct GaussianSplatGpu {
     pub opacity: f32,
     pub scale: [f32; 3],
     pub _pad0: f32,
+    /// Quaternion in 3DGS order: w, x, y, z.
     pub rotation: [f32; 4],
     pub sh_dc: [f32; 3],
     pub _pad1: f32,
@@ -31,18 +37,20 @@ pub struct GaussianSplatGpu {
 pub struct GpuSplat {
     /// Storage buffer containing all splat data.
     pub splat_buffer: wgpu::Buffer,
-    /// Buffer of sorted u32 indices (updated each frame).
-    pub sorted_index_buffer: wgpu::Buffer,
     /// Number of splats in this cloud.
     pub splat_count: u32,
-    /// CPU-side positions for depth sorting.
-    pub cpu_positions: Vec<[f32; 3]>,
 }
 
-/// Cache of loaded splat clouds, keyed by file path.
+/// Cache of loaded splat clouds, keyed by file path, and each splat entity's
+/// sort state.
 pub struct SplatCache {
     splats: Vec<GpuSplat>,
     path_to_handle: HashMap<PathBuf, SplatHandle>,
+    /// The sort pipelines, made with the first sort.
+    sorter: Option<sort::SplatSorter>,
+    /// Sort state per entity: entities sharing a splat asset can stand in
+    /// different places, so each draws in its own order.
+    instances: HashMap<hecs::Entity, SplatInstance>,
 }
 
 impl SplatCache {
@@ -50,6 +58,8 @@ impl SplatCache {
         Self {
             splats: Vec::new(),
             path_to_handle: HashMap::new(),
+            sorter: None,
+            instances: HashMap::new(),
         }
     }
 
@@ -81,37 +91,72 @@ impl SplatCache {
         &self.splats[handle.0]
     }
 
-    /// Sort splats back-to-front for correct alpha blending.
-    /// Updates the sorted_index_buffer on GPU.
-    pub fn sort_splats(&self, handle: SplatHandle, view_matrix: &Mat4, queue: &wgpu::Queue) {
-        let gpu_splat = &self.splats[handle.0];
-        let count = gpu_splat.splat_count as usize;
-        if count == 0 {
+    /// The sort state `entity` draws with, once a sort has made it.
+    pub fn instance(&self, entity: hecs::Entity) -> Option<&SplatInstance> {
+        self.instances.get(&entity)
+    }
+
+    /// Sort each splat entity's splats back to front, as `view` sees them,
+    /// on the GPU. `entities` are this frame's splat entities with their
+    /// splat and world matrix; sort state for any other entity is dropped.
+    /// An entity whose matrix and view have not changed keeps its order.
+    pub fn sort_splats(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: Mat4,
+        entities: &[(hecs::Entity, SplatHandle, Mat4)],
+        timer: Option<&GpuTimer>,
+    ) {
+        let Self {
+            splats,
+            sorter,
+            instances,
+            ..
+        } = self;
+        let live: HashSet<hecs::Entity> = entities.iter().map(|(entity, ..)| *entity).collect();
+        instances.retain(|entity, _| live.contains(entity));
+        if entities.is_empty() {
+            return;
+        }
+        let sorter = sorter.get_or_insert_with(|| sort::SplatSorter::new(device));
+
+        let mut stale = Vec::new();
+        for &(entity, handle, model) in entities {
+            let splat = &splats[handle.0];
+            if splat.splat_count == 0 {
+                instances.remove(&entity);
+                continue;
+            }
+            let instance = match instances.get_mut(&entity) {
+                // Hot reload gives the entity a new splat.
+                Some(instance) if instance.handle == handle => instance,
+                _ => {
+                    instances.insert(entity, sorter.instance(device, splat, handle));
+                    instances.get_mut(&entity).expect("just inserted")
+                }
+            };
+            if instance.update(queue, model, view) {
+                stale.push(entity);
+            }
+        }
+        if stale.is_empty() {
             return;
         }
 
-        // Compute camera-space Z for each splat
-        let mut indexed_depths: Vec<(u32, f32)> = gpu_splat
-            .cpu_positions
-            .iter()
-            .enumerate()
-            .map(|(i, pos)| {
-                let world_pos = Vec3::from(*pos);
-                let view_pos = view_matrix.transform_point3(world_pos);
-                (i as u32, view_pos.z)
-            })
-            .collect();
-
-        // Sort back-to-front (most negative Z = farthest in right-handed view space)
-        indexed_depths.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Upload sorted indices to GPU
-        let sorted_indices: Vec<u32> = indexed_depths.iter().map(|(i, _)| *i).collect();
-        queue.write_buffer(
-            &gpu_splat.sorted_index_buffer,
-            0,
-            bytemuck::cast_slice(&sorted_indices),
-        );
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Splat sort"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Splat sort"),
+                timestamp_writes: timer.and_then(|t| t.compute_pass(crate::gpu_timer::SPLAT_SORT)),
+            });
+            for entity in &stale {
+                sorter.encode(&mut pass, &instances[entity]);
+            }
+        }
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
     /// Invalidate a cached splat (for hot-reload).
@@ -140,14 +185,13 @@ impl Default for SplatCache {
     }
 }
 
-/// Upload shared, already validated splat data to GPU storage buffers.
+/// Upload shared, already validated splat data to a GPU storage buffer.
 fn upload_splat(
     device: &wgpu::Device,
     splat_path: &str,
     data: naive_sim::assets::SplatData,
 ) -> GpuSplat {
     let count = data.splats.len() as u32;
-    let cpu_positions = data.splats.iter().map(|point| point.position).collect();
     let gpu_data: Vec<_> = data
         .splats
         .into_iter()
@@ -166,17 +210,9 @@ fn upload_splat(
         contents: bytemuck::cast_slice(&gpu_data),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
-    let initial_indices: Vec<u32> = (0..count).collect();
-    let sorted_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("Splat Sorted Indices: {splat_path}")),
-        contents: bytemuck::cast_slice(&initial_indices),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-    });
     GpuSplat {
         splat_buffer,
-        sorted_index_buffer,
         splat_count: count,
-        cpu_positions,
     }
 }
 

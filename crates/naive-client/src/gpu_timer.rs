@@ -31,6 +31,8 @@ pub const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY;
 
 /// The name the swarm compute pass is timed under.
 pub const SWARMS: &str = "swarms";
+/// The splat sort's compute pass.
+pub const SPLAT_SORT: &str = "splat sort";
 
 /// Average GPU milliseconds per frame over the last frames measured.
 #[derive(Clone, Debug, Default, PartialEq)]

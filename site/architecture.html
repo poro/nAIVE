@@ -62,7 +62,7 @@ graph TB
         BLOOM_P["Bloom Pass<br/>HDR glow extraction"]
         TONE["Tonemap Pass<br/>HDR → SDR"]
         FXAA_P["FXAA Pass<br/>anti-aliasing"]
-        SPLAT_P["Splat Pass<br/>Gaussian billboards"]
+        SPLAT_P["Splat Pass<br/>Gaussian ellipses"]
         FWD["Forward Fallback"]
     end
 
@@ -362,7 +362,7 @@ flowchart LR
     end
 
     subgraph Splat["Splat Pass (optional)"]
-        S1["Billboard Quads<br/>sorted back-to-front"]
+        S1["Screen-space ellipses<br/>GPU-sorted back-to-front"]
         S2["2D Gaussian<br/>alpha blending"]
     end
 

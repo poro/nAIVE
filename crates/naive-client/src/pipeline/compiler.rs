@@ -548,7 +548,9 @@ fn create_splat_pipeline(
         source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
     });
 
-    // Group 1: splat data + sorted indices (created per-entity at render time)
+    // Group 1: splat data, sorted indices and the entity's instance
+    // uniforms (world matrix), bound per entity at render time. A project
+    // splat shader may leave out binding 2.
     let splat_data_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Splat Data Bind Group Layout"),
         entries: &[
@@ -567,6 +569,16 @@ fn create_splat_pipeline(
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -637,10 +649,14 @@ fn create_splat_pipeline(
             unclipped_depth: false,
             conservative: false,
         },
+        // Splats arrive sorted back to front, so each one blends over what
+        // is drawn already; a depth test would only hide a splat behind one
+        // at the same depth. The depth target keeps the nearest splat for
+        // compositing with meshes.
         depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
             format,
             depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
+            depth_compare: Some(wgpu::CompareFunction::Always),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
