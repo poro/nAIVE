@@ -2104,6 +2104,7 @@ impl Engine {
         }
 
         // Sort splats back to front on the GPU for correct alpha blending.
+        // Hidden splat entities get no sort state, so they are not drawn.
         if let (Some(gpu), Some(scene_world), Some(camera_state)) =
             (&self.gpu, &self.scene_world, &self.camera_state)
         {
@@ -2112,6 +2113,7 @@ impl Engine {
                 .borrow()
                 .world
                 .query::<(hecs::Entity, &GaussianSplat, Option<&Transform>)>()
+                .without::<&crate::components::Hidden>()
                 .iter()
                 .map(|(entity, splat, transform)| {
                     let model = transform.map_or(glam::Mat4::IDENTITY, |t| t.world_matrix);
