@@ -589,6 +589,7 @@ struct CullState {
 @group(0) @binding(13) var<storage, read_write> runs: array<vec2<u32>>;
 
 const HALF: u32 = 256u;
+const DIGIT_BITS: u32 = 8u;
 const RADIX: u32 = 256u;
 const TILE: u32 = 2048u;
 const TILE_CLUSTERS: u32 = 8u;
@@ -606,6 +607,8 @@ var<workgroup> packed_base: u32;
 // A tile's size, and for the first pass where each of its clusters' kept
 // splats were packed and where they start in the tile.
 var<workgroup> tile_size: u32;
+// The tiles a scan covers.
+var<workgroup> scan_rows: u32;
 var<workgroup> tile_runs: array<vec2<u32>, 8>;
 var<workgroup> digit_counts: array<atomic<u32>, 256>;
 // Each entry a pair's digit and its place in the tile.
@@ -890,9 +893,9 @@ fn scan_counts(
     @builtin(local_invocation_index) t: u32,
 ) {
     if t == 0u {
-        tile_size = select(state.sorted_tiles, instance.tiles, sort_step.shift == 0u);
+        scan_rows = select(state.sorted_tiles, instance.tiles, sort_step.shift == 0u);
     }
-    let rows = workgroupUniformLoad(&tile_size);
+    let rows = workgroupUniformLoad(&scan_rows);
     let row = RADIX + group.x * instance.tiles;
     var carry = 0u;
     for (var base = 0u; base < rows; base += 4u * HALF) {
@@ -1069,7 +1072,7 @@ fn scatter(
             let dest = digit_place[d] + p - run_start[d];
             values_out[dest] = values[source];
             // The last pass's keys are not read again.
-            if sort_step.shift + 8u < 32u {
+            if sort_step.shift + DIGIT_BITS < 32u {
                 keys_out[dest] = keys[source];
             }
         }
@@ -1347,6 +1350,7 @@ mod tests {
         assert!(tiles(max) <= 65_535);
         // The shader's sizes are these.
         for constant in [
+            format!("const DIGIT_BITS: u32 = {DIGIT_BITS}u;"),
             format!("const RADIX: u32 = {RADIX}u;"),
             format!("const TILE: u32 = {TILE}u;"),
             format!("const TILE_CLUSTERS: u32 = {TILE_CLUSTERS}u;"),
@@ -1385,13 +1389,14 @@ mod tests {
             let some: Vec<bool> = (0..count)
                 .map(|i| i % 3 != 1 && (i / CLUSTER) % 5 != 2)
                 .collect();
+            let none = vec![false; count];
             let forward: Vec<u32> = (0..clusters).collect();
             let backward: Vec<u32> = (0..clusters).rev().collect();
             let odd_first: Vec<u32> = (0..clusters)
                 .filter(|c| c % 2 == 1)
                 .chain((0..clusters).filter(|c| c % 2 == 0))
                 .collect();
-            for kept in [every, some] {
+            for kept in [every, some, none] {
                 let mut expected: Vec<u32> =
                     (0..count as u32).filter(|&i| kept[i as usize]).collect();
                 expected.sort_by_key(|&i| (keys_of[i as usize], i));
