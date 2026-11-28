@@ -2,7 +2,8 @@
 
 use std::path::Path;
 
-use ply_rs::ply::{DefaultElement, Property};
+use ply_rs::parser::Parser;
+use ply_rs::ply::{DefaultElement, Property, PropertyAccess, PropertyType, ScalarType};
 
 use super::AssetError;
 
@@ -14,12 +15,28 @@ pub struct SplatPoint {
     pub scale: [f32; 3],
     /// Quaternion in 3DGS order: w, x, y, z.
     pub rotation: [f32; 4],
+    /// Base colour, `0.5 + C0 * f_dc`. Not clamped: the renderer adds the
+    /// higher spherical-harmonics bands first, then clamps.
     pub sh_dc: [f32; 3],
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SplatData {
     pub splats: Vec<SplatPoint>,
+    /// Spherical-harmonics degree of `sh_rest`, 0 to [`MAX_SH_DEGREE`].
+    pub sh_degree: u32,
+    /// Higher-band SH coefficients, `3 * sh_rest_coefficients(sh_degree)`
+    /// per splat in splat order: coefficient by coefficient, each (r, g, b).
+    pub sh_rest: Vec<f32>,
+}
+
+/// The highest spherical-harmonics degree 3DGS stores.
+pub const MAX_SH_DEGREE: u32 = 3;
+
+/// Higher-band SH coefficients per colour channel at `degree` (the bands
+/// above the base colour): 0, 3, 8 or 15.
+pub fn sh_rest_coefficients(degree: u32) -> usize {
+    ((degree + 1) * (degree + 1) - 1) as usize
 }
 
 /// Load a confined PLY asset. Only the explicit `procedural` source selects the
@@ -32,34 +49,169 @@ pub fn load_splat(project_root: &Path, splat_path: &str) -> Result<SplatData, As
     let file = std::fs::File::open(&full_path)
         .map_err(|error| AssetError(format!("Failed to read splat '{splat_path}': {error}")))?;
     let mut reader = std::io::BufReader::new(file);
-    let parser = ply_rs::parser::Parser::<DefaultElement>::new();
-    let ply = parser
-        .read_ply(&mut reader)
-        .map_err(|error| AssetError(format!("Invalid PLY splat '{splat_path}': {error}")))?;
-    let vertices = ply
-        .payload
-        .get("vertex")
-        .filter(|vertices| !vertices.is_empty())
+    let invalid =
+        |error: std::io::Error| AssetError(format!("Invalid PLY splat '{splat_path}': {error}"));
+    let header = Parser::<DefaultElement>::new()
+        .read_header(&mut reader)
+        .map_err(invalid)?;
+
+    // Each vertex is read straight into a fixed-size row. A map per vertex
+    // took about 8 GB for a million degree-3 splats.
+    let mut rows = None;
+    for (name, element) in &header.elements {
+        if name == "vertex" {
+            let sh_degree = vertex_layout(element, splat_path)
+                .map_err(|error| AssetError(format!("PLY splat '{splat_path}': {error}")))?;
+            let read = Parser::<RawVertex>::new()
+                .read_payload_for_element(&mut reader, element, &header)
+                .map_err(invalid)?;
+            rows = Some((read, sh_degree));
+            break;
+        }
+        // Elements before the vertices still have to be read past.
+        Parser::<DefaultElement>::new()
+            .read_payload_for_element(&mut reader, element, &header)
+            .map_err(invalid)?;
+    }
+    let (rows, sh_degree) = rows
+        .filter(|(rows, _)| !rows.is_empty())
         .ok_or_else(|| AssetError(format!("PLY splat '{splat_path}' contains no vertices")))?;
-    u32::try_from(vertices.len())
+    u32::try_from(rows.len())
         .map_err(|_| AssetError(format!("PLY splat '{splat_path}' has too many vertices")))?;
-    let splats = vertices
-        .iter()
-        .enumerate()
-        .map(|(index, vertex)| {
-            decode_vertex(vertex).map_err(|error| {
-                AssetError(format!("PLY splat '{splat_path}' vertex {index}: {error}"))
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(SplatData { splats })
+
+    let coefficients = sh_rest_coefficients(sh_degree);
+    let mut splats = Vec::with_capacity(rows.len());
+    let mut sh_rest = Vec::with_capacity(rows.len() * 3 * coefficients);
+    for (index, row) in rows.iter().enumerate() {
+        let point = decode_vertex(row).map_err(|error| {
+            AssetError(format!("PLY splat '{splat_path}' vertex {index}: {error}"))
+        })?;
+        splats.push(point);
+        // The file stores each channel's coefficients together.
+        let rest = &row.values[REST..REST + 3 * coefficients];
+        for k in 0..coefficients {
+            sh_rest.extend((0..3).map(|channel| rest[channel * coefficients + k]));
+        }
+    }
+    Ok(SplatData {
+        splats,
+        sh_degree,
+        sh_rest,
+    })
 }
 
-fn decode_vertex(vertex: &DefaultElement) -> Result<SplatPoint, AssetError> {
-    // Reject nonfinite data even in optional higher SH coefficients that the
-    // renderer does not currently consume.
-    for (name, property) in vertex {
-        let finite = match property {
+// Where each known property goes in a `RawVertex`.
+const X: usize = 0;
+const SCALE: usize = 3;
+const ROT: usize = 6;
+const OPACITY: usize = 10;
+const DC: usize = 11;
+const REST: usize = 14;
+const MAX_REST: usize = 45;
+const FIELDS: usize = REST + MAX_REST;
+
+/// Values for properties a file leaves out, before activation.
+const DEFAULTS: [f32; FIELDS] = {
+    let mut values = [0.0; FIELDS];
+    values[ROT] = 1.0;
+    values[DC] = 0.5;
+    values[DC + 1] = 0.5;
+    values[DC + 2] = 0.5;
+    values
+};
+
+fn field_index(name: &str) -> Option<usize> {
+    let index = match name {
+        "x" => X,
+        "y" => X + 1,
+        "z" => X + 2,
+        "scale_0" => SCALE,
+        "scale_1" => SCALE + 1,
+        "scale_2" => SCALE + 2,
+        "rot_0" => ROT,
+        "rot_1" => ROT + 1,
+        "rot_2" => ROT + 2,
+        "rot_3" => ROT + 3,
+        "opacity" => OPACITY,
+        "f_dc_0" => DC,
+        "f_dc_1" => DC + 1,
+        "f_dc_2" => DC + 2,
+        _ => {
+            let digits = name.strip_prefix("f_rest_")?;
+            let n: usize = digits.parse().ok()?;
+            // Only canonical names: "f_rest_01" is not coefficient 1.
+            if n >= MAX_REST || n.to_string() != digits {
+                return None;
+            }
+            REST + n
+        }
+    };
+    Some(index)
+}
+
+/// Check the vertex properties once, from the header: known properties
+/// must be floats and positions must be there. Returns the SH degree the
+/// `f_rest` coefficients make; a set that is not a whole 3DGS degree (a
+/// gap, another degree, a non-float value) is ignored, as before higher
+/// harmonics were rendered, so the splats keep their base colours.
+fn vertex_layout(element: &ply_rs::ply::ElementDef, splat_path: &str) -> Result<u32, String> {
+    let mut rest = Vec::new();
+    let mut regular = true;
+    for (name, property) in &element.properties {
+        let is_float = matches!(
+            property.data_type,
+            PropertyType::Scalar(ScalarType::Float | ScalarType::Double)
+        );
+        match field_index(name) {
+            Some(index) if index >= REST => {
+                regular &= is_float;
+                rest.push(index - REST);
+            }
+            Some(_) if !is_float => {
+                return Err(format!("property '{name}' must be float or double"));
+            }
+            Some(_) => {}
+            None => regular &= !name.starts_with("f_rest_"),
+        }
+    }
+    for name in ["x", "y", "z"] {
+        if !element.properties.contains_key(name) {
+            return Err(format!("missing property '{name}'"));
+        }
+    }
+    rest.sort_unstable();
+    let degree = (0..=MAX_SH_DEGREE)
+        .find(|&degree| rest.len() == 3 * sh_rest_coefficients(degree))
+        .filter(|_| regular && rest.iter().enumerate().all(|(i, &n)| i == n));
+    Ok(degree.unwrap_or_else(|| {
+        tracing::warn!(
+            "Splat '{splat_path}': its f_rest properties are not a whole 3DGS spherical-harmonics \
+             degree (0, 9, 24 or 45 floats from f_rest_0); drawing base colours only"
+        );
+        0
+    }))
+}
+
+/// One vertex's known properties, before activation.
+struct RawVertex {
+    values: [f32; FIELDS],
+    error: Option<String>,
+}
+
+impl PropertyAccess for RawVertex {
+    fn new() -> Self {
+        Self {
+            values: DEFAULTS,
+            error: None,
+        }
+    }
+
+    fn set_property(&mut self, name: String, property: Property) {
+        if self.error.is_some() {
+            return;
+        }
+        // Reject nonfinite data even in properties the renderer ignores.
+        let finite = match &property {
             Property::Float(value) => value.is_finite(),
             Property::Double(value) => value.is_finite(),
             Property::ListFloat(values) => values.iter().all(|value| value.is_finite()),
@@ -67,18 +219,40 @@ fn decode_vertex(vertex: &DefaultElement) -> Result<SplatPoint, AssetError> {
             _ => true,
         };
         if !finite {
-            return Err(AssetError(format!("property '{name}' is not finite")));
+            self.error = Some(format!("property '{name}' is not finite"));
+            return;
         }
+        let Some(index) = field_index(&name) else {
+            return;
+        };
+        let value = match property {
+            Property::Float(value) => value,
+            Property::Double(value) => value as f32,
+            // A non-float coefficient makes the header ignore the whole set.
+            _ if index >= REST => return,
+            _ => {
+                self.error = Some(format!("property '{name}' must be float or double"));
+                return;
+            }
+        };
+        if !value.is_finite() {
+            self.error = Some(format!("property '{name}' is not a finite f32"));
+            return;
+        }
+        self.values[index] = value;
     }
-    let position = [
-        float_property(vertex, "x", None)?,
-        float_property(vertex, "y", None)?,
-        float_property(vertex, "z", None)?,
-    ];
+}
+
+fn decode_vertex(row: &RawVertex) -> Result<SplatPoint, AssetError> {
+    if let Some(error) = &row.error {
+        return Err(AssetError(error.clone()));
+    }
+    let values = &row.values;
+    let position = [values[X], values[X + 1], values[X + 2]];
     let scale = [
-        float_property(vertex, "scale_0", Some(0.0))?.exp(),
-        float_property(vertex, "scale_1", Some(0.0))?.exp(),
-        float_property(vertex, "scale_2", Some(0.0))?.exp(),
+        values[SCALE].exp(),
+        values[SCALE + 1].exp(),
+        values[SCALE + 2].exp(),
     ];
     if scale
         .iter()
@@ -89,10 +263,10 @@ fn decode_vertex(vertex: &DefaultElement) -> Result<SplatPoint, AssetError> {
         ));
     }
     let mut rotation = [
-        float_property(vertex, "rot_0", Some(1.0))?,
-        float_property(vertex, "rot_1", Some(0.0))?,
-        float_property(vertex, "rot_2", Some(0.0))?,
-        float_property(vertex, "rot_3", Some(0.0))?,
+        values[ROT],
+        values[ROT + 1],
+        values[ROT + 2],
+        values[ROT + 3],
     ];
     // Scale first so finite, very large quaternions cannot overflow their norm.
     let largest = rotation.iter().map(|value| value.abs()).fold(0.0, f32::max);
@@ -106,11 +280,11 @@ fn decode_vertex(vertex: &DefaultElement) -> Result<SplatPoint, AssetError> {
         .sum::<f32>()
         .sqrt();
     rotation.iter_mut().for_each(|value| *value /= length);
-    let opacity = sigmoid(float_property(vertex, "opacity", Some(0.0))?);
+    let opacity = sigmoid(values[OPACITY]);
     let sh_dc = [
-        sh_dc_to_color(float_property(vertex, "f_dc_0", Some(0.5))?),
-        sh_dc_to_color(float_property(vertex, "f_dc_1", Some(0.5))?),
-        sh_dc_to_color(float_property(vertex, "f_dc_2", Some(0.5))?),
+        sh_dc_to_color(values[DC]),
+        sh_dc_to_color(values[DC + 1]),
+        sh_dc_to_color(values[DC + 2]),
     ];
     Ok(SplatPoint {
         position,
@@ -121,35 +295,14 @@ fn decode_vertex(vertex: &DefaultElement) -> Result<SplatPoint, AssetError> {
     })
 }
 
-fn float_property(
-    vertex: &DefaultElement,
-    name: &str,
-    default: Option<f32>,
-) -> Result<f32, AssetError> {
-    let value = match vertex.get(name) {
-        Some(Property::Float(value)) => *value,
-        Some(Property::Double(value)) => *value as f32,
-        Some(_) => {
-            return Err(AssetError(format!(
-                "property '{name}' must be float or double"
-            )))
-        }
-        None => return default.ok_or_else(|| AssetError(format!("missing property '{name}'"))),
-    };
-    if !value.is_finite() {
-        return Err(AssetError(format!("property '{name}' is not a finite f32")));
-    }
-    Ok(value)
-}
-
 /// Sigmoid activation: 1 / (1 + exp(-x)).
 fn sigmoid(value: f32) -> f32 {
     1.0 / (1.0 + (-value).exp())
 }
 
-/// SH DC coefficient to linear color (Y_0^0 normalization).
+/// SH DC coefficient to linear color (Y_0^0 normalization), unclamped.
 fn sh_dc_to_color(value: f32) -> f32 {
-    (value * 0.28209479 + 0.5).clamp(0.0, 1.0)
+    value * 0.28209479 + 0.5
 }
 
 /// Create a galaxy/nebula spiral procedural splat cloud.
@@ -238,7 +391,11 @@ fn create_procedural_splats() -> SplatData {
     let count = gpu_data.len();
     assert_eq!(count, total);
 
-    SplatData { splats: gpu_data }
+    SplatData {
+        splats: gpu_data,
+        sh_degree: 0,
+        sh_rest: Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -334,6 +491,78 @@ mod tests {
             project.write(source);
             assert!(load_splat(&project.0, "cloud.ply").is_err());
         }
+    }
+
+    fn rest_properties(count: usize) -> String {
+        (0..count)
+            .map(|i| format!("property float f_rest_{i}\n"))
+            .collect()
+    }
+
+    /// The file keeps each channel's coefficients together; `sh_rest`
+    /// keeps each coefficient's (r, g, b) together.
+    #[test]
+    fn higher_spherical_harmonics_are_read_per_coefficient() {
+        let project = Project::new();
+        for degree in 1..=MAX_SH_DEGREE {
+            let n = sh_rest_coefficients(degree);
+            // Channel c, coefficient k is stored at c * n + k as 100c + k.
+            let values: Vec<String> = (0..3)
+                .flat_map(|c| (0..n).map(move |k| (100 * c + k).to_string()))
+                .collect();
+            project.write(ply(
+                &format!("property float f_dc_0\n{}", rest_properties(3 * n)),
+                &format!("1 2 3 10 {}", values.join(" ")),
+            ));
+            let data = load_splat(&project.0, "cloud.ply").unwrap();
+            assert_eq!(data.sh_degree, degree);
+            let expected: Vec<f32> = (0..n)
+                .flat_map(|k| (0..3).map(move |c| (100 * c + k) as f32))
+                .collect();
+            assert_eq!(data.sh_rest, expected, "degree {degree}");
+            // The base colour is left unclamped for the higher bands.
+            assert!(data.splats[0].sh_dc[0] > 3.0);
+        }
+        project.write(ply("", "1 2 3"));
+        let data = load_splat(&project.0, "cloud.ply").unwrap();
+        assert_eq!((data.sh_degree, data.sh_rest.len()), (0, 0));
+    }
+
+    /// Coefficients that do not make a whole degree are ignored, as before
+    /// higher harmonics were rendered: the splat keeps its base colour.
+    #[test]
+    fn irregular_spherical_harmonics_fall_back_to_the_base_colour() {
+        let project = Project::new();
+        let mut gap = rest_properties(8);
+        gap.push_str("property float f_rest_9\n");
+        for properties in [
+            rest_properties(3),
+            gap,
+            rest_properties(72),
+            "property float f_rest_01\n".to_string(),
+            format!("{}property uchar f_rest_8\n", rest_properties(8)),
+        ] {
+            let count = properties.lines().count();
+            project.write(ply(&properties, &format!("1 2 3{}", " 0".repeat(count))));
+            let data = load_splat(&project.0, "cloud.ply").unwrap();
+            assert_eq!((data.sh_degree, data.sh_rest.len()), (0, 0), "{properties}");
+            assert_eq!(data.splats[0].position, [1.0, 2.0, 3.0]);
+        }
+        // Nonfinite values are still rejected, used or not.
+        project.write(ply(&rest_properties(3), "1 2 3 0 nan 0"));
+        assert!(load_splat(&project.0, "cloud.ply").is_err());
+    }
+
+    #[test]
+    fn elements_before_the_vertices_are_read_past() {
+        let project = Project::new();
+        project.write(
+            "ply\nformat ascii 1.0\nelement camera 2\nproperty float fx\nproperty list uchar int ids\n\
+             element vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n\
+             1.5 2 7 8\n2.5 1 9\n4 5 6\n",
+        );
+        let data = load_splat(&project.0, "cloud.ply").unwrap();
+        assert_eq!(data.splats[0].position, [4.0, 5.0, 6.0]);
     }
 
     #[test]

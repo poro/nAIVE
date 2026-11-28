@@ -284,7 +284,9 @@ pub async fn init_gpu(window: Arc<Window>, initial_wgsl: &str) -> GpuState {
             label: Some("nAIVE Device"),
             // Timestamps for the GPU timer, where the adapter has them.
             required_features: adapter.features() & crate::gpu_timer::FEATURES,
-            required_limits: wgpu::Limits::default(),
+            // Trained splat captures run to millions of splats, more than
+            // the default 128 MiB storage binding holds.
+            required_limits: large_buffer_limits(&adapter.limits()),
             memory_hints: wgpu::MemoryHints::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             trace: wgpu::Trace::Off,
@@ -636,5 +638,15 @@ pub fn render_scene_to_view(
                 .set_index_buffer(gpu_mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu_mesh.index_count, 0, 0..1);
         }
+    }
+}
+
+/// The default limits, with buffers and storage bindings as large as the
+/// adapter allows.
+pub fn large_buffer_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
+    wgpu::Limits {
+        max_buffer_size: adapter.max_buffer_size,
+        max_storage_buffer_binding_size: adapter.max_storage_buffer_binding_size,
+        ..wgpu::Limits::default()
     }
 }

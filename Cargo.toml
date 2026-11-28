@@ -29,6 +29,7 @@ rust-version = "1.88"
 [workspace.dependencies]
 # Math
 glam = "0.34"
+half = "2"
 
 # ECS
 hecs = "0.11"

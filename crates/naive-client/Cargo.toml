@@ -16,6 +16,7 @@ naive-core = { workspace = true }
 
 # GPU rendering
 wgpu = { workspace = true }
+half = { workspace = true }
 winit = { workspace = true }
 
 # SLANG shader compilation (optional)

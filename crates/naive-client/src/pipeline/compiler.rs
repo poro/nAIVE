@@ -548,9 +548,9 @@ fn create_splat_pipeline(
         source: wgpu::ShaderSource::Wgsl(wgsl_source.into()),
     });
 
-    // Group 1: splat data, sorted indices and the entity's instance
-    // uniforms (world matrix), bound per entity at render time. A project
-    // splat shader may leave out binding 2.
+    // Group 1: splat data, sorted indices, the entity's instance uniforms
+    // (world matrix) and its splats' colours for this view, bound per entity
+    // at render time. A project splat shader may leave out bindings 2 and 3.
     let splat_data_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Splat Data Bind Group Layout"),
         entries: &[
@@ -579,6 +579,16 @@ fn create_splat_pipeline(
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },

@@ -3,7 +3,8 @@
 //! Loads .ply files in standard 3DGS format (position, scale, rotation,
 //! opacity, spherical harmonics) and uploads them to GPU storage buffers.
 //! Every frame each splat entity's splats are sorted back to front on the GPU
-//! (`sort`) for correct alpha blending.
+//! (`sort`) for correct alpha blending; the same pass works out each splat's
+//! view-dependent colour from its spherical harmonics.
 
 pub mod sort;
 
@@ -29,6 +30,7 @@ pub struct GaussianSplatGpu {
     pub _pad0: f32,
     /// Quaternion in 3DGS order: w, x, y, z.
     pub rotation: [f32; 4],
+    /// Base colour, `0.5 + C0 * f_dc`, unclamped.
     pub sh_dc: [f32; 3],
     pub _pad1: f32,
 }
@@ -37,8 +39,39 @@ pub struct GaussianSplatGpu {
 pub struct GpuSplat {
     /// Storage buffer containing all splat data.
     pub splat_buffer: wgpu::Buffer,
+    /// Higher-band spherical harmonics as pairs of half floats
+    /// ([`sh_words_per_splat`] words per splat); a placeholder at degree 0.
+    pub sh_buffer: wgpu::Buffer,
+    /// Spherical-harmonics degree, 0 to 3.
+    pub sh_degree: u32,
     /// Number of splats in this cloud.
     pub splat_count: u32,
+}
+
+/// `u32` words of packed half-float SH coefficients per splat at `degree`.
+pub fn sh_words_per_splat(degree: u32) -> usize {
+    (3 * naive_sim::assets::sh_rest_coefficients(degree)).div_ceil(2)
+}
+
+/// Pack each splat's higher-band coefficients as half floats, two to a word,
+/// the first in the low 16 bits. Values beyond the half-float range are
+/// clamped to it.
+pub fn pack_sh(sh_rest: &[f32], degree: u32, count: usize) -> Vec<u32> {
+    let per_splat = 3 * naive_sim::assets::sh_rest_coefficients(degree);
+    let words = sh_words_per_splat(degree);
+    let mut packed = vec![0u32; count * words];
+    for (splat, coefficients) in sh_rest
+        .chunks_exact(per_splat.max(1))
+        .enumerate()
+        .take(count)
+    {
+        for (j, value) in coefficients.iter().enumerate() {
+            let value = value.clamp(-65504.0, 65504.0);
+            let bits = u32::from(half::f16::from_f32(value).to_bits());
+            packed[splat * words + j / 2] |= bits << (16 * (j % 2));
+        }
+    }
+    packed
 }
 
 /// Cache of loaded splat clouds, keyed by file path, and each splat entity's
@@ -75,12 +108,13 @@ impl SplatCache {
         }
 
         let data = naive_sim::assets::load_splat(project_root, splat_path)?;
-        let gpu_splat = upload_splat(device, splat_path, data);
+        let gpu_splat = upload_splat(device, splat_path, data)?;
         let handle = SplatHandle(self.splats.len());
         tracing::info!(
-            "Loaded splat: {} ({} gaussians)",
+            "Loaded splat: {} ({} gaussians, spherical harmonics degree {})",
             splat_path,
-            gpu_splat.splat_count
+            gpu_splat.splat_count,
+            gpu_splat.sh_degree
         );
         self.splats.push(gpu_splat);
         self.path_to_handle.insert(key, handle);
@@ -185,13 +219,39 @@ impl Default for SplatCache {
     }
 }
 
-/// Upload shared, already validated splat data to a GPU storage buffer.
+/// Upload shared, already validated splat data to GPU storage buffers.
+/// A cloud too large for this GPU's buffers is an error, not a crash.
 fn upload_splat(
     device: &wgpu::Device,
     splat_path: &str,
     data: naive_sim::assets::SplatData,
-) -> GpuSplat {
+) -> Result<GpuSplat, SplatError> {
     let count = data.splats.len() as u32;
+    let sh_degree = data.sh_degree;
+    let limits = device.limits();
+    let largest = limits
+        .max_storage_buffer_binding_size
+        .min(limits.max_buffer_size);
+    let splat_bytes = data.splats.len() as u64 * std::mem::size_of::<GaussianSplatGpu>() as u64;
+    let sh_bytes = data.splats.len() as u64 * sh_words_per_splat(sh_degree) as u64 * 4;
+    // The sort's colour buffer: one vec4<f32> per splat.
+    let colour_bytes = data.splats.len() as u64 * 16;
+    if splat_bytes.max(sh_bytes).max(colour_bytes) > largest {
+        return Err(SplatError(format!(
+            "Splat '{splat_path}' has {count} splats, more than this GPU's {} MiB buffers hold",
+            largest >> 20
+        )));
+    }
+    let sh_words = if sh_degree == 0 {
+        vec![0u32; 4]
+    } else {
+        pack_sh(&data.sh_rest, sh_degree, data.splats.len())
+    };
+    let sh_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(&format!("Splat SH: {splat_path}")),
+        contents: bytemuck::cast_slice(&sh_words),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let gpu_data: Vec<_> = data
         .splats
         .into_iter()
@@ -210,10 +270,12 @@ fn upload_splat(
         contents: bytemuck::cast_slice(&gpu_data),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     });
-    GpuSplat {
+    Ok(GpuSplat {
         splat_buffer,
+        sh_buffer,
+        sh_degree,
         splat_count: count,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -228,5 +290,28 @@ mod tests {
     #[test]
     fn test_gpu_splat_size() {
         assert_eq!(std::mem::size_of::<GaussianSplatGpu>(), 64);
+    }
+
+    #[test]
+    fn sh_coefficients_pack_two_half_floats_to_a_word() {
+        assert_eq!(
+            [1, 2, 3].map(sh_words_per_splat),
+            [5, 12, 23],
+            "9, 24 and 45 halves"
+        );
+        // Two splats at degree 1: nine coefficients each, the last word half
+        // empty.
+        let rest: Vec<f32> = (0..18).map(|i| i as f32 * 0.5).collect();
+        let packed = pack_sh(&rest, 1, 2);
+        assert_eq!(packed.len(), 10);
+        let half = |bits: u32| half::f16::from_bits(bits as u16).to_f32();
+        for splat in 0..2 {
+            for j in 0..9 {
+                let word = packed[splat * 5 + j / 2];
+                let value = half(word >> (16 * (j % 2)) & 0xFFFF);
+                assert_eq!(value, rest[splat * 9 + j], "splat {splat} value {j}");
+            }
+            assert_eq!(packed[splat * 5 + 4] >> 16, 0);
+        }
     }
 }
