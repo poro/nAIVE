@@ -335,7 +335,9 @@ impl SplatSorter {
             let (pipeline, groups) = match step {
                 SortPass::Keys => (&self.keys, instance.clusters),
                 SortPass::Size => (&self.size, 1),
-                SortPass::Pad => (&self.pad, instance.padded / WORKGROUP),
+                // Two pairs per invocation, so a sort of 2^24 pairs still
+                // fits in a dispatch.
+                SortPass::Pad => (&self.pad, instance.padded / BLOCK),
                 SortPass::LocalSort => (&self.local_sort, instance.padded / BLOCK),
                 SortPass::GlobalStep { .. } => (&self.global_step, instance.padded / BLOCK),
                 SortPass::LocalMerge { .. } => (&self.local_merge, instance.padded / BLOCK),
@@ -670,10 +672,11 @@ fn size_sort() {
 
 @compute @workgroup_size(256)
 fn pad(@builtin(global_invocation_id) id: vec3<u32>) {
-    let i = id.x;
-    if i >= state.sorted_count && i < state.sorted_len {
-        keys[i] = 0xFFFFFFFFu;
-        values[i] = i;
+    for (var i = 2u * id.x; i < 2u * id.x + 2u; i++) {
+        if i >= state.sorted_count && i < state.sorted_len {
+            keys[i] = 0xFFFFFFFFu;
+            values[i] = i;
+        }
     }
 }
 
