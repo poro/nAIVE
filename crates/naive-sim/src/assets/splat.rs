@@ -1,9 +1,12 @@
 //! GPU-free Gaussian splat decoding in the standard 3DGS PLY format.
 
+use std::io::Read;
 use std::path::Path;
 
 use ply_rs::parser::Parser;
-use ply_rs::ply::{DefaultElement, Property, PropertyAccess, PropertyType, ScalarType};
+use ply_rs::ply::{
+    DefaultElement, ElementDef, Encoding, Property, PropertyAccess, PropertyType, ScalarType,
+};
 
 use super::AssetError;
 
@@ -55,17 +58,30 @@ pub fn load_splat(project_root: &Path, splat_path: &str) -> Result<SplatData, As
         .read_header(&mut reader)
         .map_err(invalid)?;
 
-    // Each vertex is read straight into a fixed-size row. A map per vertex
-    // took about 8 GB for a million degree-3 splats.
-    let mut rows = None;
+    let mut decoded = None;
     for (name, element) in &header.elements {
         if name == "vertex" {
             let sh_degree = vertex_layout(element, splat_path)
                 .map_err(|error| AssetError(format!("PLY splat '{splat_path}': {error}")))?;
-            let read = Parser::<RawVertex>::new()
-                .read_payload_for_element(&mut reader, element, &header)
-                .map_err(invalid)?;
-            rows = Some((read, sh_degree));
+            let mut decoder = Decoder::new(splat_path, sh_degree, element.count);
+            if header.encoding == Encoding::BinaryLittleEndian && all_f32(element) {
+                read_f32_rows(&mut reader, element, |row| decoder.push(row)).map_err(|error| {
+                    match error {
+                        RowError::Io(error) => invalid(error),
+                        RowError::Decode(error) => error,
+                    }
+                })?;
+            } else {
+                // Each vertex is read straight into a fixed-size row. A map
+                // per vertex took about 8 GB for a million degree-3 splats.
+                let rows = Parser::<RawVertex>::new()
+                    .read_payload_for_element(&mut reader, element, &header)
+                    .map_err(invalid)?;
+                for row in &rows {
+                    decoder.push(row)?;
+                }
+            }
+            decoded = Some(decoder.finish(element)?);
             break;
         }
         // Elements before the vertices still have to be read past.
@@ -73,31 +89,175 @@ pub fn load_splat(project_root: &Path, splat_path: &str) -> Result<SplatData, As
             .read_payload_for_element(&mut reader, element, &header)
             .map_err(invalid)?;
     }
-    let (rows, sh_degree) = rows
-        .filter(|(rows, _)| !rows.is_empty())
-        .ok_or_else(|| AssetError(format!("PLY splat '{splat_path}' contains no vertices")))?;
-    u32::try_from(rows.len())
-        .map_err(|_| AssetError(format!("PLY splat '{splat_path}' has too many vertices")))?;
+    decoded
+        .filter(|data| !data.splats.is_empty())
+        .ok_or_else(|| AssetError(format!("PLY splat '{splat_path}' contains no vertices")))
+}
 
-    let coefficients = sh_rest_coefficients(sh_degree);
-    let mut splats = Vec::with_capacity(rows.len());
-    let mut sh_rest = Vec::with_capacity(rows.len() * 3 * coefficients);
-    for (index, row) in rows.iter().enumerate() {
-        let point = decode_vertex(row).map_err(|error| {
-            AssetError(format!("PLY splat '{splat_path}' vertex {index}: {error}"))
-        })?;
-        splats.push(point);
-        // The file stores each channel's coefficients together.
-        let rest = &row.values[REST..REST + 3 * coefficients];
-        for k in 0..coefficients {
-            sh_rest.extend((0..3).map(|channel| rest[channel * coefficients + k]));
+/// A cloud this large whose opacities all lie in [0, 1] and whose scales
+/// are all non-negative stores them as they are, not as logits and logs.
+/// Trainers store logits and logs, so in their files many opacities are
+/// negative and nearly every scale is, and read that way such a file would
+/// make every splat between 50% and 73% opaque and at least a unit wide.
+/// Some exporters write the values already activated.
+pub const LINEAR_CHECK_MIN_SPLATS: usize = 1000;
+
+/// Turns raw vertex rows into splats as they are read.
+struct Decoder<'a> {
+    splat_path: &'a str,
+    coefficients: usize,
+    splats: Vec<SplatPoint>,
+    sh_rest: Vec<f32>,
+    /// Whether every opacity so far is in [0, 1] and every scale is
+    /// non-negative, as stored.
+    stored_linear: bool,
+}
+
+impl<'a> Decoder<'a> {
+    fn new(splat_path: &'a str, sh_degree: u32, count: usize) -> Self {
+        let coefficients = sh_rest_coefficients(sh_degree);
+        // Capacity from the header, but not more than a bad header can
+        // make us allocate before the rows show up.
+        let count = count.min(1 << 20);
+        Self {
+            splat_path,
+            coefficients,
+            splats: Vec::with_capacity(count),
+            sh_rest: Vec::with_capacity(count * 3 * coefficients),
+            stored_linear: true,
         }
     }
-    Ok(SplatData {
-        splats,
-        sh_degree,
-        sh_rest,
-    })
+
+    fn push(&mut self, row: &RawVertex) -> Result<(), AssetError> {
+        let index = self.splats.len();
+        let point = decode_vertex(row).map_err(|error| {
+            AssetError(format!(
+                "PLY splat '{}' vertex {index}: {error}",
+                self.splat_path
+            ))
+        })?;
+        self.stored_linear &=
+            (0.0..=1.0).contains(&point.opacity) && point.scale.iter().all(|&scale| scale >= 0.0);
+        self.splats.push(point);
+        // The file stores each channel's coefficients together.
+        let n = self.coefficients;
+        let rest = &row.values[REST..REST + 3 * n];
+        for k in 0..n {
+            self.sh_rest
+                .extend((0..3).map(|channel| rest[channel * n + k]));
+        }
+        Ok(())
+    }
+
+    /// Activate opacity and scale, as logits and logs or, for a file that
+    /// stores them linear, as they are.
+    fn finish(mut self, element: &ElementDef) -> Result<SplatData, AssetError> {
+        u32::try_from(self.splats.len()).map_err(|_| {
+            AssetError(format!(
+                "PLY splat '{}' has too many vertices",
+                self.splat_path
+            ))
+        })?;
+        let stores_both = ["opacity", "scale_0", "scale_1", "scale_2"]
+            .iter()
+            .all(|name| element.properties.contains_key(*name));
+        let linear =
+            self.stored_linear && stores_both && self.splats.len() >= LINEAR_CHECK_MIN_SPLATS;
+        if linear {
+            tracing::info!(
+                "Splat '{}' stores opacity and scale linear (every opacity in [0, 1], no \
+                 negative scale), not as logits and logs; reading them as stored",
+                self.splat_path
+            );
+        }
+        for (index, point) in self.splats.iter_mut().enumerate() {
+            if !linear {
+                point.opacity = sigmoid(point.opacity);
+                point.scale = point.scale.map(f32::exp);
+                if point
+                    .scale
+                    .iter()
+                    .any(|value| !value.is_finite() || *value <= 0.0)
+                {
+                    return Err(AssetError(format!(
+                        "PLY splat '{}' vertex {index}: activated scale must be finite and \
+                         positive",
+                        self.splat_path
+                    )));
+                }
+            }
+        }
+        Ok(SplatData {
+            splats: self.splats,
+            sh_degree: sh_rest_coefficients_degree(self.coefficients),
+            sh_rest: self.sh_rest,
+        })
+    }
+}
+
+/// The degree whose higher bands have `coefficients` per channel.
+fn sh_rest_coefficients_degree(coefficients: usize) -> u32 {
+    (0..=MAX_SH_DEGREE)
+        .find(|&degree| sh_rest_coefficients(degree) == coefficients)
+        .unwrap_or(0)
+}
+
+/// Whether every property of `element` is a 32-bit float, so its rows can
+/// be read straight from the file.
+fn all_f32(element: &ElementDef) -> bool {
+    element
+        .properties
+        .values()
+        .all(|property| property.data_type == PropertyType::Scalar(ScalarType::Float))
+}
+
+enum RowError {
+    Io(std::io::Error),
+    Decode(AssetError),
+}
+
+/// Read `element`'s rows of little-endian 32-bit floats straight from the
+/// file, a few megabytes at a time, checking each value as
+/// [`RawVertex::set_property`] does. ply-rs hands over one property at a
+/// time, which took 23 s for a 10.8M-splat capture; this takes about two.
+fn read_f32_rows(
+    reader: &mut impl Read,
+    element: &ElementDef,
+    mut each: impl FnMut(&RawVertex) -> Result<(), AssetError>,
+) -> Result<(), RowError> {
+    let columns: Vec<(&str, Option<usize>)> = element
+        .properties
+        .keys()
+        .map(|name| (name.as_str(), field_index(name)))
+        .collect();
+    let stride = columns.len() * 4;
+    if stride == 0 {
+        return Ok(());
+    }
+    let chunk_rows = ((4 << 20) / stride).max(1);
+    let mut buffer = vec![0u8; chunk_rows * stride];
+    let mut left = element.count;
+    while left > 0 {
+        let rows = chunk_rows.min(left);
+        let bytes = &mut buffer[..rows * stride];
+        reader.read_exact(bytes).map_err(RowError::Io)?;
+        for row_bytes in bytes.chunks_exact(stride) {
+            let mut row = RawVertex::new();
+            for (&(name, field), value) in columns.iter().zip(row_bytes.as_chunks::<4>().0) {
+                let value = f32::from_le_bytes(*value);
+                if !value.is_finite() {
+                    row.error = Some(format!("property '{name}' is not finite"));
+                    break;
+                }
+                if let Some(index) = field {
+                    row.values[index] = value;
+                }
+            }
+            each(&row).map_err(RowError::Decode)?;
+        }
+        left -= rows;
+    }
+    Ok(())
 }
 
 // Where each known property goes in a `RawVertex`.
@@ -243,25 +403,15 @@ impl PropertyAccess for RawVertex {
     }
 }
 
+/// One vertex as a splat, its opacity and scale still as stored:
+/// [`Decoder::finish`] activates them once it knows how they are stored.
 fn decode_vertex(row: &RawVertex) -> Result<SplatPoint, AssetError> {
     if let Some(error) = &row.error {
         return Err(AssetError(error.clone()));
     }
     let values = &row.values;
     let position = [values[X], values[X + 1], values[X + 2]];
-    let scale = [
-        values[SCALE].exp(),
-        values[SCALE + 1].exp(),
-        values[SCALE + 2].exp(),
-    ];
-    if scale
-        .iter()
-        .any(|value| !value.is_finite() || *value <= 0.0)
-    {
-        return Err(AssetError(
-            "activated scale must be finite and positive".into(),
-        ));
-    }
+    let scale = [values[SCALE], values[SCALE + 1], values[SCALE + 2]];
     let mut rotation = [
         values[ROT],
         values[ROT + 1],
@@ -280,7 +430,7 @@ fn decode_vertex(row: &RawVertex) -> Result<SplatPoint, AssetError> {
         .sum::<f32>()
         .sqrt();
     rotation.iter_mut().for_each(|value| *value /= length);
-    let opacity = sigmoid(values[OPACITY]);
+    let opacity = values[OPACITY];
     let sh_dc = [
         sh_dc_to_color(values[DC]),
         sh_dc_to_color(values[DC + 1]),
@@ -563,6 +713,153 @@ mod tests {
         );
         let data = load_splat(&project.0, "cloud.ply").unwrap();
         assert_eq!(data.splats[0].position, [4.0, 5.0, 6.0]);
+    }
+
+    /// A binary little-endian PLY of 32-bit floats, `rows` under `names`.
+    fn binary_ply(names: &[String], rows: &[Vec<f32>]) -> Vec<u8> {
+        let mut bytes = format!(
+            "ply\nformat binary_little_endian 1.0\nelement vertex {}\n",
+            rows.len()
+        )
+        .into_bytes();
+        for name in names {
+            bytes.extend(format!("property float {name}\n").bytes());
+        }
+        bytes.extend(b"end_header\n");
+        for value in rows.iter().flatten() {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// The properties a degree-2 capture with normals has, in a trainer's
+    /// order.
+    fn capture_properties() -> Vec<String> {
+        [
+            "x", "y", "z", "nx", "ny", "nz", "f_dc_0", "f_dc_1", "f_dc_2",
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .chain((0..24).map(|i| format!("f_rest_{i}")))
+        .chain(
+            [
+                "opacity", "scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3",
+            ]
+            .iter()
+            .map(|name| name.to_string()),
+        )
+        .collect()
+    }
+
+    /// Rows of exact binary fractions, so ASCII holds them exactly too.
+    fn capture_rows(count: usize) -> Vec<Vec<f32>> {
+        (0..count)
+            .map(|i| {
+                (0..capture_properties().len())
+                    .map(|j| ((i * 7 + j * 3) % 23) as f32 * 0.125 - 1.5)
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Rows of 32-bit floats are read straight from the file; the result is
+    /// what ply-rs makes of the same rows written as text.
+    #[test]
+    fn binary_float_rows_read_like_ascii_ones() {
+        let project = Project::new();
+        let names = capture_properties();
+        let rows = capture_rows(300);
+        project.write(binary_ply(&names, &rows));
+        let binary = load_splat(&project.0, "cloud.ply").unwrap();
+        assert_eq!((binary.splats.len(), binary.sh_degree), (300, 2));
+
+        let mut ascii = format!("ply\nformat ascii 1.0\nelement vertex {}\n", rows.len());
+        for name in &names {
+            ascii.push_str(&format!("property float {name}\n"));
+        }
+        ascii.push_str("end_header\n");
+        for row in &rows {
+            let values: Vec<String> = row.iter().map(|value| value.to_string()).collect();
+            ascii.push_str(&(values.join(" ") + "\n"));
+        }
+        project.write(ascii);
+        assert_eq!(load_splat(&project.0, "cloud.ply").unwrap(), binary);
+    }
+
+    #[test]
+    fn binary_float_rows_reject_nonfinite_values_and_short_files() {
+        let project = Project::new();
+        let names = capture_properties();
+        let mut rows = capture_rows(10);
+        // A property the renderer ignores is checked too.
+        rows[7][3] = f32::NAN;
+        project.write(binary_ply(&names, &rows));
+        let error = load_splat(&project.0, "cloud.ply").unwrap_err().0;
+        assert!(
+            error.contains("vertex 7") && error.contains("'nx'"),
+            "{error}"
+        );
+
+        let mut short = binary_ply(&names, &capture_rows(10));
+        short.truncate(short.len() - 5);
+        project.write(short);
+        assert!(load_splat(&project.0, "cloud.ply").is_err());
+    }
+
+    #[test]
+    fn binary_elements_before_the_vertices_are_read_past() {
+        let project = Project::new();
+        let mut bytes =
+            b"ply\nformat binary_little_endian 1.0\nelement camera 2\nproperty float fx\n\
+            element vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n"
+                .to_vec();
+        for value in [500.0f32, 600.0, 4.0, 5.0, 6.0] {
+            bytes.extend(value.to_le_bytes());
+        }
+        project.write(bytes);
+        let data = load_splat(&project.0, "cloud.ply").unwrap();
+        assert_eq!(data.splats[0].position, [4.0, 5.0, 6.0]);
+    }
+
+    /// Some exporters store opacity and scale already activated. A large
+    /// cloud whose every opacity is in [0, 1] and every scale non-negative is
+    /// read as stored; one value outside that, a smaller cloud, or a file
+    /// without both properties is read as logits and logs.
+    #[test]
+    fn linear_opacity_and_scale_are_read_as_stored() {
+        let project = Project::new();
+        let names: Vec<String> = ["x", "y", "z", "opacity", "scale_0", "scale_1", "scale_2"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let row = |i: usize| vec![i as f32, 0.0, 0.0, 0.25, 0.01, 0.0, 0.5];
+        let rows: Vec<Vec<f32>> = (0..LINEAR_CHECK_MIN_SPLATS).map(row).collect();
+
+        project.write(binary_ply(&names, &rows));
+        let point = load_splat(&project.0, "cloud.ply").unwrap().splats[3].clone();
+        assert_eq!((point.opacity, point.scale), (0.25, [0.01, 0.0, 0.5]));
+
+        let standard = |point: &SplatPoint| {
+            (point.opacity - sigmoid(0.25)).abs() < 1e-6
+                && (point.scale[0] - 0.01f32.exp()).abs() < 1e-6
+        };
+        let mut negative = rows.clone();
+        negative[500][5] = -0.1;
+        project.write(binary_ply(&names, &negative));
+        assert!(standard(
+            &load_splat(&project.0, "cloud.ply").unwrap().splats[3]
+        ));
+
+        project.write(binary_ply(&names, &rows[1..]));
+        assert!(standard(
+            &load_splat(&project.0, "cloud.ply").unwrap().splats[3]
+        ));
+
+        let without_scale: Vec<Vec<f32>> = rows.iter().map(|row| row[..4].to_vec()).collect();
+        project.write(binary_ply(&names[..4], &without_scale));
+        let point = load_splat(&project.0, "cloud.ply").unwrap().splats[3].clone();
+        assert_eq!(point.scale, [1.0; 3]);
+        assert!((point.opacity - sigmoid(0.25)).abs() < 1e-6);
     }
 
     #[test]
