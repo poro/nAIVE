@@ -2103,12 +2103,13 @@ impl Engine {
             draw_pool.ensure_capacity(&gpu.device, visible_count);
         }
 
-        // Sort splats back to front on the GPU for correct alpha blending.
-        // Hidden splat entities get no sort state, so they are not drawn.
+        // Find the splats in view and sort them back to front on the GPU for
+        // correct alpha blending. Hidden splat entities get no sort state, so
+        // they are not drawn.
         if let (Some(gpu), Some(scene_world), Some(camera_state)) =
             (&self.gpu, &self.scene_world, &self.camera_state)
         {
-            let view_matrix = camera_state.borrow().view_matrix();
+            let camera = crate::splat::SplatCamera::from(&camera_state.borrow().uniform);
             let entities: Vec<_> = scene_world
                 .borrow()
                 .world
@@ -2123,7 +2124,7 @@ impl Engine {
             self.splat_cache.sort_splats(
                 &gpu.device,
                 &gpu.queue,
-                view_matrix,
+                camera,
                 &entities,
                 self.gpu_timer.as_ref(),
             );

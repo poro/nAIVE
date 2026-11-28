@@ -56,7 +56,7 @@ The development roadmap is organized into tiers, each validated by HAVOC — a 3
 | `renderer.rs` | GpuState, DrawUniformPool and instance buffer management |
 | `input` | Re-exported from `naive-sim`: InputState, nAIVE's own `Key` and `MouseButton`, bindings and synthetic injection; `engine/winit_input.rs` maps winit events onto it |
 | `ui.rs` | UiRenderer — text overlay, HUD and flash effects |
-| `splat.rs` | Gaussian Splatting loader, cache and per-entity GPU sort state; `splat/sort.rs` sorts each entity's splats back to front on the GPU |
+| `splat.rs` | Gaussian Splatting loader, cache and per-entity GPU sort state; `splat/cluster.rs` orders each cloud along a Morton curve into bounded clusters of 256 splats, and `splat/sort.rs` culls each entity's clusters and splats to the view, then sorts the rest back to front on the GPU |
 | `debug_draw.rs` | Wireframe physics collider visualization (toggle: H key) |
 | `font.rs` | BitmapFont — SDF text rendering |
 | `particles.rs` | ParticleSystem — CPU simulation and GPU billboard rendering |
@@ -137,7 +137,7 @@ Scene files (YAML) are deserialized with serde_yaml into `SceneDef` + `EntityDef
 1. **ECS Query** — Traverse all entities with Transform + MeshRenderer components.
 2. **Uniform Upload** — Write 256 bytes per entity (model matrix, normal matrix, material properties) to the DrawUniformPool. Buffer grows dynamically at 2× with no ceiling.
 3. **Forward PBR** — Main geometry pass with depth testing and backface culling.
-4. **Gaussian Splats** — Each splat's 3D covariance (entity transform, rotation, scale) is projected to a screen-space ellipse, as in 3D Gaussian Splatting, after a back-to-front sort on the GPU. The sort pass also evaluates each splat's spherical harmonics (degrees 0 to 3, stored as half floats) for the current view, so colour changes with viewing angle.
+4. **Gaussian Splats** — Each splat's 3D covariance (entity transform, rotation, scale) is projected to a screen-space ellipse, as in 3D Gaussian Splatting, after a back-to-front sort on the GPU. Before sorting, the GPU culls whole clusters of 256 nearby splats, then single splats, outside the view; the sort's workgroups past the kept splats stop at once and the draw takes its instance count from the GPU, so their cost follows the splats in view rather than the size of the cloud. The sort pass also evaluates each kept splat's spherical harmonics (degrees 0 to 3, stored as half floats) for the current view, so colour changes with viewing angle.
 5. **Debug Wireframe** — Physics collider visualization rendered as LineList topology. Color-coded by shape: box (cyan), sphere (green), capsule (yellow), trimesh (magenta), convex polyhedron (white). Toggled with H key. Has its own WGSL shader and wgpu RenderPipeline.
 6. **Particles** — CPU-simulated particles uploaded as GPU billboard quads with color interpolation.
 7. **UI Overlay** — Text rendering, line drawing, screen flash, and HUD elements.

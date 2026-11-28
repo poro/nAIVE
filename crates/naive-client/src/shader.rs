@@ -1015,6 +1015,7 @@ struct GaussianSplat {
 struct InstanceUniforms {
     model: mat4x4<f32>,
     view_model: mat4x4<f32>,
+    planes: array<vec4<f32>, 5>,
     camera_local: vec3<f32>,
     sh_degree: u32,
     count: u32,
