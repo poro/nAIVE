@@ -19,7 +19,9 @@ pub struct SplatPoint {
     /// Quaternion in 3DGS order: w, x, y, z.
     pub rotation: [f32; 4],
     /// Base colour, `0.5 + C0 * f_dc`. Not clamped: the renderer adds the
-    /// higher spherical-harmonics bands first, then clamps.
+    /// higher spherical-harmonics bands first, then clamps. An sRGB display
+    /// value, as 3DGS trains it against photographs; the renderer converts
+    /// it to linear light.
     pub sh_dc: [f32; 3],
 }
 
@@ -450,12 +452,26 @@ fn sigmoid(value: f32) -> f32 {
     1.0 / (1.0 + (-value).exp())
 }
 
-/// SH DC coefficient to linear color (Y_0^0 normalization), unclamped.
+/// SH DC coefficient to colour (Y_0^0 normalization), unclamped.
 fn sh_dc_to_color(value: f32) -> f32 {
     value * 0.28209479 + 0.5
 }
 
-/// Create a galaxy/nebula spiral procedural splat cloud.
+/// Clamps a linear colour to [0, 1] and encodes it as sRGB, as splat colours
+/// are stored (IEC 61966-2-1).
+fn linear_to_srgb(color: [f32; 3]) -> [f32; 3] {
+    color.map(|c| {
+        let c = c.clamp(0.0, 1.0);
+        if c <= 0.003_130_8 {
+            c * 12.92
+        } else {
+            1.055 * c.powf(1.0 / 2.4) - 0.055
+        }
+    })
+}
+
+/// Create a galaxy/nebula spiral procedural splat cloud. Its colours were
+/// chosen as linear light, and are stored as sRGB so it looks as designed.
 fn create_procedural_splats() -> SplatData {
     use std::f32::consts::PI;
 
@@ -507,7 +523,7 @@ fn create_procedural_splats() -> SplatData {
                 opacity,
                 scale: [scale_val, scale_val * 0.5, scale_val],
                 rotation: [1.0, 0.0, 0.0, 0.0],
-                sh_dc: [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)],
+                sh_dc: linear_to_srgb([r, g, b]),
             });
         }
     }
@@ -534,7 +550,7 @@ fn create_procedural_splats() -> SplatData {
             opacity: 0.5 + next_rand() * 0.3,
             scale: [0.06, 0.03, 0.06],
             rotation: [1.0, 0.0, 0.0, 0.0],
-            sh_dc: [r, g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)],
+            sh_dc: linear_to_srgb([r, g, b]),
         });
     }
 

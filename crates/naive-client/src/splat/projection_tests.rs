@@ -8,7 +8,8 @@
 //! finite differences of the camera's own matrices, the rotation comes from
 //! glam's quaternion, and each pixel's alpha is opacity · exp(-½ dᵀ Σ⁻¹ d)
 //! at its centre, with Σ the splat's covariance carried to the screen plus
-//! 0.3 px² of low-pass, as in 3DGS. Splats are composited farthest first.
+//! 0.3 px² of low-pass, as in 3DGS. Splats are composited farthest first,
+//! their sRGB colours converted to linear light.
 //!
 //! `cargo test -p naive-client --lib -- --ignored gpu_splat_projection`
 
@@ -105,7 +106,15 @@ fn reference(splats: &[SplatPoint], model: Mat4, camera: &CameraUniform) -> Imag
         .inverse();
 
         let at = pixel(centre);
-        let color = splat.sh_dc.map(|c| f64::from(c).clamp(0.0, 1.0));
+        // Stored as sRGB; composited as linear light.
+        let color = splat.sh_dc.map(|c| {
+            let c = f64::from(c).clamp(0.0, 1.0);
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        });
         for row in 0..HEIGHT {
             for column in 0..WIDTH {
                 let d = DVec2::new(f64::from(column) + 0.5, f64::from(row) + 0.5) - at;
