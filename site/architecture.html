@@ -306,7 +306,7 @@ sequenceDiagram
     F->>F: update_transforms()
     F->>E: swarm hook (GPU compute step)
 
-    E->>E: camera, sky, draw buffer, splat sort, UI intents
+    E->>E: camera, sky, draw buffer, splat cull and sort, UI intents
     E->>R: execute_pipeline_to_view()
     R->>R: Shadow, G-Buffer, Splat, Lighting, Bloom, Tonemap, FXAA
     E->>U: ui.render() [LoadOp::Load]
@@ -362,7 +362,7 @@ flowchart LR
     end
 
     subgraph Splat["Splat Pass (optional)"]
-        S1["Screen-space ellipses<br/>GPU-sorted back-to-front"]
+        S1["Screen-space ellipses<br/>culled by cluster, GPU-sorted back-to-front"]
         S2["2D Gaussian<br/>alpha blending"]
     end
 

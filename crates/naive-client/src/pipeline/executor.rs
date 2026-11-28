@@ -848,8 +848,9 @@ fn execute_splat_pass(
         render_pass.set_pipeline(&pass.pipeline);
         render_pass.set_bind_group(0, &camera_state.bind_group, &[]);
 
-        // Each splat entity draws its splats in the order this frame's sort
-        // gave it (`SplatCache::sort_splats`), with its own world matrix.
+        // Each splat entity draws the splats in view in the order this
+        // frame's sort gave it (`SplatCache::sort_splats`), with its own world
+        // matrix. The sort wrote how many.
         for (entity, splat) in scene_world
             .world
             .query::<(hecs::Entity, &GaussianSplat)>()
@@ -887,8 +888,8 @@ fn execute_splat_pass(
             });
 
             render_pass.set_bind_group(1, &splat_bind_group, &[]);
-            // 6 vertices per quad, N instances (one per splat)
-            render_pass.draw(0..6, 0..instance.count);
+            // 6 vertices per quad, one instance per splat in view.
+            instance.draw(&mut render_pass);
         }
     }
 }

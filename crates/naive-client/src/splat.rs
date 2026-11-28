@@ -2,10 +2,14 @@
 //!
 //! Loads .ply files in standard 3DGS format (position, scale, rotation,
 //! opacity, spherical harmonics) and uploads them to GPU storage buffers.
-//! Every frame each splat entity's splats are sorted back to front on the GPU
-//! (`sort`) for correct alpha blending; the same pass works out each splat's
-//! view-dependent colour from its spherical harmonics.
+//! The upload orders each cloud's splats along a Morton curve and bounds
+//! every run of [`cluster::CLUSTER`] of them with a sphere (`cluster`). Every
+//! frame each splat entity's splats in view are found, culling whole clusters
+//! where it can, and sorted back to front on the GPU (`sort`) for correct
+//! alpha blending; the same pass works out each splat's view-dependent colour
+//! from its spherical harmonics.
 
+pub mod cluster;
 pub mod sort;
 
 use std::collections::{HashMap, HashSet};
@@ -18,7 +22,7 @@ use crate::components::SplatHandle;
 use crate::gpu_timer::GpuTimer;
 
 pub use naive_sim::assets::AssetError as SplatError;
-pub use sort::SplatInstance;
+pub use sort::{SplatCamera, SplatInstance};
 
 /// GPU-side splat data. Packed to 64 bytes for efficient storage buffer access.
 #[repr(C)]
@@ -46,7 +50,15 @@ pub struct GpuSplat {
     pub sh_degree: u32,
     /// Number of splats in this cloud.
     pub splat_count: u32,
+    /// Each cluster's bounding sphere, as `vec4<f32>` (centre, radius).
+    pub cluster_buffer: wgpu::Buffer,
+    /// Clusters of [`cluster::CLUSTER`] splats, the last one maybe partial.
+    pub cluster_count: u32,
 }
+
+/// The most splats one cloud may have: the keys pass takes one workgroup
+/// per cluster, and a dispatch has at most 65,535.
+pub const MAX_SPLATS: usize = 65_535 * cluster::CLUSTER;
 
 /// `u32` words of packed half-float SH coefficients per splat at `degree`.
 pub fn sh_words_per_splat(degree: u32) -> usize {
@@ -54,17 +66,17 @@ pub fn sh_words_per_splat(degree: u32) -> usize {
 }
 
 /// Pack each splat's higher-band coefficients as half floats, two to a word,
-/// the first in the low 16 bits. Values beyond the half-float range are
-/// clamped to it.
-pub fn pack_sh(sh_rest: &[f32], degree: u32, count: usize) -> Vec<u32> {
+/// the first in the low 16 bits, taking the splats in `order`. Values beyond
+/// the half-float range are clamped to it.
+pub fn pack_sh(sh_rest: &[f32], degree: u32, order: &[u32]) -> Vec<u32> {
     let per_splat = 3 * naive_sim::assets::sh_rest_coefficients(degree);
     let words = sh_words_per_splat(degree);
-    let mut packed = vec![0u32; count * words];
-    for (splat, coefficients) in sh_rest
-        .chunks_exact(per_splat.max(1))
-        .enumerate()
-        .take(count)
-    {
+    let mut packed = vec![0u32; order.len() * words];
+    for (splat, &source) in order.iter().enumerate() {
+        let start = source as usize * per_splat;
+        let Some(coefficients) = sh_rest.get(start..start + per_splat) else {
+            continue;
+        };
         for (j, value) in coefficients.iter().enumerate() {
             let value = value.clamp(-65504.0, 65504.0);
             let bits = u32::from(half::f16::from_f32(value).to_bits());
@@ -130,15 +142,16 @@ impl SplatCache {
         self.instances.get(&entity)
     }
 
-    /// Sort each splat entity's splats back to front, as `view` sees them,
-    /// on the GPU. `entities` are this frame's splat entities with their
-    /// splat and world matrix; sort state for any other entity is dropped.
-    /// An entity whose matrix and view have not changed keeps its order.
+    /// Find each splat entity's splats in view of `camera` and sort them
+    /// back to front, on the GPU. `entities` are this frame's splat entities
+    /// with their splat and world matrix; sort state for any other entity is
+    /// dropped. An entity whose matrix and camera have not changed keeps its
+    /// order.
     pub fn sort_splats(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        view: Mat4,
+        camera: SplatCamera,
         entities: &[(hecs::Entity, SplatHandle, Mat4)],
         timer: Option<&GpuTimer>,
     ) {
@@ -170,7 +183,7 @@ impl SplatCache {
                     instances.get_mut(&entity).expect("just inserted")
                 }
             };
-            if instance.update(queue, model, view) {
+            if instance.update(queue, model, camera) {
                 stale.push(entity);
             }
         }
@@ -219,8 +232,9 @@ impl Default for SplatCache {
     }
 }
 
-/// Upload shared, already validated splat data to GPU storage buffers.
-/// A cloud too large for this GPU's buffers is an error, not a crash.
+/// Upload shared, already validated splat data to GPU storage buffers, in
+/// Morton order with a bounding sphere per cluster. A cloud too large for
+/// this GPU's buffers is an error, not a crash.
 fn upload_splat(
     device: &wgpu::Device,
     splat_path: &str,
@@ -242,27 +256,48 @@ fn upload_splat(
             largest >> 20
         )));
     }
+    if data.splats.len() > MAX_SPLATS {
+        return Err(SplatError(format!(
+            "Splat '{splat_path}' has {count} splats, more than the {MAX_SPLATS} one cloud may have"
+        )));
+    }
+    let positions: Vec<[f32; 3]> = data.splats.iter().map(|point| point.position).collect();
+    let order = cluster::morton_order(&positions);
+    let mut clusters = cluster::cluster_bounds(&positions, &order);
+    drop(positions);
+    let cluster_count = clusters.len() as u32;
+    if clusters.is_empty() {
+        // A binding cannot be empty.
+        clusters.push([0.0; 4]);
+    }
+    let cluster_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(&format!("Splat clusters: {splat_path}")),
+        contents: bytemuck::cast_slice(&clusters),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let sh_words = if sh_degree == 0 {
         vec![0u32; 4]
     } else {
-        pack_sh(&data.sh_rest, sh_degree, data.splats.len())
+        pack_sh(&data.sh_rest, sh_degree, &order)
     };
     let sh_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("Splat SH: {splat_path}")),
         contents: bytemuck::cast_slice(&sh_words),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    let gpu_data: Vec<_> = data
-        .splats
-        .into_iter()
-        .map(|point| GaussianSplatGpu {
-            position: point.position,
-            opacity: point.opacity,
-            scale: point.scale,
-            _pad0: 0.0,
-            rotation: point.rotation,
-            sh_dc: point.sh_dc,
-            _pad1: 0.0,
+    let gpu_data: Vec<_> = order
+        .iter()
+        .map(|&i| {
+            let point = &data.splats[i as usize];
+            GaussianSplatGpu {
+                position: point.position,
+                opacity: point.opacity,
+                scale: point.scale,
+                _pad0: 0.0,
+                rotation: point.rotation,
+                sh_dc: point.sh_dc,
+                _pad1: 0.0,
+            }
         })
         .collect();
     let splat_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -275,6 +310,8 @@ fn upload_splat(
         sh_buffer,
         sh_degree,
         splat_count: count,
+        cluster_buffer,
+        cluster_count,
     })
 }
 
@@ -299,19 +336,19 @@ mod tests {
             [5, 12, 23],
             "9, 24 and 45 halves"
         );
-        // Two splats at degree 1: nine coefficients each, the last word half
-        // empty.
+        // Two splats at degree 1, swapped: nine coefficients each, the
+        // last word half empty.
         let rest: Vec<f32> = (0..18).map(|i| i as f32 * 0.5).collect();
-        let packed = pack_sh(&rest, 1, 2);
+        let packed = pack_sh(&rest, 1, &[1, 0]);
         assert_eq!(packed.len(), 10);
         let half = |bits: u32| half::f16::from_bits(bits as u16).to_f32();
-        for splat in 0..2 {
+        for (slot, source) in [(0, 1), (1, 0)] {
             for j in 0..9 {
-                let word = packed[splat * 5 + j / 2];
+                let word = packed[slot * 5 + j / 2];
                 let value = half(word >> (16 * (j % 2)) & 0xFFFF);
-                assert_eq!(value, rest[splat * 9 + j], "splat {splat} value {j}");
+                assert_eq!(value, rest[source * 9 + j], "slot {slot} value {j}");
             }
-            assert_eq!(packed[splat * 5 + 4] >> 16, 0);
+            assert_eq!(packed[slot * 5 + 4] >> 16, 0);
         }
     }
 }
