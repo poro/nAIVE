@@ -10,21 +10,30 @@
 //! centres in. Otherwise it tests each of its splats the same way, drops the
 //! ones too faint to draw, and packs the rest at the front of the sort: each
 //! one's view-space depth, as a `u32` that sorts like the float, and its
-//! index. The size pass reads how many were kept: the length they sort at
-//! and the draw's instance count. The pad pass fills the kept splats out to
-//! a power of two with keys that sort last, and a bitonic network sorts the
-//! (key, index) pairs: every block of [`BLOCK`] pairs is sorted in workgroup
-//! memory, then larger merges take one dispatch per step until the step fits
-//! a block again. Every pass is dispatched for the whole cloud, and its
-//! workgroups past the kept splats, or in merges longer than they need,
-//! stop at once, so the sort's work and the draw scale with the splats in
-//! view. (Dispatching the network indirectly, sized on the GPU, did the same
-//! work but cost about 20 µs more per dispatch on Metal: more than it saved
-//! for a cloud mostly in view.)
+//! index. It also records where each cluster's kept splats went and how many
+//! there are. The size pass reads how many were kept: the length they sort
+//! at and the draw's instance count.
 //!
-//! Ties in depth are broken by splat index, so the order is deterministic,
-//! whatever order the workgroups packed the splats in, and the same as a
-//! stable sort by view-space depth.
+//! A least-significant-digit radix sort then orders the (key, index) pairs,
+//! [`DIGIT_BITS`] bits of the key at a time, between two pairs of buffers.
+//! Each digit takes three passes over tiles of [`TILE`] pairs: count each
+//! tile's digits, prefix-sum each digit's counts over the tiles, and move
+//! every pair to its place, the tile sorted by digit in workgroup memory
+//! first so that the pass is stable and its writes run together. Every pass
+//! is dispatched for the whole cloud, and its workgroups past the kept
+//! splats stop at once, so the sort's work and the draw scale with the
+//! splats in view. (Dispatching indirectly, sized on the GPU, costs about
+//! 20 µs more per dispatch on Metal: more than it saves for a cloud mostly
+//! in view.)
+//!
+//! Ties in depth are broken by splat index, so the order is deterministic
+//! and the same as a stable sort by view-space depth. Workgroups pack
+//! clusters in whatever order they finish, so the first pass does not read
+//! the packed pairs in packed order: each of its tiles takes a run of
+//! clusters and reads each cluster's kept splats where the keys pass put
+//! them, in splat order. Every pass is stable, so splats with equal depths
+//! stay in splat order to the end. (Sorting the index as a further 16 or 24
+//! bits of key would cost two or three more digits.)
 //!
 //! The keys pass also writes each kept splat's colour for this view: its
 //! base colour plus its higher spherical-harmonics bands, evaluated as in 3D
@@ -38,10 +47,23 @@ use wgpu::util::DeviceExt;
 use super::cluster::{self, CLUSTER};
 use super::GpuSplat;
 
-/// Pairs one workgroup sorts in workgroup memory (two per invocation).
-pub const BLOCK: u32 = 512;
-const WORKGROUP: u32 = BLOCK / 2;
+/// Bits of the key each radix pass sorts by.
+pub const DIGIT_BITS: u32 = 8;
+const RADIX: u32 = 1 << DIGIT_BITS;
+/// Radix passes: the whole 32-bit key.
+const DIGITS: u32 = 32 / DIGIT_BITS;
+const WORKGROUP: u32 = 256;
+/// Pairs one workgroup counts and moves (eight per invocation).
+pub const TILE: u32 = 2048;
+/// Clusters one tile of the first pass reads (the shader's constant).
+#[cfg(test)]
+const TILE_CLUSTERS: u32 = TILE / WORKGROUP;
 const _: () = assert!(CLUSTER as u32 == WORKGROUP, "one workgroup per cluster");
+const _: () = assert!(RADIX == WORKGROUP, "one invocation per digit");
+const _: () = assert!(
+    super::MAX_SPLATS.div_ceil(TILE as usize) <= 65_535,
+    "a tile pass fits in a dispatch"
+);
 
 /// What the sort needs of the camera the draw uses.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -75,7 +97,8 @@ pub struct InstanceUniforms {
     pub camera_local: [f32; 3],
     pub sh_degree: u32,
     pub count: u32,
-    pub padded: u32,
+    /// Tiles the whole cloud makes: the radix passes' dispatch size.
+    pub tiles: u32,
     pub _pad: [u32; 2],
 }
 
@@ -83,58 +106,37 @@ pub struct InstanceUniforms {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SortPass {
     /// Cull clusters and splats; pack each kept splat's depth key and index
-    /// at the front, and write its colour.
+    /// at the front, record each cluster's kept splats, and write their
+    /// colours.
     Keys,
     /// Size the sort and the draw to the kept splats.
     Size,
-    /// Fill the kept splats out to the sort's length with keys that sort
-    /// last.
-    Pad,
-    /// Sort every block, alternating direction as the network needs.
-    LocalSort,
-    /// A compare-exchange step whose partners are `j` apart (`j >= BLOCK`).
-    GlobalStep { k: u32, j: u32 },
-    /// The rest of the merge of size `k`, inside each block.
-    LocalMerge { k: u32 },
+    /// Count each tile's keys by their digit at `shift`.
+    Count { shift: u32 },
+    /// Turn each digit's counts into where each tile's pairs with that
+    /// digit start, among that digit's pairs; and total each digit.
+    Scan { shift: u32 },
+    /// Move every pair to its place by its digit at `shift`.
+    Scatter { shift: u32 },
 }
 
-impl SortPass {
-    /// The shortest sort this pass is part of. A sort of `len` pairs runs the
-    /// network's passes up to `len`; the shaders skip the rest.
-    pub fn min_len(self) -> u32 {
-        match self {
-            SortPass::Keys | SortPass::Size | SortPass::Pad => 0,
-            SortPass::LocalSort => BLOCK,
-            SortPass::GlobalStep { k, .. } | SortPass::LocalMerge { k } => k,
-        }
-    }
-}
-
-/// The sort's length for `count` splats: a power of two, at least a block.
-pub fn padded_len(count: u32) -> u32 {
-    count.max(1).next_power_of_two().max(BLOCK)
-}
-
-/// The dispatches that sort up to `padded` pairs, in order.
-pub fn sort_passes(padded: u32) -> Vec<SortPass> {
-    debug_assert!(padded.is_power_of_two() && padded >= BLOCK);
-    let mut passes = vec![
-        SortPass::Keys,
-        SortPass::Size,
-        SortPass::Pad,
-        SortPass::LocalSort,
-    ];
-    let mut k = BLOCK * 2;
-    while k <= padded {
-        let mut j = k / 2;
-        while j >= BLOCK {
-            passes.push(SortPass::GlobalStep { k, j });
-            j /= 2;
-        }
-        passes.push(SortPass::LocalMerge { k });
-        k *= 2;
+/// The dispatches that cull and sort, in order.
+pub fn sort_passes() -> Vec<SortPass> {
+    let mut passes = vec![SortPass::Keys, SortPass::Size];
+    for digit in 0..DIGITS {
+        let shift = digit * DIGIT_BITS;
+        passes.extend([
+            SortPass::Count { shift },
+            SortPass::Scan { shift },
+            SortPass::Scatter { shift },
+        ]);
     }
     passes
+}
+
+/// The tiles `count` pairs make.
+pub fn tiles(count: u32) -> u32 {
+    count.div_ceil(TILE)
 }
 
 /// A float's bits as a `u32` that orders the same way.
@@ -147,16 +149,54 @@ pub fn sortable_depth(z: f32) -> u32 {
     }
 }
 
+fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn uniform_entry(binding: u32, has_dynamic_offset: bool) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+    wgpu::BindGroupEntry {
+        binding,
+        resource: buffer.as_entire_binding(),
+    }
+}
+
 /// The shared compute pipelines, made with the first splat.
 pub struct SplatSorter {
-    layout: wgpu::BindGroupLayout,
+    /// The keys and size passes' bindings.
+    cull_layout: wgpu::BindGroupLayout,
+    /// The radix passes' bindings: they read one pair of key and index
+    /// buffers and write the other.
+    radix_layout: wgpu::BindGroupLayout,
     keys: wgpu::ComputePipeline,
     size: wgpu::ComputePipeline,
-    pad: wgpu::ComputePipeline,
-    local_sort: wgpu::ComputePipeline,
-    global_step: wgpu::ComputePipeline,
-    local_merge: wgpu::ComputePipeline,
-    /// Bytes between the step parameters of consecutive passes.
+    count: wgpu::ComputePipeline,
+    scan: wgpu::ComputePipeline,
+    scatter: wgpu::ComputePipeline,
+    passes: Vec<SortPass>,
+    /// Each pass's digit shift, `step_stride` bytes apart.
+    steps: wgpu::Buffer,
     step_stride: u32,
 }
 
@@ -166,46 +206,41 @@ impl SplatSorter {
             label: Some("Splat sort"),
             source: wgpu::ShaderSource::Wgsl(SORT_WGSL.into()),
         });
-        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let uniform = |binding, has_dynamic_offset| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Splat sort"),
+        // At most eight storage buffers each, the default limit.
+        let cull_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Splat cull"),
             entries: &[
-                storage(0, true),
-                storage(1, false),
-                storage(2, false),
-                storage(5, true),
-                storage(6, false),
-                storage(7, false),
-                storage(8, true),
-                uniform(3, false),
-                uniform(4, true),
+                storage_entry(0, true),
+                storage_entry(1, false),
+                storage_entry(2, false),
+                uniform_entry(3, false),
+                storage_entry(5, true),
+                storage_entry(6, false),
+                storage_entry(7, false),
+                storage_entry(8, true),
+                storage_entry(13, false),
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Splat sort"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
+        let radix_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Splat radix sort"),
+            entries: &[
+                storage_entry(1, false),
+                storage_entry(2, false),
+                uniform_entry(3, false),
+                uniform_entry(4, true),
+                storage_entry(7, false),
+                storage_entry(9, false),
+                storage_entry(10, false),
+                storage_entry(11, false),
+                storage_entry(13, false),
+            ],
         });
-        let pipeline = |entry_point: &str| {
+        let pipeline = |layout: &wgpu::BindGroupLayout, entry_point: &str| {
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(entry_point),
+                bind_group_layouts: &[Some(layout)],
+                immediate_size: 0,
+            });
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry_point),
                 layout: Some(&pipeline_layout),
@@ -215,15 +250,35 @@ impl SplatSorter {
                 cache: None,
             })
         };
+        let passes = sort_passes();
+        let step_stride = device.limits().min_uniform_buffer_offset_alignment.max(16);
+        let stride = step_stride as usize;
+        let mut steps = vec![0u8; passes.len() * stride];
+        for (n, pass) in passes.iter().enumerate() {
+            let shift = match *pass {
+                SortPass::Count { shift }
+                | SortPass::Scan { shift }
+                | SortPass::Scatter { shift } => shift,
+                SortPass::Keys | SortPass::Size => 0,
+            };
+            steps[n * stride..n * stride + 4].copy_from_slice(&shift.to_le_bytes());
+        }
+        let steps = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Splat sort steps"),
+            contents: &steps,
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
         Self {
-            keys: pipeline("compute_keys"),
-            size: pipeline("size_sort"),
-            pad: pipeline("pad"),
-            local_sort: pipeline("local_sort"),
-            global_step: pipeline("global_step"),
-            local_merge: pipeline("local_merge"),
-            layout,
-            step_stride: device.limits().min_uniform_buffer_offset_alignment.max(16),
+            keys: pipeline(&cull_layout, "compute_keys"),
+            size: pipeline(&cull_layout, "size_sort"),
+            count: pipeline(&radix_layout, "count_digits"),
+            scan: pipeline(&radix_layout, "scan_counts"),
+            scatter: pipeline(&radix_layout, "scatter"),
+            cull_layout,
+            radix_layout,
+            passes,
+            steps,
+            step_stride,
         }
     }
 
@@ -234,39 +289,32 @@ impl SplatSorter {
         splat: &GpuSplat,
         handle: crate::components::SplatHandle,
     ) -> SplatInstance {
-        let padded = padded_len(splat.splat_count);
-        let passes = sort_passes(padded);
-        let stride = self.step_stride as usize;
-        let mut steps = vec![0u8; passes.len() * stride];
-        for (n, pass) in passes.iter().enumerate() {
-            let (k, j) = match *pass {
-                SortPass::GlobalStep { k, j } => (k, j),
-                SortPass::LocalMerge { k } => (k, 0),
-                _ => (0, 0),
-            };
-            steps[n * stride..n * stride + 8].copy_from_slice(bytemuck::cast_slice(&[k, j]));
-        }
-        let steps = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Splat sort steps"),
-            contents: &steps,
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let pairs = |label| {
+        let count = splat.splat_count.max(1);
+        let tiles = tiles(count);
+        let storage = |label, size: u64| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: u64::from(padded) * 4,
+                size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             })
         };
-        let keys = pairs("Splat sort keys");
-        let sorted_indices = pairs("Splat sorted indices");
-        let colors = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Splat colours"),
-            size: u64::from(splat.splat_count.max(1)) * 16,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
+        let pairs = u64::from(count) * 4;
+        let keys = storage("Splat sort keys", pairs);
+        let sorted_indices = storage("Splat sorted indices", pairs);
+        let other_keys = storage("Splat sort keys (other)", pairs);
+        let other_indices = storage("Splat sort indices (other)", pairs);
+        // Each digit's total, then each digit's count per tile.
+        let counts = storage(
+            "Splat sort digit counts",
+            u64::from(RADIX + RADIX * tiles) * 4,
+        );
+        // Each cluster's kept splats: where they start, and how many.
+        let runs = storage(
+            "Splat cluster runs",
+            u64::from(splat.cluster_count.max(1)) * 8,
+        );
+        let colors = storage("Splat colours", u64::from(count) * 16);
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Splat instance"),
             size: std::mem::size_of::<InstanceUniforms>() as u64,
@@ -283,67 +331,89 @@ impl SplatSorter {
                 | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-        fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-            wgpu::BindGroupEntry {
-                binding,
-                resource: buffer.as_entire_binding(),
-            }
-        }
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Splat sort"),
-            layout: &self.layout,
+        let cull = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Splat cull"),
+            layout: &self.cull_layout,
             entries: &[
                 entry(0, &splat.splat_buffer),
                 entry(1, &keys),
                 entry(2, &sorted_indices),
                 entry(3, &uniforms),
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &steps,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(16),
-                    }),
-                },
                 entry(5, &splat.sh_buffer),
                 entry(6, &colors),
                 entry(7, &state),
                 entry(8, &splat.cluster_buffer),
+                entry(13, &runs),
             ],
         });
+        let radix = |from: (&wgpu::Buffer, &wgpu::Buffer), to: (&wgpu::Buffer, &wgpu::Buffer)| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Splat radix sort"),
+                layout: &self.radix_layout,
+                entries: &[
+                    entry(1, from.0),
+                    entry(2, from.1),
+                    entry(3, &uniforms),
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.steps,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(16),
+                        }),
+                    },
+                    entry(7, &state),
+                    entry(9, to.0),
+                    entry(10, to.1),
+                    entry(11, &counts),
+                    entry(13, &runs),
+                ],
+            })
+        };
+        // An even number of digits ends where the keys pass started: in the
+        // buffers the draw reads.
+        const _: () = assert!(DIGITS.is_multiple_of(2));
+        let radix = [
+            radix((&keys, &sorted_indices), (&other_keys, &other_indices)),
+            radix((&other_keys, &other_indices), (&keys, &sorted_indices)),
+        ];
         SplatInstance {
             handle,
             count: splat.splat_count,
             sh_degree: splat.sh_degree,
-            padded,
+            tiles,
             clusters: splat.cluster_count,
-            passes,
-            _keys: keys,
+            _buffers: [keys, other_keys, other_indices, counts, runs],
             sorted_indices,
             colors,
             uniforms,
             state,
-            _steps: steps,
-            bind_group,
+            cull,
+            radix,
             written: None,
         }
     }
 
     /// Record the dispatches that cull and sort `instance`.
     pub fn encode(&self, pass: &mut wgpu::ComputePass<'_>, instance: &SplatInstance) {
-        for (n, step) in instance.passes.iter().enumerate() {
-            let (pipeline, groups) = match step {
-                SortPass::Keys => (&self.keys, instance.clusters),
-                SortPass::Size => (&self.size, 1),
-                // Two pairs per invocation, so a sort of 2^24 pairs still
-                // fits in a dispatch.
-                SortPass::Pad => (&self.pad, instance.padded / BLOCK),
-                SortPass::LocalSort => (&self.local_sort, instance.padded / BLOCK),
-                SortPass::GlobalStep { .. } => (&self.global_step, instance.padded / BLOCK),
-                SortPass::LocalMerge { .. } => (&self.local_merge, instance.padded / BLOCK),
+        for (n, step) in self.passes.iter().enumerate() {
+            let (pipeline, groups, shift) = match *step {
+                SortPass::Keys => (&self.keys, instance.clusters, None),
+                SortPass::Size => (&self.size, 1, None),
+                SortPass::Count { shift } => (&self.count, instance.tiles, Some(shift)),
+                SortPass::Scan { shift } => (&self.scan, RADIX, Some(shift)),
+                SortPass::Scatter { shift } => (&self.scatter, instance.tiles, Some(shift)),
             };
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &instance.bind_group, &[n as u32 * self.step_stride]);
+            match shift {
+                None => pass.set_bind_group(0, &instance.cull, &[]),
+                // Digits alternate between the two pairs of buffers.
+                Some(shift) => pass.set_bind_group(
+                    0,
+                    &instance.radix[(shift / DIGIT_BITS % 2) as usize],
+                    &[n as u32 * self.step_stride],
+                ),
+            }
             pass.dispatch_workgroups(groups, 1, 1);
         }
     }
@@ -358,10 +428,11 @@ pub struct SplatInstance {
     pub handle: crate::components::SplatHandle,
     pub count: u32,
     sh_degree: u32,
-    padded: u32,
+    tiles: u32,
     clusters: u32,
-    passes: Vec<SortPass>,
-    _keys: wgpu::Buffer,
+    /// The keys beside `sorted_indices`, the other pair of key and index
+    /// buffers, the digit counts and the cluster runs.
+    _buffers: [wgpu::Buffer; 5],
     /// Indices of the splats in view, farthest first; the draw's arguments
     /// say how many.
     pub sorted_indices: wgpu::Buffer,
@@ -373,8 +444,11 @@ pub struct SplatInstance {
     /// The cull's count of splats kept, and the draw's indirect arguments:
     /// 6 vertices, one instance per splat in view.
     state: wgpu::Buffer,
-    _steps: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    /// The keys and size passes' bind group.
+    cull: wgpu::BindGroup,
+    /// The radix passes' bind groups: from the draw's buffers to the others,
+    /// and back.
+    radix: [wgpu::BindGroup; 2],
     /// What the uniforms hold, and so what the indices are sorted for.
     written: Option<InstanceUniforms>,
 }
@@ -437,7 +511,7 @@ impl SplatInstance {
             .to_array(),
             sh_degree: self.sh_degree,
             count: self.count,
-            padded: self.padded,
+            tiles: self.tiles,
             _pad: [0; 2],
         };
         if self.written == Some(uniforms) {
@@ -449,8 +523,8 @@ impl SplatInstance {
     }
 }
 
-/// Culling and keys, sizing, padding, and the bitonic network over
-/// (key, index) pairs with its block passes.
+/// Culling and keys, sizing, and the radix sort's count, scan and scatter
+/// passes over (key, index) pairs.
 pub const SORT_WGSL: &str = r#"
 struct InstanceUniforms {
     model: mat4x4<f32>,
@@ -459,14 +533,14 @@ struct InstanceUniforms {
     camera_local: vec3<f32>,
     sh_degree: u32,
     count: u32,
-    padded: u32,
+    tiles: u32,
     _pad: vec2<u32>,
 };
 
 struct SortStep {
-    k: u32,
-    j: u32,
-    _pad: vec2<u32>,
+    shift: u32,
+    _pad0: u32,
+    _pad1: vec2<u32>,
 };
 
 struct GaussianSplat {
@@ -482,9 +556,9 @@ struct GaussianSplat {
 struct CullState {
     // Splats the keys pass has packed at the front so far.
     kept: atomic<u32>,
-    // What the size pass read: the splats kept and the length they sort at.
+    // What the size pass read: the splats kept and the tiles they make.
     sorted_count: u32,
-    sorted_len: u32,
+    sorted_tiles: u32,
     _pad: u32,
     // The draw's indirect arguments: vertex count, instance count, first
     // vertex, first instance.
@@ -492,6 +566,8 @@ struct CullState {
 };
 
 @group(0) @binding(0) var<storage, read> splats: array<GaussianSplat>;
+// The pairs: where the keys pass packs them and the draw reads the indices,
+// or where a radix pass reads them.
 @group(0) @binding(1) var<storage, read_write> keys: array<u32>;
 @group(0) @binding(2) var<storage, read_write> values: array<u32>;
 @group(0) @binding(3) var<uniform> instance: InstanceUniforms;
@@ -502,21 +578,42 @@ struct CullState {
 @group(0) @binding(7) var<storage, read_write> state: CullState;
 // Each cluster's bounding sphere: centre and radius.
 @group(0) @binding(8) var<storage, read> clusters: array<vec4<f32>>;
+// Where a radix pass writes the pairs.
+@group(0) @binding(9) var<storage, read_write> keys_out: array<u32>;
+@group(0) @binding(10) var<storage, read_write> values_out: array<u32>;
+// Each digit's total (RADIX words), then its count in each tile (a row of
+// instance.tiles words per digit), which the scan turns into where each
+// tile's pairs with that digit start among them.
+@group(0) @binding(11) var<storage, read_write> counts: array<u32>;
+// Each cluster's kept splats: where the keys pass packed them, and how many.
+@group(0) @binding(13) var<storage, read_write> runs: array<vec2<u32>>;
 
-const BLOCK: u32 = 512u;
 const HALF: u32 = 256u;
+const RADIX: u32 = 256u;
+const TILE: u32 = 2048u;
+const TILE_CLUSTERS: u32 = 8u;
+// Bits of a local sort entry that hold the pair's place in its tile.
+const PLACE_BITS: u32 = 11u;
 // The draw's limits (the splat render shader's).
 const MIN_ALPHA: f32 = 0.0039215686; // 1 / 255
 const MAX_ALPHA: f32 = 0.99;
 // How generous the cull is (cluster::TOLERANCE).
 const TOLERANCE: f32 = 1e-4;
 
-var<workgroup> block_keys: array<u32, 512>;
-var<workgroup> block_values: array<u32, 512>;
 var<workgroup> scan: array<u32, 256>;
 var<workgroup> cluster_in_view: u32;
 var<workgroup> packed_base: u32;
-var<workgroup> sort_len: u32;
+// A tile's size, and for the first pass where each of its clusters' kept
+// splats were packed and where they start in the tile.
+var<workgroup> tile_size: u32;
+var<workgroup> tile_runs: array<vec2<u32>, 8>;
+var<workgroup> digit_counts: array<atomic<u32>, 256>;
+// Each entry a pair's digit and its place in the tile.
+var<workgroup> local_sort: array<u32, 2048>;
+// Where each digit's pairs from this tile go in the output, less where they
+// start in the sorted tile.
+var<workgroup> digit_place: array<u32, 256>;
+var<workgroup> run_start: array<u32, 256>;
 
 // A float's bits as a u32 that orders the same way.
 fn sortable(z: f32) -> u32 {
@@ -527,15 +624,10 @@ fn sortable(z: f32) -> u32 {
     return bits | 0x80000000u;
 }
 
-// Whether pair a sorts before pair b. Indices are unique, so this is a
-// strict total order.
-fn before(key_a: u32, value_a: u32, key_b: u32, value_b: u32) -> bool {
-    return key_a < key_b || (key_a == key_b && value_a < value_b);
-}
-
-// The lower index of the t-th pair whose partners are j apart.
+// The lower index of the t-th pair whose partners are j apart (j a power
+// of two): (t / j) * 2j + t % j, without dividing.
 fn lower(t: u32, j: u32) -> u32 {
-    return (t / j) * 2u * j + (t % j);
+    return ((t & ~(j - 1u)) << 1u) | (t & (j - 1u));
 }
 
 // Whether a sphere may hold a splat centre the draw keeps, erring on
@@ -642,6 +734,9 @@ fn compute_keys(
         cluster_in_view = u32(may_be_visible(sphere.xyz, sphere.w));
     }
     if workgroupUniformLoad(&cluster_in_view) == 0u {
+        if t == 0u {
+            runs[group.x] = vec2<u32>(0u, 0u);
+        }
         return;
     }
 
@@ -665,6 +760,7 @@ fn compute_keys(
     }
     if t == HALF - 1u {
         packed_base = atomicAdd(&state.kept, scan[t]);
+        runs[group.x] = vec2<u32>(packed_base, scan[t]);
     }
     let base = workgroupUniformLoad(&packed_base);
     if !kept {
@@ -689,12 +785,8 @@ fn compute_keys(
 @compute @workgroup_size(1)
 fn size_sort() {
     let kept = atomicLoad(&state.kept);
-    var len = 0u;
-    if kept > 0u {
-        len = max(BLOCK, 1u << (32u - countLeadingZeros(kept - 1u)));
-    }
     state.sorted_count = kept;
-    state.sorted_len = len;
+    state.sorted_tiles = (kept + TILE - 1u) / TILE;
     state.draw[0] = 6u;
     state.draw[1] = kept;
     state.draw[2] = 0u;
@@ -703,122 +795,285 @@ fn size_sort() {
     atomicStore(&state.kept, 0u);
 }
 
+// The number of pairs in tile g, the same for the whole workgroup. The
+// first pass's tile g is the kept splats of clusters TILE_CLUSTERS * g on,
+// in splat order; a later pass's is the pairs TILE * g on.
+fn load_tile(g: u32, t: u32) -> u32 {
+    if sort_step.shift == 0u {
+        if t == 0u {
+            var start = 0u;
+            for (var k = 0u; k < TILE_CLUSTERS; k++) {
+                let c = g * TILE_CLUSTERS + k;
+                var run = vec2<u32>(0u, 0u);
+                if c < (instance.count + HALF - 1u) / HALF {
+                    run = runs[c];
+                }
+                tile_runs[k] = vec2<u32>(run.x, start);
+                start += run.y;
+            }
+            tile_size = start;
+        }
+    } else if t == 0u {
+        let count = state.sorted_count;
+        let start = g * TILE;
+        tile_size = select(0u, min(TILE, count - start), start < count);
+    }
+    return workgroupUniformLoad(&tile_size);
+}
+
+// Where pair n of tile g (n < its size) is in the pairs a pass reads.
+fn tile_position(g: u32, n: u32) -> u32 {
+    if sort_step.shift == 0u {
+        // The last cluster starting at or before n: the one holding it, as
+        // a cluster with no kept splats starts where the next one does.
+        var k = 0u;
+        for (var m = 1u; m < TILE_CLUSTERS; m++) {
+            if tile_runs[m].y <= n {
+                k = m;
+            }
+        }
+        return tile_runs[k].x + n - tile_runs[k].y;
+    }
+    return g * TILE + n;
+}
+
+fn digit(key: u32) -> u32 {
+    return (key >> sort_step.shift) & (RADIX - 1u);
+}
+
+// One workgroup per tile: count its pairs' digits.
 @compute @workgroup_size(256)
-fn pad(@builtin(global_invocation_id) id: vec3<u32>) {
-    for (var i = 2u * id.x; i < 2u * id.x + 2u; i++) {
-        if i >= state.sorted_count && i < state.sorted_len {
-            keys[i] = 0xFFFFFFFFu;
-            values[i] = i;
+fn count_digits(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(local_invocation_index) t: u32,
+) {
+    atomicStore(&digit_counts[t], 0u);
+    let size = load_tile(group.x, t);
+    // The first pass's scan reads every tile's counts; a later pass's only
+    // the tiles of kept splats.
+    if size == 0u && sort_step.shift != 0u {
+        return;
+    }
+    for (var m = 0u; m < TILE / HALF; m++) {
+        let n = m * HALF + t;
+        if n < size {
+            atomicAdd(&digit_counts[digit(keys[tile_position(group.x, n)])], 1u);
         }
     }
+    workgroupBarrier();
+    counts[RADIX + t * instance.tiles + group.x] = atomicLoad(&digit_counts[t]);
 }
 
-// The length the kept splats sort at, read once for the whole workgroup.
-fn workgroup_sort_len(t: u32) -> u32 {
-    if t == 0u {
-        sort_len = state.sorted_len;
-    }
-    return workgroupUniformLoad(&sort_len);
-}
-
-fn load_block(base: u32, t: u32) {
-    block_keys[t] = keys[base + t];
-    block_values[t] = values[base + t];
-    block_keys[t + HALF] = keys[base + t + HALF];
-    block_values[t + HALF] = values[base + t + HALF];
-}
-
-fn store_block(base: u32, t: u32) {
-    keys[base + t] = block_keys[t];
-    values[base + t] = block_values[t];
-    keys[base + t + HALF] = block_keys[t + HALF];
-    values[base + t + HALF] = block_values[t + HALF];
-}
-
-// Compare-exchange steps j_start, j_start / 2, ..., 1 of the merge of size
-// k, in workgroup memory.
-fn block_steps(base: u32, t: u32, k: u32, j_start: u32) {
-    var j = j_start;
-    loop {
-        if j == 0u {
-            break;
-        }
-        let a = lower(t, j);
-        let b = a + j;
-        let ascending = ((base + a) & k) == 0u;
-        let key_a = block_keys[a];
-        let key_b = block_keys[b];
-        let value_a = block_values[a];
-        let value_b = block_values[b];
-        if before(key_b, value_b, key_a, value_a) == ascending {
-            block_keys[a] = key_b;
-            block_keys[b] = key_a;
-            block_values[a] = value_b;
-            block_values[b] = value_a;
+// An inclusive scan of each invocation's value over the workgroup; the last
+// invocation's is the total.
+fn workgroup_scan(t: u32, value: u32) -> u32 {
+    workgroupBarrier();
+    scan[t] = value;
+    for (var offset = 1u; offset < HALF; offset = offset << 1u) {
+        workgroupBarrier();
+        var below = 0u;
+        if t >= offset {
+            below = scan[t - offset];
         }
         workgroupBarrier();
-        j = j >> 1u;
+        scan[t] += below;
     }
+    workgroupBarrier();
+    return scan[t];
 }
 
+// One workgroup per digit: an exclusive scan of its counts over the tiles,
+// four at a time per invocation, and its total.
 @compute @workgroup_size(256)
-fn local_sort(
+fn scan_counts(
     @builtin(workgroup_id) group: vec3<u32>,
     @builtin(local_invocation_index) t: u32,
 ) {
-    let base = group.x * BLOCK;
-    if base >= workgroup_sort_len(t) {
-        return;
+    if t == 0u {
+        tile_size = select(state.sorted_tiles, instance.tiles, sort_step.shift == 0u);
     }
-    load_block(base, t);
-    workgroupBarrier();
-    var k = 2u;
-    loop {
-        if k > BLOCK {
-            break;
+    let rows = workgroupUniformLoad(&tile_size);
+    let row = RADIX + group.x * instance.tiles;
+    var carry = 0u;
+    for (var base = 0u; base < rows; base += 4u * HALF) {
+        var tile_counts = array<u32, 4>(0u, 0u, 0u, 0u);
+        var sum = 0u;
+        for (var m = 0u; m < 4u; m++) {
+            let n = base + 4u * t + m;
+            if n < rows {
+                tile_counts[m] = counts[row + n];
+            }
+            sum += tile_counts[m];
         }
-        block_steps(base, t, k, k >> 1u);
-        k = k << 1u;
+        var running = carry + workgroup_scan(t, sum) - sum;
+        for (var m = 0u; m < 4u; m++) {
+            let n = base + 4u * t + m;
+            if n < rows {
+                counts[row + n] = running;
+            }
+            running += tile_counts[m];
+        }
+        carry += scan[HALF - 1u];
     }
-    store_block(base, t);
-}
-
-@compute @workgroup_size(256)
-fn global_step(@builtin(global_invocation_id) id: vec3<u32>) {
-    let t = id.x;
-    let len = state.sorted_len;
-    if sort_step.k > len || t >= len / 2u {
-        return;
-    }
-    let a = lower(t, sort_step.j);
-    let b = a + sort_step.j;
-    let ascending = (a & sort_step.k) == 0u;
-    let key_a = keys[a];
-    let key_b = keys[b];
-    let value_a = values[a];
-    let value_b = values[b];
-    if before(key_b, value_b, key_a, value_a) == ascending {
-        keys[a] = key_b;
-        keys[b] = key_a;
-        values[a] = value_b;
-        values[b] = value_a;
+    if t == 0u {
+        counts[group.x] = carry;
     }
 }
 
+// An invocation's eight consecutive entries of a tile's local sort.
+struct Eight {
+    lo: vec4<u32>,
+    hi: vec4<u32>,
+};
+
+// Whether the pairs whose lower entries are at these places sort upward in
+// a merge of size k.
+fn upward(places: vec4<u32>, k: u32) -> vec4<bool> {
+    return (places & vec4<u32>(k)) == vec4<u32>(0u);
+}
+
+// The bitonic steps of a merge of size k whose partners are fewer than
+// eight apart, from j_start apart down, over eight entries whose first is at
+// place base. Swizzles only, so they stay in registers.
+fn register_steps(entries: Eight, base: u32, k: u32, j_start: u32) -> Eight {
+    var lo = entries.lo;
+    var hi = entries.hi;
+    if j_start >= 4u {
+        // (0, 4), (1, 5), (2, 6), (3, 7)
+        let up = upward(vec4<u32>(base) + vec4<u32>(0u, 1u, 2u, 3u), k);
+        let first = select(max(lo, hi), min(lo, hi), up);
+        let second = select(min(lo, hi), max(lo, hi), up);
+        lo = first;
+        hi = second;
+    }
+    if j_start >= 2u {
+        // (0, 2), (1, 3), (4, 6), (5, 7)
+        let a = vec4<u32>(lo.xy, hi.xy);
+        let b = vec4<u32>(lo.zw, hi.zw);
+        let up = upward(vec4<u32>(base) + vec4<u32>(0u, 1u, 4u, 5u), k);
+        let first = select(max(a, b), min(a, b), up);
+        let second = select(min(a, b), max(a, b), up);
+        lo = vec4<u32>(first.xy, second.xy);
+        hi = vec4<u32>(first.zw, second.zw);
+    }
+    // (0, 1), (2, 3), (4, 5), (6, 7)
+    let a = vec4<u32>(lo.xz, hi.xz);
+    let b = vec4<u32>(lo.yw, hi.yw);
+    let up = upward(vec4<u32>(base) + vec4<u32>(0u, 2u, 4u, 6u), k);
+    let first = select(max(a, b), min(a, b), up);
+    let second = select(min(a, b), max(a, b), up);
+    return Eight(
+        vec4<u32>(first.x, second.x, first.y, second.y),
+        vec4<u32>(first.z, second.z, first.w, second.w),
+    );
+}
+
+fn store_eight(at: u32, entries: Eight) {
+    local_sort[at] = entries.lo.x;
+    local_sort[at + 1u] = entries.lo.y;
+    local_sort[at + 2u] = entries.lo.z;
+    local_sort[at + 3u] = entries.lo.w;
+    local_sort[at + 4u] = entries.hi.x;
+    local_sort[at + 5u] = entries.hi.y;
+    local_sort[at + 6u] = entries.hi.z;
+    local_sort[at + 7u] = entries.hi.w;
+}
+
+fn load_eight(at: u32) -> Eight {
+    return Eight(
+        vec4<u32>(local_sort[at], local_sort[at + 1u], local_sort[at + 2u], local_sort[at + 3u]),
+        vec4<u32>(local_sort[at + 4u], local_sort[at + 5u], local_sort[at + 6u], local_sort[at + 7u]),
+    );
+}
+
+// Entry n of tile g's local sort: the digit of its pair n and its place.
+fn local_entry(g: u32, size: u32, n: u32) -> u32 {
+    if n < size {
+        return (digit(keys[tile_position(g, n)]) << PLACE_BITS) | n;
+    }
+    return 0xFFFFFFFFu;
+}
+
+// One workgroup per tile: sort it by digit in workgroup memory, keeping
+// order within a digit, then write each digit's run where it goes.
 @compute @workgroup_size(256)
-fn local_merge(
+fn scatter(
     @builtin(workgroup_id) group: vec3<u32>,
     @builtin(local_invocation_index) t: u32,
 ) {
-    let base = group.x * BLOCK;
-    let len = workgroup_sort_len(t);
-    if sort_step.k > len || base >= len {
+    let g = group.x;
+    let size = load_tile(g, t);
+    if size == 0u {
         return;
     }
-    load_block(base, t);
+
+    // Each digit's pairs go after every smaller digit's, and after its own
+    // from earlier tiles.
+    let total = counts[t];
+    let below = workgroup_scan(t, total) - total;
+    digit_place[t] = below + counts[RADIX + t * instance.tiles + g];
+
+    // A bitonic network over (digit, place): places are unique, so the
+    // order is total and the sort stable by digit. Each invocation keeps
+    // eight consecutive entries in registers, where the steps whose partners
+    // are fewer than eight apart run; the rest run in workgroup memory.
+    // Read coalesced, a pair per invocation at a time.
+    for (var m = 0u; m < TILE / HALF; m++) {
+        let n = m * HALF + t;
+        local_sort[n] = local_entry(g, size, n);
+    }
     workgroupBarrier();
-    block_steps(base, t, sort_step.k, HALF);
-    store_block(base, t);
+    let base = 8u * t;
+    var entries = load_eight(base);
+    entries = register_steps(entries, base, 2u, 1u);
+    entries = register_steps(entries, base, 4u, 2u);
+    entries = register_steps(entries, base, 8u, 4u);
+    for (var k = 16u; k <= TILE; k = k << 1u) {
+        store_eight(base, entries);
+        for (var j = k >> 1u; j >= 8u; j = j >> 1u) {
+            workgroupBarrier();
+            for (var m = 0u; m < TILE / (2u * HALF); m++) {
+                let a = lower(m * HALF + t, j);
+                let b = a + j;
+                let first = min(local_sort[a], local_sort[b]);
+                let second = max(local_sort[a], local_sort[b]);
+                let ascending = (a & k) == 0u;
+                local_sort[a] = select(second, first, ascending);
+                local_sort[b] = select(first, second, ascending);
+            }
+        }
+        workgroupBarrier();
+        entries = register_steps(load_eight(base), base, k, 4u);
+    }
+    store_eight(base, entries);
+    workgroupBarrier();
+
+    for (var m = 0u; m < TILE / HALF; m++) {
+        let p = m * HALF + t;
+        if p < size {
+            let d = local_sort[p] >> PLACE_BITS;
+            if p == 0u || (local_sort[p - 1u] >> PLACE_BITS) != d {
+                run_start[d] = p;
+            }
+        }
+    }
+    workgroupBarrier();
+
+    // Consecutive invocations write consecutive places of a digit's run.
+    for (var m = 0u; m < TILE / HALF; m++) {
+        let p = m * HALF + t;
+        if p < size {
+            let entry = local_sort[p];
+            let d = entry >> PLACE_BITS;
+            let source = tile_position(g, entry & ((1u << PLACE_BITS) - 1u));
+            let dest = digit_place[d] + p - run_start[d];
+            values_out[dest] = values[source];
+            // The last pass's keys are not read again.
+            if sort_step.shift + 8u < 32u {
+                keys_out[dest] = keys[source];
+            }
+        }
+    }
 }
 "#;
 
@@ -839,49 +1094,198 @@ mod tests {
         order
     }
 
-    /// Run the passes on the CPU exactly as the kernels index them, over the
-    /// whole of `keys`.
-    fn emulate(keys: &mut [u32], values: &mut [u32], passes: &[SortPass]) {
-        let n = keys.len() as u32;
-        let exchange = |keys: &mut [u32], values: &mut [u32], a: u32, b: u32, k: u32| {
-            let (a, b) = (a as usize, b as usize);
-            let ascending = (a as u32 & k) == 0;
-            let b_first = (keys[b], values[b]) < (keys[a], values[a]);
-            if b_first == ascending {
-                keys.swap(a, b);
-                values.swap(a, b);
-            }
-        };
-        let lower = |t: u32, j: u32| (t / j) * 2 * j + (t % j);
-        let block_steps = |keys: &mut [u32], values: &mut [u32], k: u32, j_start: u32| {
-            for base in (0..n).step_by(BLOCK as usize) {
-                let mut j = j_start;
-                while j > 0 {
-                    for t in 0..WORKGROUP {
-                        let a = base + lower(t, j);
-                        exchange(keys, values, a, a + j, k);
-                    }
-                    j /= 2;
+    /// What the keys pass leaves for the radix passes: the pairs of the
+    /// splats `kept`, packed a cluster at a time with the clusters in
+    /// `cluster_order`, and each cluster's run (where its kept splats start,
+    /// and how many).
+    fn pack(
+        keys_of: &[u32],
+        kept: &[bool],
+        cluster_order: &[u32],
+    ) -> (Vec<u32>, Vec<u32>, Vec<[u32; 2]>) {
+        let count = keys_of.len();
+        let mut keys = vec![0; count.max(1)];
+        let mut values = vec![0; count.max(1)];
+        let mut runs = vec![[0, 0]; count.div_ceil(CLUSTER)];
+        let mut next = 0u32;
+        for &c in cluster_order {
+            let c = c as usize;
+            let base = next;
+            for i in c * CLUSTER..((c + 1) * CLUSTER).min(count) {
+                if kept[i] {
+                    keys[next as usize] = keys_of[i];
+                    values[next as usize] = i as u32;
+                    next += 1;
                 }
             }
+            runs[c] = [base, next - base];
+        }
+        (keys, values, runs)
+    }
+
+    /// Run the radix passes on the CPU exactly as the kernels index them,
+    /// from what the keys pass leaves ([`pack`]) for a cloud of `count`.
+    fn emulate(keys: &mut Vec<u32>, values: &mut Vec<u32>, runs: &[[u32; 2]], count: u32) {
+        let tiles = tiles(count.max(1));
+        let kept: u32 = runs.iter().map(|run| run[1]).sum();
+        let mut other_keys = vec![0; keys.len()];
+        let mut other_values = vec![0; values.len()];
+        let mut counts = vec![0u32; (RADIX + RADIX * tiles) as usize];
+        let row = |d: u32| (RADIX + d * tiles) as usize;
+        // load_tile and tile_position: tile g's size, and where each of its
+        // pairs is.
+        let tile = |shift: u32, g: u32| -> Vec<u32> {
+            if shift != 0 {
+                let start = g * TILE;
+                return (start..kept.min(start + TILE)).collect();
+            }
+            let mut starts = [[0u32; 2]; TILE_CLUSTERS as usize];
+            let mut start = 0;
+            for (k, entry) in starts.iter_mut().enumerate() {
+                let run = runs
+                    .get((g * TILE_CLUSTERS) as usize + k)
+                    .copied()
+                    .unwrap_or([0, 0]);
+                *entry = [run[0], start];
+                start += run[1];
+            }
+            (0..start)
+                .map(|n| {
+                    let k = (1..starts.len()).rfind(|&m| starts[m][1] <= n).unwrap_or(0);
+                    starts[k][0] + n - starts[k][1]
+                })
+                .collect()
         };
-        for pass in passes {
-            match *pass {
-                SortPass::Keys | SortPass::Size | SortPass::Pad => {}
-                SortPass::LocalSort => {
-                    let mut k = 2;
-                    while k <= BLOCK {
-                        block_steps(keys, values, k, k / 2);
-                        k *= 2;
+        for pass in sort_passes() {
+            let (SortPass::Count { shift }
+            | SortPass::Scan { shift }
+            | SortPass::Scatter { shift }) = pass
+            else {
+                continue;
+            };
+            let digit = |key: u32| (key >> shift) & (RADIX - 1);
+            match pass {
+                SortPass::Count { .. } => {
+                    for g in 0..tiles {
+                        let positions = tile(shift, g);
+                        if positions.is_empty() && shift != 0 {
+                            continue;
+                        }
+                        let mut digits = [0u32; RADIX as usize];
+                        for &p in &positions {
+                            digits[digit(keys[p as usize]) as usize] += 1;
+                        }
+                        for d in 0..RADIX {
+                            counts[row(d) + g as usize] = digits[d as usize];
+                        }
                     }
                 }
-                SortPass::GlobalStep { k, j } => {
-                    for t in 0..n / 2 {
-                        let a = lower(t, j);
-                        exchange(keys, values, a, a + j, k);
+                SortPass::Scan { .. } => {
+                    let rows = if shift == 0 {
+                        tiles
+                    } else {
+                        kept.div_ceil(TILE)
+                    };
+                    for d in 0..RADIX {
+                        let mut running = 0;
+                        for n in 0..rows as usize {
+                            let tile_count = counts[row(d) + n];
+                            counts[row(d) + n] = running;
+                            running += tile_count;
+                        }
+                        counts[d as usize] = running;
                     }
                 }
-                SortPass::LocalMerge { k } => block_steps(keys, values, k, WORKGROUP),
+                _ => {
+                    for g in 0..tiles {
+                        let positions = tile(shift, g);
+                        let size = positions.len() as u32;
+                        if size == 0 {
+                            continue;
+                        }
+                        let mut place = [0u32; RADIX as usize];
+                        let mut below = 0;
+                        for d in 0..RADIX {
+                            place[d as usize] = below + counts[row(d) + g as usize];
+                            below += counts[d as usize];
+                        }
+                        let place_bits = TILE.trailing_zeros();
+                        let mut local: Vec<u32> = (0..TILE)
+                            .map(|n| match positions.get(n as usize) {
+                                Some(&p) => digit(keys[p as usize]) << place_bits | n,
+                                None => u32::MAX,
+                            })
+                            .collect();
+                        // The workgroup's bitonic network: steps whose
+                        // partners are fewer than eight apart on each
+                        // invocation's eight consecutive entries, paired as
+                        // register_steps pairs them; the rest a comparator
+                        // per invocation per step.
+                        let exchange = |local: &mut [u32], a: usize, b: usize, up: bool| {
+                            let (x, y) = (local[a], local[b]);
+                            local[a] = if up { x.min(y) } else { x.max(y) };
+                            local[b] = if up { x.max(y) } else { x.min(y) };
+                        };
+                        let register_steps = |local: &mut [u32], k: u32, j_start: u32| {
+                            let mut steps = Vec::new();
+                            if j_start >= 4 {
+                                steps.push([(0, 4), (1, 5), (2, 6), (3, 7)]);
+                            }
+                            if j_start >= 2 {
+                                steps.push([(0, 2), (1, 3), (4, 6), (5, 7)]);
+                            }
+                            steps.push([(0, 1), (2, 3), (4, 5), (6, 7)]);
+                            for base in (0..TILE).step_by(8) {
+                                for pairs in &steps {
+                                    for &(i, j) in pairs {
+                                        let up = (base + i) & k == 0;
+                                        exchange(
+                                            local,
+                                            (base + i) as usize,
+                                            (base + j) as usize,
+                                            up,
+                                        );
+                                    }
+                                }
+                            }
+                        };
+                        register_steps(&mut local, 2, 1);
+                        register_steps(&mut local, 4, 2);
+                        register_steps(&mut local, 8, 4);
+                        let mut k = 16;
+                        while k <= TILE {
+                            let mut j = k / 2;
+                            while j >= 8 {
+                                for c in 0..TILE / 2 {
+                                    let a = ((c & !(j - 1)) << 1) | (c & (j - 1));
+                                    exchange(&mut local, a as usize, (a + j) as usize, a & k == 0);
+                                }
+                                j /= 2;
+                            }
+                            register_steps(&mut local, k, 4);
+                            k *= 2;
+                        }
+                        let mut run_start = [0u32; RADIX as usize];
+                        for p in 0..size as usize {
+                            let d = local[p] >> place_bits;
+                            if p == 0 || local[p - 1] >> place_bits != d {
+                                run_start[d as usize] = p as u32;
+                            }
+                        }
+                        for p in 0..size {
+                            let entry = local[p as usize];
+                            let d = (entry >> place_bits) as usize;
+                            let source = positions[(entry & (TILE - 1)) as usize] as usize;
+                            let dest = (place[d] + p - run_start[d]) as usize;
+                            other_values[dest] = values[source];
+                            if shift + DIGIT_BITS < 32 {
+                                other_keys[dest] = keys[source];
+                            }
+                        }
+                    }
+                    std::mem::swap(keys, &mut other_keys);
+                    std::mem::swap(values, &mut other_values);
+                }
             }
         }
     }
@@ -918,42 +1322,37 @@ mod tests {
     }
 
     #[test]
-    fn passes_cover_every_merge_step() {
-        assert_eq!(padded_len(0), BLOCK);
-        assert_eq!(padded_len(1), BLOCK);
-        assert_eq!(padded_len(513), 1024);
+    fn passes_sort_every_digit() {
+        let passes = sort_passes();
+        assert_eq!(passes.len(), 2 + 3 * DIGITS as usize);
+        assert_eq!(passes[..2], [SortPass::Keys, SortPass::Size]);
+        for (digit, three) in passes[2..].chunks(3).enumerate() {
+            let shift = digit as u32 * DIGIT_BITS;
+            assert_eq!(
+                three,
+                [
+                    SortPass::Count { shift },
+                    SortPass::Scan { shift },
+                    SortPass::Scatter { shift }
+                ]
+            );
+        }
+        assert_eq!((tiles(1), tiles(TILE), tiles(TILE + 1)), (1, 1, 2));
+        // The first pass's tiles of clusters are the later passes' tiles.
+        let max = super::super::MAX_SPLATS as u32;
         assert_eq!(
-            sort_passes(512),
-            [
-                SortPass::Keys,
-                SortPass::Size,
-                SortPass::Pad,
-                SortPass::LocalSort
-            ]
+            tiles(max),
+            max.div_ceil(CLUSTER as u32).div_ceil(TILE_CLUSTERS)
         );
-        assert_eq!(
-            sort_passes(2048)[2..],
-            [
-                SortPass::Pad,
-                SortPass::LocalSort,
-                SortPass::GlobalStep { k: 1024, j: 512 },
-                SortPass::LocalMerge { k: 1024 },
-                SortPass::GlobalStep { k: 2048, j: 1024 },
-                SortPass::GlobalStep { k: 2048, j: 512 },
-                SortPass::LocalMerge { k: 2048 },
-            ]
-        );
-        // 2^21 splats take 94 dispatches.
-        assert_eq!(sort_passes(1 << 21).len(), 94);
-        // A shorter sort runs a prefix of a longer one's passes.
-        let all = sort_passes(1 << 16);
-        for len in [512, 1024, 4096, 1 << 16] {
-            let run: Vec<_> = all
-                .iter()
-                .copied()
-                .filter(|pass| pass.min_len() <= len)
-                .collect();
-            assert_eq!(run, sort_passes(len), "len {len}");
+        assert!(tiles(max) <= 65_535);
+        // The shader's sizes are these.
+        for constant in [
+            format!("const RADIX: u32 = {RADIX}u;"),
+            format!("const TILE: u32 = {TILE}u;"),
+            format!("const TILE_CLUSTERS: u32 = {TILE_CLUSTERS}u;"),
+            format!("const PLACE_BITS: u32 = {}u;", TILE.trailing_zeros()),
+        ] {
+            assert!(SORT_WGSL.contains(&constant), "{constant}");
         }
     }
 
@@ -968,44 +1367,44 @@ mod tests {
         }
     }
 
-    /// The passes, run as the kernels index them, give the reference order
-    /// for counts below, at and across block and power-of-two boundaries;
-    /// and so do the passes a shorter sort runs, over the kept splats packed
-    /// at the front of a longer buffer, in any order.
+    /// The radix passes, run as the kernels index them, give the reference
+    /// order for counts below, at and across cluster and tile boundaries:
+    /// with every splat kept or only some, and the clusters packed in any
+    /// order.
     #[test]
     fn emulated_passes_sort_like_the_reference() {
         let view_model = view_model();
-        for count in [1usize, 2, 7, 511, 512, 513, 1000, 1024, 4097] {
-            let positions = random_positions(count, count as u64);
-            let all = sort_passes(padded_len(count as u32));
-            // Every splat, then every third one packed backwards.
-            let every: Vec<u32> = (0..count as u32).collect();
-            let some: Vec<u32> = (0..count as u32).rev().step_by(3).collect();
+        for count in [1usize, 7, 255, 256, 2047, 2048, 2049, 5000, 20_001] {
+            let keys_of: Vec<u32> = random_positions(count, count as u64)
+                .iter()
+                .map(|&p| sortable_depth(view_model.transform_point3(p.into()).z))
+                .collect();
+            let clusters = count.div_ceil(CLUSTER) as u32;
+            let every = vec![true; count];
+            // Every third splat dropped, and every fifth cluster.
+            let some: Vec<bool> = (0..count)
+                .map(|i| i % 3 != 1 && (i / CLUSTER) % 5 != 2)
+                .collect();
+            let forward: Vec<u32> = (0..clusters).collect();
+            let backward: Vec<u32> = (0..clusters).rev().collect();
+            let odd_first: Vec<u32> = (0..clusters)
+                .filter(|c| c % 2 == 1)
+                .chain((0..clusters).filter(|c| c % 2 == 0))
+                .collect();
             for kept in [every, some] {
-                let len = padded_len(kept.len() as u32);
-                let key = |i: u32| {
-                    sortable_depth(view_model.transform_point3(positions[i as usize].into()).z)
-                };
-                let mut keys: Vec<u32> = (0..len as usize)
-                    .map(|n| kept.get(n).map_or(u32::MAX, |&i| key(i)))
-                    .collect();
-                let mut values: Vec<u32> = (0..len)
-                    .map(|n| kept.get(n as usize).copied().unwrap_or(n))
-                    .collect();
-                let passes: Vec<_> = all
-                    .iter()
-                    .copied()
-                    .filter(|pass| pass.min_len() <= len)
-                    .collect();
-                emulate(&mut keys, &mut values, &passes);
-                let mut expected = kept.clone();
-                expected.sort_by_key(|&i| (key(i), i));
-                assert_eq!(
-                    values[..kept.len()],
-                    expected[..],
-                    "count {count}, {} kept",
-                    kept.len()
-                );
+                let mut expected: Vec<u32> =
+                    (0..count as u32).filter(|&i| kept[i as usize]).collect();
+                expected.sort_by_key(|&i| (keys_of[i as usize], i));
+                for order in [&forward, &backward, &odd_first] {
+                    let (mut keys, mut values, runs) = pack(&keys_of, &kept, order);
+                    emulate(&mut keys, &mut values, &runs, count as u32);
+                    assert_eq!(
+                        values[..expected.len()],
+                        expected[..],
+                        "count {count}, {} kept",
+                        expected.len()
+                    );
+                }
             }
         }
     }
@@ -1142,6 +1541,35 @@ mod tests {
             let reference = reference_order(&uploaded, model);
             let first = sorted.iter().zip(&reference).position(|(a, b)| a != b);
             assert_eq!(first, None, "count {count}: first difference");
+
+            // Partly behind the camera and beside the view, still exact:
+            // the splats kept, by depth and then by index.
+            let partly = Mat4::from_translation(Vec3::new(0.0, 0.0, -100.0));
+            let (kept, _) = run(
+                &device,
+                &queue,
+                &sorter,
+                &mut instance,
+                partly,
+                straight_ahead,
+            );
+            let key = |s: u32| {
+                sortable_depth(partly.transform_point3(Vec3::from(uploaded[s as usize])).z)
+            };
+            let mut expected = kept.clone();
+            expected.sort_by_key(|&s| (key(s), s));
+            let first = kept.iter().zip(&expected).position(|(a, b)| a != b);
+            assert_eq!(
+                first, None,
+                "count {count}: partly culled, first difference"
+            );
+            if count > 1000 {
+                assert!(
+                    kept.len() > count / 4 && kept.len() < count * 9 / 10,
+                    "count {count}: {} kept",
+                    kept.len()
+                );
+            }
 
             // Any transform: a permutation, farthest first. Depths the GPU
             // rounds differently may swap neighbours that are this close.
