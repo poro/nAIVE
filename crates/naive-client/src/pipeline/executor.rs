@@ -864,29 +864,7 @@ fn execute_splat_pass(
             };
             let gpu_splat = splat_cache.get(splat.splat_handle);
 
-            let splat_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Splat Data Bind Group"),
-                layout: splat_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: gpu_splat.splat_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: instance.sorted_indices.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: instance.uniforms.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: instance.colors.as_entire_binding(),
-                    },
-                ],
-            });
-
+            let splat_bind_group = instance.draw_bind_group(device, splat_layout, gpu_splat);
             render_pass.set_bind_group(1, &splat_bind_group, &[]);
             // 6 vertices per quad, one instance per splat in view.
             instance.draw(&mut render_pass);

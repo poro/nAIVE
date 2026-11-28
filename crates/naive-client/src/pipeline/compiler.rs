@@ -535,7 +535,7 @@ fn create_rasterize_pipeline(
 
 /// Create the Gaussian splat rendering pipeline.
 /// Returns (splat_data_bind_group_layout, pipeline).
-fn create_splat_pipeline(
+pub(crate) fn create_splat_pipeline(
     device: &wgpu::Device,
     wgsl_source: &str,
     color_targets: &[String],
