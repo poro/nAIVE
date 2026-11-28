@@ -1022,7 +1022,7 @@ struct InstanceUniforms {
     camera_local: vec3<f32>,
     sh_degree: u32,
     count: u32,
-    padded: u32,
+    tiles: u32,
     _pad: vec2<u32>,
 };
 
