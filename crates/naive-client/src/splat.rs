@@ -10,6 +10,8 @@
 //! from its spherical harmonics.
 
 pub mod cluster;
+#[cfg(test)]
+mod projection_tests;
 pub mod sort;
 
 use std::collections::{HashMap, HashSet};

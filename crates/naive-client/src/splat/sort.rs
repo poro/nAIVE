@@ -380,6 +380,39 @@ pub struct SplatInstance {
 }
 
 impl SplatInstance {
+    /// The splat pass's per-entity bind group (`layout` is the splat
+    /// pipeline's group 1): `splat`'s data, the sorted indices, the instance
+    /// uniforms and this view's colours.
+    pub fn draw_bind_group(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        splat: &GpuSplat,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Splat Data Bind Group"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: splat.splat_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.sorted_indices.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.uniforms.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.colors.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
     /// Draw the splats in view, as many as the last sort kept.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.draw_indirect(&self.state, DRAW_ARGS_OFFSET);
