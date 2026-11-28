@@ -11,6 +11,12 @@
 //!
 //! Ties in depth are broken by splat index, so the order is deterministic and
 //! the same as a stable sort by view-space depth.
+//!
+//! The keys pass also writes each splat's colour for this view: its base
+//! colour plus its higher spherical-harmonics bands, evaluated as in 3D
+//! Gaussian Splatting for the direction from the camera to the splat in the
+//! splat asset's own space, then clamped to [0, 1]. The colour only changes
+//! when the camera or entity moves, which is when the sort runs.
 
 use glam::Mat4;
 use wgpu::util::DeviceExt;
@@ -27,6 +33,9 @@ const WORKGROUP: u32 = BLOCK / 2;
 pub struct InstanceUniforms {
     pub model: [[f32; 4]; 4],
     pub view_model: [[f32; 4]; 4],
+    /// The camera's position in the splat asset's space.
+    pub camera_local: [f32; 3],
+    pub sh_degree: u32,
     pub count: u32,
     pub padded: u32,
     pub _pad: [u32; 2],
@@ -120,6 +129,8 @@ impl SplatSorter {
                 storage(0, true),
                 storage(1, false),
                 storage(2, false),
+                storage(5, true),
+                storage(6, false),
                 uniform(3, false),
                 uniform(4, true),
             ],
@@ -183,6 +194,12 @@ impl SplatSorter {
         };
         let keys = pairs("Splat sort keys");
         let sorted_indices = pairs("Splat sorted indices");
+        let colors = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Splat colours"),
+            size: u64::from(splat.splat_count.max(1)) * 16,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Splat instance"),
             size: std::mem::size_of::<InstanceUniforms>() as u64,
@@ -217,15 +234,25 @@ impl SplatSorter {
                         size: wgpu::BufferSize::new(16),
                     }),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: splat.sh_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: colors.as_entire_binding(),
+                },
             ],
         });
         SplatInstance {
             handle,
             count: splat.splat_count,
+            sh_degree: splat.sh_degree,
             padded,
             passes,
             _keys: keys,
             sorted_indices,
+            colors,
             uniforms,
             _steps: steps,
             bind_group,
@@ -255,11 +282,15 @@ pub struct SplatInstance {
     /// The splat asset this state was made for.
     pub handle: crate::components::SplatHandle,
     pub count: u32,
+    sh_degree: u32,
     padded: u32,
     passes: Vec<SortPass>,
     _keys: wgpu::Buffer,
     /// Splat indices, farthest first. The first `count` are real splats.
     pub sorted_indices: wgpu::Buffer,
+    /// Each splat's colour for the current view, as `vec4<f32>`, in splat
+    /// order.
+    pub colors: wgpu::Buffer,
     /// [`InstanceUniforms`]: the draw reads the model matrix from here.
     pub uniforms: wgpu::Buffer,
     _steps: wgpu::Buffer,
@@ -272,9 +303,19 @@ impl SplatInstance {
     /// Point the instance at `model` seen through `view`. Returns whether its
     /// order must be sorted again: not when neither has changed.
     pub fn update(&mut self, queue: &wgpu::Queue, model: Mat4, view: Mat4) -> bool {
+        let camera = view.inverse().w_axis.truncate();
+        let camera_local = model.inverse().transform_point3(camera);
         let uniforms = InstanceUniforms {
             model: model.to_cols_array_2d(),
             view_model: (view * model).to_cols_array_2d(),
+            // A degenerate world matrix has no inverse; any direction will do.
+            camera_local: if camera_local.is_finite() {
+                camera_local
+            } else {
+                camera
+            }
+            .to_array(),
+            sh_degree: self.sh_degree,
             count: self.count,
             padded: self.padded,
             _pad: [0; 2],
@@ -293,6 +334,8 @@ pub const SORT_WGSL: &str = r#"
 struct InstanceUniforms {
     model: mat4x4<f32>,
     view_model: mat4x4<f32>,
+    camera_local: vec3<f32>,
+    sh_degree: u32,
     count: u32,
     padded: u32,
     _pad: vec2<u32>,
@@ -319,6 +362,9 @@ struct GaussianSplat {
 @group(0) @binding(2) var<storage, read_write> values: array<u32>;
 @group(0) @binding(3) var<uniform> instance: InstanceUniforms;
 @group(0) @binding(4) var<uniform> sort_step: SortStep;
+// Higher-band SH coefficients, two half floats to a word.
+@group(0) @binding(5) var<storage, read> sh: array<u32>;
+@group(0) @binding(6) var<storage, read_write> colors: array<vec4<f32>>;
 
 const BLOCK: u32 = 512u;
 const HALF: u32 = 256u;
@@ -346,6 +392,86 @@ fn lower(t: u32, j: u32) -> u32 {
     return (t / j) * 2u * j + (t % j);
 }
 
+const SH_C1: f32 = 0.4886025119029199;
+const SH_C2_0: f32 = 1.0925484305920792;
+const SH_C2_1: f32 = -1.0925484305920792;
+const SH_C2_2: f32 = 0.31539156525252005;
+const SH_C2_3: f32 = -1.0925484305920792;
+const SH_C2_4: f32 = 0.5462742152960396;
+const SH_C3_0: f32 = -0.5900435899266435;
+const SH_C3_1: f32 = 2.890611442640554;
+const SH_C3_2: f32 = -0.4570457994644658;
+const SH_C3_3: f32 = 0.3731763325901154;
+const SH_C3_4: f32 = -0.4570457994644658;
+const SH_C3_5: f32 = 1.445305721320277;
+const SH_C3_6: f32 = -0.5900435899266435;
+
+// Words of packed coefficients per splat at a degree.
+fn sh_words(degree: u32) -> u32 {
+    let coefficients = (degree + 1u) * (degree + 1u) - 1u;
+    return (3u * coefficients + 1u) / 2u;
+}
+
+// A half float's bits as an f32, exactly. Done by hand: unpack2x16float
+// needs a capability not every backend has.
+fn half_to_float(bits: u32) -> f32 {
+    let sign = (bits & 0x8000u) << 16u;
+    let exponent = (bits >> 10u) & 0x1Fu;
+    let mantissa = bits & 0x3FFu;
+    if exponent == 0u {
+        // Zero or subnormal: mantissa * 2^-24.
+        return bitcast<f32>(sign | bitcast<u32>(f32(mantissa) * 5.9604645e-8));
+    }
+    return bitcast<f32>(sign | ((exponent + 112u) << 23u) | (mantissa << 13u));
+}
+
+// Packed value j of the splat whose words start at base: the even one in
+// the low 16 bits.
+fn sh_value(base: u32, j: u32) -> f32 {
+    let word = sh[base + j / 2u];
+    return half_to_float((word >> (16u * (j & 1u))) & 0xFFFFu);
+}
+
+// Higher-band coefficient k (band 1 starts at 0) as (r, g, b).
+fn sh_coefficient(base: u32, k: u32) -> vec3<f32> {
+    return vec3<f32>(sh_value(base, 3u * k), sh_value(base, 3u * k + 1u), sh_value(base, 3u * k + 2u));
+}
+
+// The higher bands' colour for splat i seen along unit direction d, as in
+// 3D Gaussian Splatting's computeColorFromSH.
+fn sh_rest_color(i: u32, d: vec3<f32>, degree: u32) -> vec3<f32> {
+    let base = i * sh_words(degree);
+    let x = d.x;
+    let y = d.y;
+    let z = d.z;
+    var color = -SH_C1 * y * sh_coefficient(base, 0u)
+        + SH_C1 * z * sh_coefficient(base, 1u)
+        - SH_C1 * x * sh_coefficient(base, 2u);
+    if degree > 1u {
+        let xx = x * x;
+        let yy = y * y;
+        let zz = z * z;
+        let xy = x * y;
+        let yz = y * z;
+        let xz = x * z;
+        color += SH_C2_0 * xy * sh_coefficient(base, 3u)
+            + SH_C2_1 * yz * sh_coefficient(base, 4u)
+            + SH_C2_2 * (2.0 * zz - xx - yy) * sh_coefficient(base, 5u)
+            + SH_C2_3 * xz * sh_coefficient(base, 6u)
+            + SH_C2_4 * (xx - yy) * sh_coefficient(base, 7u);
+        if degree > 2u {
+            color += SH_C3_0 * y * (3.0 * xx - yy) * sh_coefficient(base, 8u)
+                + SH_C3_1 * xy * z * sh_coefficient(base, 9u)
+                + SH_C3_2 * y * (4.0 * zz - xx - yy) * sh_coefficient(base, 10u)
+                + SH_C3_3 * z * (2.0 * zz - 3.0 * xx - 3.0 * yy) * sh_coefficient(base, 11u)
+                + SH_C3_4 * x * (4.0 * zz - xx - yy) * sh_coefficient(base, 12u)
+                + SH_C3_5 * z * (xx - yy) * sh_coefficient(base, 13u)
+                + SH_C3_6 * x * (xx - 3.0 * yy) * sh_coefficient(base, 14u);
+        }
+    }
+    return color;
+}
+
 @compute @workgroup_size(256)
 fn compute_keys(@builtin(global_invocation_id) id: vec3<u32>) {
     let i = id.x;
@@ -353,9 +479,17 @@ fn compute_keys(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     if i < instance.count {
+        let splat = splats[i];
         // Farthest first: view space looks down -z.
-        let view_position = instance.view_model * vec4<f32>(splats[i].position, 1.0);
+        let view_position = instance.view_model * vec4<f32>(splat.position, 1.0);
         keys[i] = sortable(view_position.z);
+
+        var color = splat.sh_dc;
+        let to_splat = splat.position - instance.camera_local;
+        if instance.sh_degree > 0u && dot(to_splat, to_splat) > 1e-12 {
+            color += sh_rest_color(i, normalize(to_splat), instance.sh_degree);
+        }
+        colors[i] = vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     } else {
         keys[i] = 0xFFFFFFFFu;
     }
@@ -661,8 +795,11 @@ mod tests {
                         sh_dc: [1.0; 3],
                     })
                     .collect(),
+                sh_degree: 0,
+                sh_rest: Vec::new(),
             },
-        );
+        )
+        .unwrap();
         let mut instance = sorter.instance(device, &splat, crate::components::SplatHandle(0));
         assert!(instance.update(queue, model, view));
         assert!(!instance.update(queue, model, view), "unchanged");
@@ -725,6 +862,138 @@ mod tests {
                     a <= b + 1e-5 * b.abs().max(1.0),
                     "count {count}: {a} before {b}"
                 );
+            }
+        }
+    }
+
+    /// 3D Gaussian Splatting's computeColorFromSH, on the CPU: the base
+    /// colour plus the higher bands for unit direction `d`, clamped.
+    fn reference_color(dc: [f32; 3], rest: &[f32], degree: u32, d: glam::Vec3) -> [f32; 3] {
+        const C1: f32 = 0.488_602_5;
+        const C2: [f32; 5] = [
+            1.092_548_4,
+            -1.092_548_4,
+            0.315_391_57,
+            -1.092_548_4,
+            0.546_274_2,
+        ];
+        const C3: [f32; 7] = [
+            -0.590_043_6,
+            2.890_611_4,
+            -0.457_045_8,
+            0.373_176_33,
+            -0.457_045_8,
+            1.445_305_7,
+            -0.590_043_6,
+        ];
+        let (x, y, z) = (d.x, d.y, d.z);
+        let (xx, yy, zz, xy, yz, xz) = (x * x, y * y, z * z, x * y, y * z, x * z);
+        let basis = [
+            -C1 * y,
+            C1 * z,
+            -C1 * x,
+            C2[0] * xy,
+            C2[1] * yz,
+            C2[2] * (2.0 * zz - xx - yy),
+            C2[3] * xz,
+            C2[4] * (xx - yy),
+            C3[0] * y * (3.0 * xx - yy),
+            C3[1] * xy * z,
+            C3[2] * y * (4.0 * zz - xx - yy),
+            C3[3] * z * (2.0 * zz - 3.0 * xx - 3.0 * yy),
+            C3[4] * x * (4.0 * zz - xx - yy),
+            C3[5] * z * (xx - yy),
+            C3[6] * x * (xx - 3.0 * yy),
+        ];
+        let n = naive_sim::assets::sh_rest_coefficients(degree);
+        std::array::from_fn(|c| {
+            let higher: f32 = (0..n).map(|k| basis[k] * rest[3 * k + c]).sum();
+            (dc[c] + higher).clamp(0.0, 1.0)
+        })
+    }
+
+    /// The sort pass's colours on a real GPU match the CPU formula for
+    /// every degree, through an entity transform.
+    /// `cargo test -p naive-client --lib -- --ignored gpu_splat_colors`
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn gpu_splat_colors_match_the_cpu_spherical_harmonics() {
+        let (device, queue) = gpu();
+        let sorter = SplatSorter::new(&device);
+        let view = glam::camera::rh::view::look_at_mat4(
+            glam::Vec3::new(3.0, 4.0, 12.0),
+            glam::Vec3::ZERO,
+            glam::Vec3::Y,
+        );
+        let model = Mat4::from_scale_rotation_translation(
+            glam::Vec3::splat(1.5),
+            glam::Quat::from_rotation_y(0.7) * glam::Quat::from_rotation_x(-0.3),
+            glam::Vec3::new(-2.0, 0.5, 1.0),
+        );
+        let count = 3000;
+        let positions = random_positions(count, 5);
+        let mut state = 77u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 40) as f32 / (1u64 << 24) as f32
+        };
+        for degree in 0..=naive_sim::assets::MAX_SH_DEGREE {
+            let per_splat = 3 * naive_sim::assets::sh_rest_coefficients(degree);
+            let splats: Vec<_> = positions
+                .iter()
+                .map(|&position| naive_sim::assets::SplatPoint {
+                    position,
+                    opacity: 1.0,
+                    scale: [1.0; 3],
+                    rotation: [1.0, 0.0, 0.0, 0.0],
+                    // Some outside [0, 1], so the clamp is exercised.
+                    sh_dc: [next() * 1.4 - 0.2, next() * 1.4 - 0.2, next() * 1.4 - 0.2],
+                })
+                .collect();
+            // Rounded to half floats here, as the upload stores them.
+            let sh_rest: Vec<f32> = (0..count * per_splat)
+                .map(|_| half::f16::from_f32(next() * 1.2 - 0.6).to_f32())
+                .collect();
+            let splat = super::super::upload_splat(
+                &device,
+                "test",
+                naive_sim::assets::SplatData {
+                    splats: splats.clone(),
+                    sh_degree: degree,
+                    sh_rest: sh_rest.clone(),
+                },
+            )
+            .unwrap();
+            let mut instance = sorter.instance(&device, &splat, crate::components::SplatHandle(0));
+            assert!(instance.update(&queue, model, view));
+            let mut encoder = device.create_command_encoder(&Default::default());
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                sorter.encode(&mut pass, &instance);
+            }
+            queue.submit(std::iter::once(encoder.finish()));
+            let colors: Vec<f32> = read_u32s(&device, &queue, &instance.colors)
+                .into_iter()
+                .map(f32::from_bits)
+                .collect();
+
+            let camera = view.inverse().w_axis.truncate();
+            let camera_local = model.inverse().transform_point3(camera);
+            for (i, point) in splats.iter().enumerate() {
+                let d = (glam::Vec3::from(point.position) - camera_local).normalize();
+                let rest = &sh_rest[i * per_splat..(i + 1) * per_splat];
+                let expected = reference_color(point.sh_dc, rest, degree, d);
+                let got = &colors[i * 4..i * 4 + 3];
+                for c in 0..3 {
+                    assert!(
+                        (got[c] - expected[c]).abs() < 1e-4,
+                        "degree {degree} splat {i} channel {c}: {} vs {}",
+                        got[c],
+                        expected[c]
+                    );
+                }
             }
         }
     }

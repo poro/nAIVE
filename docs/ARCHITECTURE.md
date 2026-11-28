@@ -137,7 +137,7 @@ Scene files (YAML) are deserialized with serde_yaml into `SceneDef` + `EntityDef
 1. **ECS Query** — Traverse all entities with Transform + MeshRenderer components.
 2. **Uniform Upload** — Write 256 bytes per entity (model matrix, normal matrix, material properties) to the DrawUniformPool. Buffer grows dynamically at 2× with no ceiling.
 3. **Forward PBR** — Main geometry pass with depth testing and backface culling.
-4. **Gaussian Splats** — Each splat's 3D covariance (entity transform, rotation, scale) is projected to a screen-space ellipse, as in 3D Gaussian Splatting, after a back-to-front sort on the GPU. Only the base colour (`f_dc`) is used; higher spherical harmonics are not yet.
+4. **Gaussian Splats** — Each splat's 3D covariance (entity transform, rotation, scale) is projected to a screen-space ellipse, as in 3D Gaussian Splatting, after a back-to-front sort on the GPU. The sort pass also evaluates each splat's spherical harmonics (degrees 0 to 3, stored as half floats) for the current view, so colour changes with viewing angle.
 5. **Debug Wireframe** — Physics collider visualization rendered as LineList topology. Color-coded by shape: box (cyan), sphere (green), capsule (yellow), trimesh (magenta), convex polyhedron (white). Toggled with H key. Has its own WGSL shader and wgpu RenderPipeline.
 6. **Particles** — CPU-simulated particles uploaded as GPU billboard quads with color interpolation.
 7. **UI Overlay** — Text rendering, line drawing, screen flash, and HUD elements.

@@ -879,6 +879,10 @@ fn execute_splat_pass(
                         binding: 2,
                         resource: instance.uniforms.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: instance.colors.as_entire_binding(),
+                    },
                 ],
             });
 

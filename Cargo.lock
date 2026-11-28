@@ -2127,6 +2127,7 @@ dependencies = [
  "clap",
  "glam 0.34.3",
  "gltf",
+ "half",
  "hecs",
  "image",
  "kira",

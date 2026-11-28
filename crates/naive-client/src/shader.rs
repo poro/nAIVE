@@ -984,7 +984,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 /// (Kerbl et al. 2023, after Zwicker et al.'s EWA splatting), and drawn as a
 /// quad along the ellipse's axes, sized to where the splat's alpha falls
 /// below 1/255. Splats behind the camera or well outside the view are
-/// dropped. The draw order comes from the GPU sort (`splat::sort`).
+/// dropped. The draw order, and each splat's colour for this view (base
+/// colour plus spherical harmonics), come from the GPU sort (`splat::sort`).
 pub fn get_splat_render_wgsl() -> String {
     r#"
 struct CameraUniform {
@@ -1014,6 +1015,8 @@ struct GaussianSplat {
 struct InstanceUniforms {
     model: mat4x4<f32>,
     view_model: mat4x4<f32>,
+    camera_local: vec3<f32>,
+    sh_degree: u32,
     count: u32,
     padded: u32,
     _pad: vec2<u32>,
@@ -1024,6 +1027,8 @@ struct InstanceUniforms {
 @group(1) @binding(0) var<storage, read> splats: array<GaussianSplat>;
 @group(1) @binding(1) var<storage, read> sorted_indices: array<u32>;
 @group(1) @binding(2) var<uniform> instance: InstanceUniforms;
+// Each splat's colour for this view, written by the sort.
+@group(1) @binding(3) var<storage, read> colors: array<vec4<f32>>;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -1070,7 +1075,8 @@ fn vs_main(
     @builtin(instance_index) instance_index: u32,
     @builtin(vertex_index) vertex_index: u32,
 ) -> VertexOutput {
-    let splat = splats[sorted_indices[instance_index]];
+    let splat_index = sorted_indices[instance_index];
+    let splat = splats[splat_index];
     let opacity = min(splat.opacity, MAX_ALPHA);
     if opacity < MIN_ALPHA {
         return dropped();
@@ -1140,7 +1146,7 @@ fn vs_main(
     var out: VertexOutput;
     out.clip_position = vec4<f32>(clip.xy + offset_ndc * clip.w, clip.z, clip.w);
     out.offset = corner;
-    out.color = splat.sh_dc;
+    out.color = colors[splat_index].rgb;
     out.opacity = opacity;
     return out;
 }
