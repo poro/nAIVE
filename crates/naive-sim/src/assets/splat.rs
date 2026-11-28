@@ -60,7 +60,7 @@ pub fn load_splat(project_root: &Path, splat_path: &str) -> Result<SplatData, As
     let mut rows = None;
     for (name, element) in &header.elements {
         if name == "vertex" {
-            let sh_degree = vertex_layout(element)
+            let sh_degree = vertex_layout(element, splat_path)
                 .map_err(|error| AssetError(format!("PLY splat '{splat_path}': {error}")))?;
             let read = Parser::<RawVertex>::new()
                 .read_payload_for_element(&mut reader, element, &header)
@@ -150,24 +150,28 @@ fn field_index(name: &str) -> Option<usize> {
 }
 
 /// Check the vertex properties once, from the header: known properties
-/// must be floats, positions must be there, and the `f_rest` coefficients
-/// must make a whole 3DGS degree. Returns that degree.
-fn vertex_layout(element: &ply_rs::ply::ElementDef) -> Result<u32, String> {
+/// must be floats and positions must be there. Returns the SH degree the
+/// `f_rest` coefficients make; a set that is not a whole 3DGS degree (a
+/// gap, another degree, a non-float value) is ignored, as before higher
+/// harmonics were rendered, so the splats keep their base colours.
+fn vertex_layout(element: &ply_rs::ply::ElementDef, splat_path: &str) -> Result<u32, String> {
     let mut rest = Vec::new();
+    let mut regular = true;
     for (name, property) in &element.properties {
         let is_float = matches!(
             property.data_type,
             PropertyType::Scalar(ScalarType::Float | ScalarType::Double)
         );
-        if let Some(index) = field_index(name) {
-            if !is_float {
-                return Err(format!("property '{name}' must be float or double"));
-            }
-            if index >= REST {
+        match field_index(name) {
+            Some(index) if index >= REST => {
+                regular &= is_float;
                 rest.push(index - REST);
             }
-        } else if name.starts_with("f_rest_") {
-            return Err(format!("unexpected spherical-harmonics property '{name}'"));
+            Some(_) if !is_float => {
+                return Err(format!("property '{name}' must be float or double"));
+            }
+            Some(_) => {}
+            None => regular &= !name.starts_with("f_rest_"),
         }
     }
     for name in ["x", "y", "z"] {
@@ -178,16 +182,14 @@ fn vertex_layout(element: &ply_rs::ply::ElementDef) -> Result<u32, String> {
     rest.sort_unstable();
     let degree = (0..=MAX_SH_DEGREE)
         .find(|&degree| rest.len() == 3 * sh_rest_coefficients(degree))
-        .ok_or_else(|| {
-            format!(
-                "has {} f_rest properties; 3DGS files have 0, 9, 24 or 45",
-                rest.len()
-            )
-        })?;
-    if rest.iter().enumerate().any(|(i, &n)| i != n) {
-        return Err("f_rest properties must be numbered from f_rest_0 without gaps".into());
-    }
-    Ok(degree)
+        .filter(|_| regular && rest.iter().enumerate().all(|(i, &n)| i == n));
+    Ok(degree.unwrap_or_else(|| {
+        tracing::warn!(
+            "Splat '{splat_path}': its f_rest properties are not a whole 3DGS spherical-harmonics \
+             degree (0, 9, 24 or 45 floats from f_rest_0); drawing base colours only"
+        );
+        0
+    }))
 }
 
 /// One vertex's known properties, before activation.
@@ -226,6 +228,8 @@ impl PropertyAccess for RawVertex {
         let value = match property {
             Property::Float(value) => value,
             Property::Double(value) => value as f32,
+            // A non-float coefficient makes the header ignore the whole set.
+            _ if index >= REST => return,
             _ => {
                 self.error = Some(format!("property '{name}' must be float or double"));
                 return;
@@ -524,23 +528,29 @@ mod tests {
         assert_eq!((data.sh_degree, data.sh_rest.len()), (0, 0));
     }
 
+    /// Coefficients that do not make a whole degree are ignored, as before
+    /// higher harmonics were rendered: the splat keeps its base colour.
     #[test]
-    fn incomplete_or_misnamed_spherical_harmonics_are_errors() {
+    fn irregular_spherical_harmonics_fall_back_to_the_base_colour() {
         let project = Project::new();
         let mut gap = rest_properties(8);
         gap.push_str("property float f_rest_9\n");
         for properties in [
             rest_properties(3),
             gap,
-            rest_properties(48),
+            rest_properties(72),
             "property float f_rest_01\n".to_string(),
             format!("{}property uchar f_rest_8\n", rest_properties(8)),
         ] {
             let count = properties.lines().count();
             project.write(ply(&properties, &format!("1 2 3{}", " 0".repeat(count))));
-            let error = load_splat(&project.0, "cloud.ply").unwrap_err();
-            assert!(error.0.contains("f_rest"), "{}", error.0);
+            let data = load_splat(&project.0, "cloud.ply").unwrap();
+            assert_eq!((data.sh_degree, data.sh_rest.len()), (0, 0), "{properties}");
+            assert_eq!(data.splats[0].position, [1.0, 2.0, 3.0]);
         }
+        // Nonfinite values are still rejected, used or not.
+        project.write(ply(&rest_properties(3), "1 2 3 0 nan 0"));
+        assert!(load_splat(&project.0, "cloud.ply").is_err());
     }
 
     #[test]
