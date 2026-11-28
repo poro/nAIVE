@@ -986,6 +986,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 /// below 1/255. Splats behind the camera or well outside the view are
 /// dropped. The draw order, and each splat's colour for this view (base
 /// colour plus spherical harmonics), come from the GPU sort (`splat::sort`).
+/// Those colours are sRGB display values, as 3DGS trains them; the draw
+/// converts them to linear light for the HDR target, which is tonemapped and
+/// encoded back to sRGB at the end like everything else.
 pub fn get_splat_render_wgsl() -> String {
     r#"
 struct CameraUniform {
@@ -1028,7 +1031,7 @@ struct InstanceUniforms {
 @group(1) @binding(0) var<storage, read> splats: array<GaussianSplat>;
 @group(1) @binding(1) var<storage, read> sorted_indices: array<u32>;
 @group(1) @binding(2) var<uniform> instance: InstanceUniforms;
-// Each splat's colour for this view, written by the sort.
+// Each splat's colour for this view, written by the sort: sRGB, in [0, 1].
 @group(1) @binding(3) var<storage, read> colors: array<vec4<f32>>;
 
 struct VertexOutput {
@@ -1059,6 +1062,11 @@ fn quat_to_mat3(q: vec4<f32>) -> mat3x3<f32> {
         vec3<f32>(xy - wz, 1.0 - (xx + zz), yz + wx),
         vec3<f32>(xz + wy, yz - wx, 1.0 - (xx + yy)),
     );
+}
+
+// sRGB display value to linear light (IEC 61966-2-1).
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
 }
 
 fn dropped() -> VertexOutput {
@@ -1147,7 +1155,7 @@ fn vs_main(
     var out: VertexOutput;
     out.clip_position = vec4<f32>(clip.xy + offset_ndc * clip.w, clip.z, clip.w);
     out.offset = corner;
-    out.color = colors[splat_index].rgb;
+    out.color = srgb_to_linear(colors[splat_index].rgb);
     out.opacity = opacity;
     return out;
 }
